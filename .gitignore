@@ -11,6 +11,7 @@ dist/
 
 # API keys (never commit these)
 mcp-config.local.json
+mcp-config.json
 
 # OS files
 .DS_Store
