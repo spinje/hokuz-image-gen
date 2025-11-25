@@ -1,0 +1,38 @@
+# Dependencies
+node_modules/
+
+# Build output
+dist/
+
+# Environment and secrets
+.env
+.env.*
+*.local
+
+# API keys (never commit these)
+mcp-config.local.json
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Logs
+*.log
+npm-debug.log*
+
+# Test output
+coverage/
+test-*.png
+test-*.jpg
+test-*.webp
+
+# Generated images (keep repo clean)
+image-*.png
+image-*.jpg
+image-*.webp
