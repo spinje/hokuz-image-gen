@@ -67,8 +67,11 @@ function buildGenerationConfig(config: GenerationConfig) {
   return {
     temperature: config.temperature,
     responseModalities: ["TEXT", "IMAGE"] as string[],
-    // Note: aspectRatio and resolution are passed via imageConfig in some SDK versions
-    // We'll include them in the content request if needed
+    // Pass aspectRatio and resolution via imageConfig
+    imageConfig: {
+      aspectRatio: config.aspectRatio,
+      imageSize: config.resolution, // Maps "1K"/"2K"/"4K" to imageSize
+    },
   };
 }
 
@@ -142,18 +145,13 @@ export async function generateImage(
     // Build the request with image generation configuration
     const generationConfig = buildGenerationConfig(config);
 
-    // Create the content parts - include aspect ratio and resolution in the prompt context
-    // as some SDK versions handle these differently
-    const enhancedPrompt = `${prompt}
-
-[Image settings: aspect ratio ${config.aspectRatio}, resolution ${config.resolution}]`;
-
+    // Create the content parts - aspectRatio and imageSize are now passed via imageConfig
     const response = await client.models.generateContent({
       model: MODEL_ID,
       contents: [
         {
           role: "user",
-          parts: [{ text: enhancedPrompt }],
+          parts: [{ text: prompt }],
         },
       ],
       config: {
@@ -200,11 +198,8 @@ export async function editImage(
       });
     }
 
-    // Add the editing prompt with settings
-    const enhancedPrompt = `${prompt}
-
-[Image settings: aspect ratio ${config.aspectRatio}, resolution ${config.resolution}]`;
-    parts.push({ text: enhancedPrompt });
+    // Add the editing prompt - aspectRatio and imageSize are passed via imageConfig
+    parts.push({ text: prompt });
 
     const response = await client.models.generateContent({
       model: MODEL_ID,
