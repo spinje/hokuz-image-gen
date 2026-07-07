@@ -10,7 +10,7 @@
  * - nanobanana_edit_image: Edit existing images using text instructions
  *
  * Environment Variables:
- * - GOOGLE_API_KEY or GEMINI_API_KEY: Your Google AI Studio API key
+ * - GEMINI_API_KEY (preferred) or GOOGLE_API_KEY: Your Google AI Studio API key
  *
  * Usage:
  * - Local (stdio): node dist/index.js

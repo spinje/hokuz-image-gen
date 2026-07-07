@@ -32,12 +32,12 @@ export interface GenerationConfig {
  */
 function getApiKey(): string {
   const apiKey =
-    process.env[ENV_VARS.googleApiKey] || process.env[ENV_VARS.geminiApiKey];
+    process.env[ENV_VARS.geminiApiKey] || process.env[ENV_VARS.googleApiKey];
 
   if (!apiKey) {
     throw new McpError(
       ErrorType.MISSING_API_KEY,
-      `Error: API key not found. Set the ${ENV_VARS.googleApiKey} or ${ENV_VARS.geminiApiKey} environment variable. Get your key at https://aistudio.google.com/`
+      `Error: API key not found. Set the ${ENV_VARS.geminiApiKey} or ${ENV_VARS.googleApiKey} environment variable. Get your key at https://aistudio.google.com/`
     );
   }
 
@@ -257,7 +257,7 @@ function handleApiError(error: unknown): never {
   ) {
     throw new McpError(
       ErrorType.MISSING_API_KEY,
-      "Error: Invalid or missing API key. Please check your GOOGLE_API_KEY environment variable."
+      "Error: Invalid or missing API key. Please check your GEMINI_API_KEY environment variable."
     );
   }
 

@@ -1,0 +1,37 @@
+# Dependencies
+node_modules/
+
+# Build output
+dist/
+
+# Environment and secrets
+.env
+.env.*
+*.local
+mcp-config.json
+mcp-config.local.json
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# IDE
+.claude/
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Logs
+*.log
+npm-debug.log*
+
+# Test and generated output
+coverage/
+test-outputs/
+test-*.png
+test-*.jpg
+test-*.webp
+image-*.png
+image-*.jpg
+image-*.webp
