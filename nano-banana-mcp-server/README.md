@@ -1,6 +1,6 @@
 # Nano Banana MCP Server
 
-An MCP (Model Context Protocol) server for generating and editing images using **Nano Banana Pro** (Google's Gemini 3 Pro Image model).
+An MCP (Model Context Protocol) server for generating and editing images using Google's Gemini API. The current implementation uses the `gemini-3-pro-image-preview` model ID in `src/constants.ts`.
 
 ## Features
 
@@ -9,7 +9,7 @@ An MCP (Model Context Protocol) server for generating and editing images using *
 - **Style Transfer**: Apply artistic styles from reference images
 - **Multi-Image Composition**: Combine up to 14 images into new compositions
 - **High Resolution**: Support for 1K, 2K, and 4K output resolutions
-- **Multiple Formats**: Output as PNG, JPEG, or WebP
+- **Output Path Handling**: Save generated images to local files with configurable filename extensions
 
 ## Prerequisites
 
@@ -34,9 +34,9 @@ npm run build
 Set your API key as an environment variable:
 
 ```bash
-export GOOGLE_API_KEY="your-api-key-here"
-# or
 export GEMINI_API_KEY="your-api-key-here"
+# or, for compatibility
+export GOOGLE_API_KEY="your-api-key-here"
 ```
 
 ## Usage
@@ -51,12 +51,25 @@ The server runs via stdio transport, designed to be used with MCP-compatible cli
 
 ### Claude Code
 
-Use the included `mcp-config.json` file:
+Create a local MCP config file such as `mcp-config.json`:
+
+```json
+{
+  "mcpServers": {
+    "nano-banana": {
+      "command": "node",
+      "args": ["/absolute/path/to/nano-banana-mcp-server/dist/index.js"],
+      "env": {
+        "GEMINI_API_KEY": "your-api-key-here"
+      }
+    }
+  }
+}
+```
+
+`mcp-config.json` is intentionally ignored by Git so local API keys are not committed.
 
 ```bash
-# Set your API key
-export GOOGLE_API_KEY="your-api-key-here"
-
 # Run Claude Code with the MCP server
 claude --mcp-config /path/to/nano-banana-mcp-server/mcp-config.json
 ```
@@ -72,7 +85,7 @@ Add to your Claude Desktop configuration file (`~/Library/Application Support/Cl
       "command": "node",
       "args": ["/absolute/path/to/nano-banana-mcp-server/dist/index.js"],
       "env": {
-        "GOOGLE_API_KEY": "your-api-key-here"
+        "GEMINI_API_KEY": "your-api-key-here"
       }
     }
   }
@@ -93,7 +106,7 @@ Generate images from text prompts.
 | `output_path` | string | Yes | - | File path to save the image (directory or full path) |
 | `aspect_ratio` | string | No | `"1:1"` | Aspect ratio: `1:1`, `2:3`, `3:2`, `3:4`, `4:3`, `4:5`, `5:4`, `9:16`, `16:9`, `21:9` |
 | `resolution` | string | No | `"1K"` | Quality: `1K`, `2K`, `4K` |
-| `output_format` | string | No | `"png"` | Format: `png`, `jpeg`, `webp` |
+| `output_format` | string | No | `"png"` | Saved filename extension: `png`, `jpeg`, `webp` |
 | `num_images` | number | No | `1` | Number of images (1-4) |
 | `temperature` | number | No | `1.0` | Creativity (0.0-2.0) |
 
@@ -121,7 +134,7 @@ Edit existing images using text instructions.
 | `output_path` | string | Yes | - | File path to save result (directory or full path) |
 | `aspect_ratio` | string | No | `"auto"` | Aspect ratio (or `auto` to preserve original) |
 | `resolution` | string | No | `"1K"` | Quality: `1K`, `2K`, `4K` |
-| `output_format` | string | No | `"png"` | Format: `png`, `jpeg`, `webp` |
+| `output_format` | string | No | `"png"` | Saved filename extension: `png`, `jpeg`, `webp` |
 | `num_images` | number | No | `1` | Number of variations (1-4) |
 | `temperature` | number | No | `1.0` | Creativity (0.0-2.0) |
 
@@ -196,8 +209,7 @@ nano-banana-mcp-server/
 │   └── tools/
 │       ├── generate-image.ts # Generate tool
 │       └── edit-image.ts     # Edit tool
-├── dist/                     # Compiled output
-├── mcp-config.json           # MCP config for Claude Code
+├── dist/                     # Compiled output (generated)
 ├── package.json
 ├── tsconfig.json
 └── README.md
@@ -206,7 +218,7 @@ nano-banana-mcp-server/
 ## Troubleshooting
 
 ### "API key not found"
-Ensure `GOOGLE_API_KEY` or `GEMINI_API_KEY` is set in your environment or MCP client configuration.
+Ensure `GEMINI_API_KEY` or `GOOGLE_API_KEY` is set in your environment or MCP client configuration.
 
 ### "Content was blocked"
 The prompt may have triggered safety filters. Try rephrasing with less explicit or controversial content.
