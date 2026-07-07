@@ -18,17 +18,21 @@ mcp-config.json
 Thumbs.db
 
 # IDE
+.claude/
 .idea/
 .vscode/
 *.swp
 *.swo
 
 # Logs
+logs
+logs/
 *.log
 npm-debug.log*
 
 # Test output
 coverage/
+test-outputs/
 test-*.png
 test-*.jpg
 test-*.webp

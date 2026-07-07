@@ -19,7 +19,8 @@ An MCP (Model Context Protocol) server for generating and editing images using G
 ## Installation
 
 ```bash
-# Clone or navigate to the server directory
+# Clone the repository
+git clone https://github.com/andfal/nano-banana-mcp-server.git
 cd nano-banana-mcp-server
 
 # Install dependencies
@@ -41,38 +42,23 @@ export GOOGLE_API_KEY="your-api-key-here"
 
 ## Usage
 
-### Running the Server
-
-```bash
-npm start
-```
-
-The server runs via stdio transport, designed to be used with MCP-compatible clients.
-
 ### Claude Code
 
-Create a local MCP config file such as `mcp-config.json`:
-
-```json
-{
-  "mcpServers": {
-    "nano-banana": {
-      "command": "node",
-      "args": ["/absolute/path/to/nano-banana-mcp-server/dist/index.js"],
-      "env": {
-        "GEMINI_API_KEY": "your-api-key-here"
-      }
-    }
-  }
-}
-```
-
-`mcp-config.json` is intentionally ignored by Git so local API keys are not committed.
+Add the server to Claude Code as a local stdio MCP server:
 
 ```bash
-# Run Claude Code with the MCP server
-claude --mcp-config /path/to/nano-banana-mcp-server/mcp-config.json
+export GEMINI_API_KEY="your-api-key-here"
+
+claude mcp add nano-banana \
+  --scope local \
+  --transport stdio \
+  --env GEMINI_API_KEY="$GEMINI_API_KEY" \
+  -- node /absolute/path/to/nano-banana-mcp-server/dist/index.js
+
+claude mcp list
 ```
+
+`--scope local` stores the MCP server in your private Claude Code configuration for the current project, not in this repository. After starting Claude Code, run `/mcp` to verify that `nano-banana` is connected.
 
 ### Claude Desktop
 
@@ -91,6 +77,14 @@ Add to your Claude Desktop configuration file (`~/Library/Application Support/Cl
   }
 }
 ```
+
+### Running Directly
+
+```bash
+npm start
+```
+
+The server runs via stdio transport. You usually do not need to run this command yourself when using Claude Code or Claude Desktop because the MCP client starts the server process from its configuration. It is useful for local development, smoke testing, or wiring the server into another MCP-compatible client.
 
 ## Tools
 
@@ -195,7 +189,7 @@ npm run clean
 ## Project Structure
 
 ```
-nano-banana-mcp-server/
+.
 ├── src/
 │   ├── index.ts              # Entry point
 │   ├── constants.ts          # Configuration constants
@@ -234,4 +228,4 @@ Resize your input image to be smaller than 7MB.
 
 ## License
 
-MIT
+[MIT](LICENSE)
