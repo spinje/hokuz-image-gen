@@ -18,7 +18,7 @@
     "nano-banana",
     "gemini",
     "image-generation",
-    "ai"
+    "mcp-server"
   ],
   "author": "spinje",
   "license": "MIT",
@@ -32,12 +32,12 @@
   "homepage": "https://github.com/spinje/nano-banana-mcp-server#readme",
   "dependencies": {
     "@google/genai": "^2.10.0",
-    "@modelcontextprotocol/sdk": "^1.6.1",
-    "zod": "^3.23.8"
+    "@modelcontextprotocol/sdk": "^1.29.0",
+    "zod": "^4.4.3"
   },
   "devDependencies": {
     "@types/node": "^22.10.0",
-    "tsx": "^4.19.2",
+    "tsx": "^4.23.0",
     "typescript": "^5.7.2"
   }
 }
