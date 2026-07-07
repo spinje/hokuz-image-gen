@@ -1,7 +1,7 @@
 {
   "name": "nano-banana-mcp-server",
   "version": "1.0.0",
-  "description": "MCP server for generating and editing images using Nano Banana Pro (Gemini 3 Pro Image)",
+  "description": "MCP server for generating and editing images using the Nano Banana family of Google Gemini image models (Nano Banana 2 / 2 Lite / Pro)",
   "type": "module",
   "main": "dist/index.js",
   "scripts": {
@@ -20,10 +20,18 @@
     "image-generation",
     "ai"
   ],
-  "author": "",
+  "author": "spinje",
   "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/spinje/nano-banana-mcp-server.git"
+  },
+  "bugs": {
+    "url": "https://github.com/spinje/nano-banana-mcp-server/issues"
+  },
+  "homepage": "https://github.com/spinje/nano-banana-mcp-server#readme",
   "dependencies": {
-    "@google/genai": "^1.0.0",
+    "@google/genai": "^2.10.0",
     "@modelcontextprotocol/sdk": "^1.6.1",
     "zod": "^3.23.8"
   },

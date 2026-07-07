@@ -8,13 +8,17 @@ import {
   FILE_EXTENSIONS,
   MIME_TYPES,
   LIMITS,
+  DEFAULTS,
   type OutputFormat,
 } from "../constants.js";
 import { type InputImage, McpError, ErrorType } from "../types.js";
 
 /**
  * Generate a timestamp-based filename
- * Format: image-YYYY-MM-DD-HHmmss
+ * Format: image-YYYY-MM-DD-HHmmss-SSS
+ *
+ * Milliseconds are included so that rapid successive generations (e.g.
+ * num_images > 1 saved into a directory) do not collide on the same filename.
  */
 export function generateTimestampFilename(): string {
   const now = new Date();
@@ -24,8 +28,47 @@ export function generateTimestampFilename(): string {
   const hours = String(now.getHours()).padStart(2, "0");
   const minutes = String(now.getMinutes()).padStart(2, "0");
   const seconds = String(now.getSeconds()).padStart(2, "0");
+  const millis = String(now.getMilliseconds()).padStart(3, "0");
 
-  return `image-${year}-${month}-${day}-${hours}${minutes}${seconds}`;
+  return `image-${year}-${month}-${day}-${hours}${minutes}${seconds}-${millis}`;
+}
+
+/**
+ * Infer an output format from a file path's extension.
+ *
+ * @returns The matching OutputFormat, or undefined if the extension is absent
+ *          or not one we produce.
+ */
+export function inferOutputFormatFromPath(
+  outputPath: string
+): OutputFormat | undefined {
+  const ext = path.extname(outputPath).toLowerCase();
+  switch (ext) {
+    case ".jpg":
+    case ".jpeg":
+      return "jpeg";
+    default:
+      return undefined;
+  }
+}
+
+/**
+ * Resolve the output format to request/save, given an optional explicit format
+ * and the output path.
+ *
+ * Precedence:
+ *   1. An explicit requested format wins.
+ *   2. Otherwise infer from the output path extension.
+ *   3. Otherwise fall back to the default output format.
+ */
+export function resolveRequestedOutputFormat(
+  outputPath: string,
+  requestedFormat?: OutputFormat
+): OutputFormat {
+  if (requestedFormat) {
+    return requestedFormat;
+  }
+  return inferOutputFormatFromPath(outputPath) ?? DEFAULTS.outputFormat;
 }
 
 /**
@@ -71,7 +114,7 @@ async function ensureDirectory(dirPath: string): Promise<void> {
  * Resolve the output path for saving an image
  *
  * @param outputPath - User-provided path (file or directory)
- * @param format - Output format (png, jpeg, webp)
+ * @param format - Output format (jpeg)
  * @param index - Image index for multiple images (0-based)
  * @returns Resolved absolute file path
  */
@@ -86,8 +129,12 @@ export async function resolveOutputPath(
 
   const extension = FILE_EXTENSIONS[format];
 
-  // Check if path is an existing directory
-  if (await isDirectory(absolutePath)) {
+  // Treat as a directory when the path already is one, OR when the user signals
+  // directory intent with a trailing separator (path.resolve strips it, so we
+  // check the original string). A directory that does not exist yet is created.
+  const endsWithSeparator = /[\\/]$/.test(outputPath);
+  if (endsWithSeparator || (await isDirectory(absolutePath))) {
+    await ensureDirectory(absolutePath);
     // Generate filename in the directory
     const filename = `${generateTimestampFilename()}${index > 0 ? `-${index + 1}` : ""}${extension}`;
     return path.join(absolutePath, filename);
@@ -100,21 +147,15 @@ export async function resolveOutputPath(
     await ensureDirectory(parentDir);
   }
 
-  // If it's a file path
-  const ext = path.extname(absolutePath).toLowerCase();
+  // If it's a file path. Any existing extension is replaced so the saved file
+  // extension always matches the resolved output format.
+  const ext = path.extname(absolutePath);
+  const baseName = ext
+    ? path.basename(absolutePath, ext)
+    : path.basename(absolutePath);
+  const suffix = index > 0 ? `-${index + 1}` : "";
 
-  if (ext) {
-    // Path has an extension - use as-is but add index if needed
-    if (index > 0) {
-      const baseName = path.basename(absolutePath, ext);
-      return path.join(parentDir, `${baseName}-${index + 1}${ext}`);
-    }
-    return absolutePath;
-  } else {
-    // No extension - treat as filename without extension
-    const filename = `${path.basename(absolutePath)}${index > 0 ? `-${index + 1}` : ""}${extension}`;
-    return path.join(parentDir, filename);
-  }
+  return path.join(parentDir, `${baseName}${suffix}${extension}`);
 }
 
 /**

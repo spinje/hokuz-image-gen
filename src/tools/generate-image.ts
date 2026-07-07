@@ -1,7 +1,8 @@
 /**
  * Generate Image Tool Implementation
  *
- * Generates images from text prompts using Nano Banana Pro (Gemini 3 Pro Image).
+ * Generates images from text prompts using the Nano Banana image models
+ * (Nano Banana 2 / 2 Lite / Pro) via the Gemini Interactions API.
  */
 
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
@@ -10,32 +11,47 @@ import {
   GenerateImageOutputSchema,
   type GenerateImageOutput,
 } from "../schemas/generate.js";
-import { generateImage } from "../services/gemini-client.js";
+import {
+  generateImage,
+  validateGenerationConfig,
+  type GenerationConfig,
+} from "../services/gemini-client.js";
 import {
   resolveOutputPath,
   saveBase64Image,
+  resolveRequestedOutputFormat,
 } from "../services/file-utils.js";
-import { McpError } from "../types.js";
-import { DEFAULTS, type OutputFormat } from "../constants.js";
+import { McpError, type GeneratedImage } from "../types.js";
+import { DEFAULTS } from "../constants.js";
 
 /**
  * Tool description for LLM discoverability
  */
-const TOOL_DESCRIPTION = `Generate images from text prompts using Nano Banana Pro (Google's Gemini 3 Pro Image model).
+const TOOL_DESCRIPTION = `Generate images from text prompts using the Nano Banana image models (Google's Gemini image models).
 
 This tool creates high-quality AI-generated images based on your text description. It supports:
+- Selectable models: Nano Banana 2 (gemini-3.1-flash-image, default), Nano Banana 2 Lite (gemini-3.1-flash-lite-image), and Nano Banana Pro (gemini-3-pro-image)
 - Multiple aspect ratios (1:1, 16:9, 9:16, etc.)
-- Resolutions up to 4K
-- Multiple output formats (PNG, JPEG, WebP)
+- Resolutions up to 4K (model-dependent: Lite is 1K only)
+- Output format: JPEG (the only format these models produce)
 - Generating 1-4 images per request
 - Temperature control for creativity
+
+Unsupported model/resolution or model/aspect-ratio combinations are rejected before any API call (no silent downgrades).
+
+Choosing a model (approximate speed for a 1K image and per-image cost; verify current prices at https://ai.google.dev/gemini-api/docs/pricing):
+- gemini-3.1-flash-lite-image (Nano Banana 2 Lite): fastest (~5s), cheapest (~$0.034), 1K only. Use for drafts, thumbnails, and high-volume batches.
+- gemini-3.1-flash-image (Nano Banana 2, DEFAULT): balanced (~11s), ~$0.045-$0.15 depending on resolution (0.5K-4K), supports extreme aspect ratios. Best everyday choice.
+- gemini-3-pro-image (Nano Banana Pro): highest quality but slowest (~17s), ~$0.13 (1K/2K) to ~$0.24 (4K), 1K-4K. Use for hero shots, photorealism, and cinematic lighting.
+Higher resolutions are slower and cost more. num_images > 1 makes that many separate requests, so time and cost scale linearly.
 
 Args:
   - prompt (string, required): Detailed text description of the image to generate
   - output_path (string, required): File path to save the image. Can be a directory (filename will be auto-generated with timestamp) or a full file path
+  - model (string, optional): "gemini-3.1-flash-image" (default), "gemini-3.1-flash-lite-image", or "gemini-3-pro-image"
   - aspect_ratio (string, optional): Image aspect ratio. Default: "1:1"
-  - resolution (string, optional): Image quality - "1K", "2K", or "4K". Default: "1K"
-  - output_format (string, optional): Output format - "png", "jpeg", or "webp". Default: "png"
+  - resolution (string, optional): Image quality - "0.5K", "1K", "2K", or "4K". Default: "1K"
+  - output_format (string, optional): Output format - only "jpeg" is supported. Default: "jpeg"
   - num_images (number, optional): Number of images to generate (1-4). Default: 1
   - temperature (number, optional): Creativity level 0.0-2.0. Higher = more creative. Default: 1.0
 
@@ -65,7 +81,7 @@ export function registerGenerateImageTool(server: McpServer): void {
   server.registerTool(
     "nanobanana_generate_image",
     {
-      title: "Generate Image with Nano Banana Pro",
+      title: "Generate Image with Nano Banana",
       description: TOOL_DESCRIPTION,
       inputSchema: GenerateImageInputSchema,
       outputSchema: GenerateImageOutputSchema,
@@ -78,26 +94,56 @@ export function registerGenerateImageTool(server: McpServer): void {
     },
     async (params) => {
       try {
-        // Apply defaults for optional parameters
+        // Apply defaults for optional parameters (MCP does not auto-apply Zod defaults)
+        const model = params.model ?? DEFAULTS.model;
         const aspectRatio = params.aspect_ratio ?? DEFAULTS.aspectRatio;
         const resolution = params.resolution ?? DEFAULTS.resolution;
         const temperature = params.temperature ?? DEFAULTS.temperature;
-        const numImages = params.num_images ?? DEFAULTS.numImages;
-        const outputFormat = (params.output_format ?? DEFAULTS.outputFormat) as OutputFormat;
+        const requestedCount = params.num_images ?? DEFAULTS.numImages;
+        const outputFormat = resolveRequestedOutputFormat(
+          params.output_path,
+          params.output_format
+        );
 
-        // Call the Gemini API to generate images
-        const response = await generateImage(params.prompt, {
+        const config: GenerationConfig = {
+          model,
           aspectRatio,
           resolution,
           temperature,
-          numImages,
-        });
+          outputFormat,
+        };
+
+        // Validate model options before any API call (fail fast, no downgrades)
+        validateGenerationConfig(config);
+
+        // num_images is implemented via repeated independent requests, each
+        // asking for one image. Stop once we have enough.
+        const collected: GeneratedImage[] = [];
+        const descriptions: string[] = [];
+        for (
+          let attempt = 0;
+          collected.length < requestedCount && attempt < requestedCount;
+          attempt++
+        ) {
+          try {
+            const response = await generateImage(params.prompt, config);
+            collected.push(...response.images);
+            if (response.description) descriptions.push(response.description);
+          } catch (err) {
+            // If we have no images yet, surface the error. Otherwise keep what
+            // we got and warn that fewer than requested were produced.
+            if (collected.length === 0) throw err;
+            break;
+          }
+        }
+
+        const imagesToSave = collected.slice(0, requestedCount);
 
         // Process the generated images - save to files
         const outputImages: GenerateImageOutput["images"] = [];
 
-        for (let i = 0; i < response.images.length; i++) {
-          const image = response.images[i];
+        for (let i = 0; i < imagesToSave.length; i++) {
+          const image = imagesToSave[i];
           const filePath = await resolveOutputPath(
             params.output_path,
             outputFormat,
@@ -111,17 +157,24 @@ export function registerGenerateImageTool(server: McpServer): void {
           });
         }
 
+        const description = descriptions.length
+          ? Array.from(new Set(descriptions)).join("\n---\n")
+          : undefined;
+
         const output: GenerateImageOutput = {
           success: true,
           images: outputImages,
-          description: response.description,
+          description,
         };
 
         // Format response text
         const paths = outputImages.map((img) => img.path).join("\n  ");
         let textContent = `Successfully generated ${outputImages.length} image(s):\n  ${paths}`;
-        if (response.description) {
-          textContent += `\n\nDescription: ${response.description}`;
+        if (outputImages.length < requestedCount) {
+          textContent += `\n\nWarning: requested ${requestedCount} image(s) but only ${outputImages.length} were produced.`;
+        }
+        if (description) {
+          textContent += `\n\nDescription: ${description}`;
         }
 
         return {

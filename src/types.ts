@@ -2,18 +2,30 @@
  * Type definitions for Nano Banana MCP Server
  */
 
-import type { AspectRatio, Resolution, OutputFormat } from "./constants.js";
+import type {
+  AspectRatio,
+  Resolution,
+  OutputFormat,
+  ImageModel,
+} from "./constants.js";
 
 /**
  * Configuration for image generation requests
  */
 export interface ImageGenerationConfig {
-  /** Aspect ratio for the generated image */
-  aspectRatio: AspectRatio;
+  /** Model to use for generation */
+  model: ImageModel;
+  /**
+   * Aspect ratio for the generated image. Optional: when omitted (edit "auto"),
+   * no aspect ratio is sent and the model preserves the input's native ratio.
+   */
+  aspectRatio?: AspectRatio;
   /** Resolution/quality setting */
   resolution: Resolution;
   /** Temperature for creativity (0.0-2.0) */
   temperature: number;
+  /** Requested output image format */
+  outputFormat: OutputFormat;
 }
 
 /**
@@ -116,6 +128,7 @@ export enum ErrorType {
   CONTENT_BLOCKED = "CONTENT_BLOCKED",
   FILE_WRITE_ERROR = "FILE_WRITE_ERROR",
   API_ERROR = "API_ERROR",
+  INVALID_MODEL_OPTION = "INVALID_MODEL_OPTION",
   UNKNOWN_ERROR = "UNKNOWN_ERROR",
 }
 

@@ -4,6 +4,7 @@
 
 import { z } from "zod";
 import {
+  IMAGE_MODELS,
   ASPECT_RATIOS,
   RESOLUTIONS,
   OUTPUT_FORMATS,
@@ -50,18 +51,33 @@ export const EditImageInputSchema = z
         "Local file path to save the edited image. Can be a directory (filename will be auto-generated with timestamp) or a full file path."
       ),
 
+    model: z
+      .enum(IMAGE_MODELS)
+      .default(DEFAULTS.model)
+      .describe(
+        `Image model to use. Options: ${IMAGE_MODELS.join(", ")}. ` +
+          `'gemini-3.1-flash-image' (Nano Banana 2) is the balanced default (0.5K/1K/2K/4K); ` +
+          `'gemini-3.1-flash-lite-image' (Nano Banana 2 Lite) is cheapest/fastest (1K only); ` +
+          `'gemini-3-pro-image' (Nano Banana Pro) is highest quality (1K/2K/4K). ` +
+          `Default: ${DEFAULTS.model}`
+      ),
+
     aspect_ratio: z
       .enum(EDIT_ASPECT_RATIOS)
       .default("auto")
       .describe(
-        `Aspect ratio for the output image. 'auto' preserves the original aspect ratio. Options: auto, ${ASPECT_RATIOS.join(", ")}. Default: auto`
+        `Aspect ratio for the output image. 'auto' preserves the original aspect ratio. Options: auto, ${ASPECT_RATIOS.join(", ")}. ` +
+          `The extreme ratios (1:4, 4:1, 1:8, 8:1) are only supported by gemini-3.1-flash-image; ` +
+          `unsupported model/aspect combinations are rejected before the API call. Default: auto`
       ),
 
     resolution: z
       .enum(RESOLUTIONS)
       .default(DEFAULTS.resolution)
       .describe(
-        `Output image resolution/quality. Options: ${RESOLUTIONS.join(", ")}. 4K provides highest quality. Default: ${DEFAULTS.resolution}`
+        `Output image resolution/quality. Options: ${RESOLUTIONS.join(", ")}. 4K provides highest quality. ` +
+          `Supported resolutions vary by model (Lite is 1K only; Pro is 1K/2K/4K); ` +
+          `unsupported model/resolution combinations are rejected before the API call. Default: ${DEFAULTS.resolution}`
       ),
 
     output_format: z
@@ -122,7 +138,7 @@ export const EditImageOutputSchema = z.object({
           .string()
           .optional()
           .describe("Base64 data URL of the image (if no output_path was provided)"),
-        format: z.string().describe("Image format (png, jpeg, webp)"),
+        format: z.string().describe("Image format (jpeg)"),
       })
     )
     .describe("Array of edited images"),

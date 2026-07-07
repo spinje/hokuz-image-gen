@@ -1,13 +1,20 @@
 /**
- * Gemini API Client for Nano Banana Pro image generation
+ * Gemini API Client for Nano Banana image generation/editing.
+ *
+ * Uses the Gemini Interactions API (ai.interactions.create), which is the
+ * generally-available, recommended path for the current image models.
  */
 
-import { GoogleGenAI, HarmCategory, HarmBlockThreshold } from "@google/genai";
+import { GoogleGenAI } from "@google/genai";
 import {
-  MODEL_ID,
   ENV_VARS,
+  MIME_TYPES,
+  IMAGE_SIZE_API_VALUES,
+  getUnsupportedModelOptionMessage,
   type AspectRatio,
   type Resolution,
+  type OutputFormat,
+  type ImageModel,
 } from "../constants.js";
 import {
   type GeminiImageResponse,
@@ -18,17 +25,24 @@ import {
 } from "../types.js";
 
 /**
- * Configuration for image generation
+ * Configuration for a single image generation/edit request.
+ *
+ * Note: `numImages` is intentionally NOT part of this config. Requesting
+ * multiple images is handled in the tool layer by making repeated independent
+ * requests, so the service is always "one request returns whatever it returns".
  */
 export interface GenerationConfig {
-  aspectRatio: AspectRatio;
+  model: ImageModel;
+  /** Omitted (undefined) means "auto" — do not send an aspect ratio. */
+  aspectRatio?: AspectRatio;
   resolution: Resolution;
   temperature: number;
-  numImages: number;
+  outputFormat: OutputFormat;
 }
 
 /**
- * Get the API key from environment variables
+ * Get the API key from environment variables.
+ * GEMINI_API_KEY is preferred; GOOGLE_API_KEY is accepted for compatibility.
  */
 function getApiKey(): string {
   const apiKey =
@@ -61,68 +75,99 @@ function getClient(): GoogleGenAI {
 }
 
 /**
- * Build the generation configuration for the API request
+ * Validate a generation config against the model capability registry.
+ * Throws INVALID_MODEL_OPTION before any API request is made.
  */
-function buildGenerationConfig(config: GenerationConfig) {
+export function validateGenerationConfig(config: GenerationConfig): void {
+  const message = getUnsupportedModelOptionMessage({
+    model: config.model,
+    resolution: config.resolution,
+    aspectRatio: config.aspectRatio,
+  });
+  if (message) {
+    throw new McpError(ErrorType.INVALID_MODEL_OPTION, message);
+  }
+}
+
+/**
+ * Build the `response_format` object for an image interaction.
+ *
+ * - `mime_type` is "image/jpeg". These models output JPEG only; the API
+ *   rejects any other value (verified live: "image/png" returns a 400).
+ * - `aspect_ratio` is only included when defined (edit "auto" omits it so the
+ *   model preserves the input image's native ratio).
+ */
+function buildResponseFormat(config: GenerationConfig) {
   return {
-    temperature: config.temperature,
-    responseModalities: ["TEXT", "IMAGE"] as string[],
-    // Pass aspectRatio and resolution via imageConfig
-    imageConfig: {
-      aspectRatio: config.aspectRatio,
-      imageSize: config.resolution, // Maps "1K"/"2K"/"4K" to imageSize
-    },
+    type: "image" as const,
+    image_size: IMAGE_SIZE_API_VALUES[config.resolution],
+    mime_type: MIME_TYPES[config.outputFormat] as "image/jpeg",
+    ...(config.aspectRatio ? { aspect_ratio: config.aspectRatio } : {}),
   };
 }
 
 /**
- * Parse the API response to extract images and text
+ * The shape of an interaction returned by the SDK, narrowed to the fields we
+ * consume. Kept local to avoid depending on non-exported SDK type aliases.
  */
-function parseResponse(response: unknown): GeminiImageResponse {
+interface InteractionLike {
+  status?: string;
+  output_text?: string;
+  output_image?: { data?: string; mime_type?: string };
+  steps?: Array<{
+    type?: string;
+    content?: Array<{
+      type?: string;
+      text?: string;
+      data?: string;
+      mime_type?: string;
+    }>;
+    error?: { message?: string };
+  }>;
+}
+
+/**
+ * Extract images and text description from an interaction response.
+ */
+function parseInteraction(interaction: InteractionLike): GeminiImageResponse {
   const images: GeneratedImage[] = [];
+  const seen = new Set<string>();
   let description: string | undefined;
 
-  // The response structure from @google/genai
-  const resp = response as {
-    candidates?: Array<{
-      content?: {
-        parts?: Array<{
-          text?: string;
-          inlineData?: {
-            mimeType: string;
-            data: string;
-          };
-        }>;
-      };
-    }>;
+  const addImage = (data?: string, mimeType?: string) => {
+    if (!data || seen.has(data)) return;
+    seen.add(data);
+    images.push({ data, mimeType: mimeType ?? "image/jpeg" });
   };
 
-  if (!resp.candidates || resp.candidates.length === 0) {
-    throw new McpError(
-      ErrorType.API_ERROR,
-      "Error: No response candidates returned from the API. The request may have been blocked."
-    );
+  const addText = (text?: string) => {
+    if (!text) return;
+    description = description ? `${description}\n${text}` : text;
+  };
+
+  // Convenience field: the last generated image.
+  if (interaction.output_image) {
+    addImage(interaction.output_image.data, interaction.output_image.mime_type);
   }
 
-  for (const candidate of resp.candidates) {
-    const parts = candidate.content?.parts || [];
-
-    for (const part of parts) {
-      if (part.inlineData) {
-        images.push({
-          data: part.inlineData.data,
-          mimeType: part.inlineData.mimeType,
-        });
-      } else if (part.text) {
-        description = description
-          ? `${description}\n${part.text}`
-          : part.text;
+  // Also scan model output steps for any additional image/text content blocks.
+  for (const step of interaction.steps ?? []) {
+    if (step.type !== "model_output" || !Array.isArray(step.content)) continue;
+    for (const block of step.content) {
+      if (block.type === "image") {
+        addImage(block.data, block.mime_type);
+      } else if (block.type === "text") {
+        addText(block.text);
       }
     }
   }
 
+  // Fall back to the SDK's concatenated output_text if no step text was found.
+  if (!description) {
+    addText(interaction.output_text);
+  }
+
   if (images.length === 0) {
-    // Check if content was blocked
     throw new McpError(
       ErrorType.CONTENT_BLOCKED,
       "Error: No images were generated. The content may have been blocked by safety filters. Try modifying your prompt."
@@ -133,95 +178,60 @@ function parseResponse(response: unknown): GeminiImageResponse {
 }
 
 /**
- * Generate images from a text prompt
+ * Generate images from a text prompt.
  */
 export async function generateImage(
   prompt: string,
   config: GenerationConfig
 ): Promise<GeminiImageResponse> {
+  validateGenerationConfig(config);
   const client = getClient();
 
   try {
-    // Build the request with image generation configuration
-    const generationConfig = buildGenerationConfig(config);
-
-    // Create the content parts - aspectRatio and imageSize are now passed via imageConfig
-    const response = await client.models.generateContent({
-      model: MODEL_ID,
-      contents: [
-        {
-          role: "user",
-          parts: [{ text: prompt }],
-        },
-      ],
-      config: {
-        ...generationConfig,
-        // Safety settings with minimum restrictions - use SDK enums
-        safetySettings: [
-          { category: HarmCategory.HARM_CATEGORY_HARASSMENT, threshold: HarmBlockThreshold.BLOCK_NONE },
-          { category: HarmCategory.HARM_CATEGORY_HATE_SPEECH, threshold: HarmBlockThreshold.BLOCK_NONE },
-          { category: HarmCategory.HARM_CATEGORY_SEXUALLY_EXPLICIT, threshold: HarmBlockThreshold.BLOCK_NONE },
-          { category: HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT, threshold: HarmBlockThreshold.BLOCK_NONE },
-        ],
-      },
+    const interaction = await client.interactions.create({
+      model: config.model,
+      input: prompt,
+      response_format: buildResponseFormat(config),
+      generation_config: { temperature: config.temperature },
     });
 
-    return parseResponse(response);
+    return parseInteraction(interaction as InteractionLike);
   } catch (error) {
     return handleApiError(error);
   }
 }
 
 /**
- * Edit images using a text prompt
+ * Edit images using a text prompt.
  */
 export async function editImage(
   prompt: string,
   inputImages: InputImage[],
   config: GenerationConfig
 ): Promise<GeminiImageResponse> {
+  validateGenerationConfig(config);
   const client = getClient();
 
   try {
-    const generationConfig = buildGenerationConfig(config);
+    // Input images first (preserving order for "first image" / "second image"
+    // references), then the editing instruction.
+    const input = [
+      ...inputImages.map((image) => ({
+        type: "image" as const,
+        mime_type: image.mimeType,
+        data: image.data,
+      })),
+      { type: "text" as const, text: prompt },
+    ];
 
-    // Build content parts with images and prompt
-    const parts: Array<{ text: string } | { inlineData: { mimeType: string; data: string } }> = [];
-
-    // Add input images first
-    for (const image of inputImages) {
-      parts.push({
-        inlineData: {
-          mimeType: image.mimeType,
-          data: image.data,
-        },
-      });
-    }
-
-    // Add the editing prompt - aspectRatio and imageSize are passed via imageConfig
-    parts.push({ text: prompt });
-
-    const response = await client.models.generateContent({
-      model: MODEL_ID,
-      contents: [
-        {
-          role: "user",
-          parts,
-        },
-      ],
-      config: {
-        ...generationConfig,
-        // Safety settings with minimum restrictions - use SDK enums
-        safetySettings: [
-          { category: HarmCategory.HARM_CATEGORY_HARASSMENT, threshold: HarmBlockThreshold.BLOCK_NONE },
-          { category: HarmCategory.HARM_CATEGORY_HATE_SPEECH, threshold: HarmBlockThreshold.BLOCK_NONE },
-          { category: HarmCategory.HARM_CATEGORY_SEXUALLY_EXPLICIT, threshold: HarmBlockThreshold.BLOCK_NONE },
-          { category: HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT, threshold: HarmBlockThreshold.BLOCK_NONE },
-        ],
-      },
+    const interaction = await client.interactions.create({
+      model: config.model,
+      input,
+      response_format: buildResponseFormat(config),
+      generation_config: { temperature: config.temperature },
     });
 
-    return parseResponse(response);
+    return parseInteraction(interaction as InteractionLike);
   } catch (error) {
     return handleApiError(error);
   }
@@ -231,7 +241,7 @@ export async function editImage(
  * Handle API errors and convert to McpError
  */
 function handleApiError(error: unknown): never {
-  // Check for specific error types
+  // Preserve McpErrors we raised ourselves (e.g. validation, content blocked).
   if (error instanceof McpError) {
     throw error;
   }
@@ -257,7 +267,7 @@ function handleApiError(error: unknown): never {
   ) {
     throw new McpError(
       ErrorType.MISSING_API_KEY,
-      "Error: Invalid or missing API key. Please check your GEMINI_API_KEY environment variable."
+      `Error: Invalid or missing API key. Please check your ${ENV_VARS.geminiApiKey} environment variable.`
     );
   }
 

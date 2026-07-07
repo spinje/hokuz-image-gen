@@ -2,8 +2,8 @@
 /**
  * Nano Banana MCP Server
  *
- * An MCP server for generating and editing images using Nano Banana Pro
- * (Google's Gemini 3 Pro Image model).
+ * An MCP server for generating and editing images using the Nano Banana
+ * family of Google Gemini image models (Nano Banana 2 / 2 Lite / Pro).
  *
  * Tools:
  * - nanobanana_generate_image: Generate images from text prompts
@@ -55,7 +55,7 @@ async function main(): Promise<void> {
     validateApiKey();
   } catch (error) {
     console.error(
-      `ERROR: ${ENV_VARS.googleApiKey} or ${ENV_VARS.geminiApiKey} environment variable is required.`
+      `ERROR: ${ENV_VARS.geminiApiKey} or ${ENV_VARS.googleApiKey} environment variable is required.`
     );
     console.error("Get your API key at: https://aistudio.google.com/");
     process.exit(1);
