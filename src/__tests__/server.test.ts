@@ -13,7 +13,7 @@ afterEach(async () => {
 });
 
 describe("published tool contract", () => {
-  it("reports the package.json name and version to clients", async () => {
+  it("reports the server name and version from package.json to clients", async () => {
     const pkg = createRequire(import.meta.url)("../../package.json") as {
       name: string;
       version: string;
@@ -29,7 +29,14 @@ describe("published tool contract", () => {
     ]);
     for (const tool of tools) {
       expect(tool.description).toBeTruthy();
-      expect(tool.outputSchema).toBeDefined();
+      // Output items are always saved files: path and format, nothing optional.
+      const items = (
+        tool.outputSchema as unknown as {
+          properties: { images: { items: { required: string[]; properties: Record<string, unknown> } } };
+        }
+      ).properties.images.items;
+      expect(items.required.sort()).toEqual(["format", "path"]);
+      expect(items.properties).not.toHaveProperty("dataUrl");
       expect(tool.annotations).toEqual({
         readOnlyHint: false,
         destructiveHint: false,

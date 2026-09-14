@@ -90,7 +90,7 @@ export function registerEditImageTool(server: McpServer): void {
       inputSchema: EditImageInputSchema,
       outputSchema: EditImageOutputSchema,
       annotations: {
-        readOnlyHint: false, // Creates files when output_path provided
+        readOnlyHint: false, // Always writes the result to output_path
         destructiveHint: false, // Doesn't delete existing data
         idempotentHint: false, // Same inputs can produce different results
         openWorldHint: true, // Interacts with external Google API
@@ -98,7 +98,8 @@ export function registerEditImageTool(server: McpServer): void {
     },
     async (params) => {
       try {
-        // Apply defaults for optional parameters (MCP does not auto-apply Zod defaults)
+        // The SDK has already applied the schema's .default() values; these fallbacks
+        // are defence in depth only. Optionality is decided by .default() in the schema.
         const model = params.model ?? DEFAULTS.model;
         const aspectRatioParam = params.aspect_ratio ?? "auto";
         // "auto" -> omit aspect ratio so the model preserves the native ratio.

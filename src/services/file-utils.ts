@@ -6,7 +6,6 @@ import * as fs from "fs/promises";
 import * as path from "path";
 import {
   FILE_EXTENSIONS,
-  MIME_TYPES,
   LIMITS,
   DEFAULTS,
   type OutputFormat,
@@ -60,6 +59,9 @@ export function inferOutputFormatFromPath(
  *   1. An explicit requested format wins.
  *   2. Otherwise infer from the output path extension.
  *   3. Otherwise fall back to the default output format.
+ *
+ * In practice the SDK always fills output_format from the schema default, so
+ * step 2 only matters for direct callers of this function.
  */
 export function resolveRequestedOutputFormat(
   outputPath: string,
@@ -324,11 +326,4 @@ function getMimeTypeFromExtension(ext: string): string {
   };
 
   return mimeMap[ext] || "image/png";
-}
-
-/**
- * Get MIME type for an output format
- */
-export function getMimeType(format: OutputFormat): string {
-  return MIME_TYPES[format];
 }

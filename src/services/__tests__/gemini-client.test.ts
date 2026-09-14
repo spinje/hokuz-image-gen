@@ -34,8 +34,11 @@ beforeEach(() => {
 
 describe("parseInteraction", () => {
   it("reads output_image first and de-duplicates it against step content", () => {
+    // output_text is the SDK's concatenation of the step text; it must only be
+    // used when the steps carried none, or every description would double.
     const result = parseInteraction({
       output_image: { data: IMG_A, mime_type: "image/jpeg" },
+      output_text: "A caption",
       steps: [
         {
           type: "model_output",

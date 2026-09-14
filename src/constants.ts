@@ -182,20 +182,6 @@ export const IMAGE_MODEL_CAPABILITIES: Record<ImageModel, ImageModelCapabilities
 };
 
 /**
- * Type guard: is the given string one of the supported image models?
- */
-export function isImageModel(value: string): value is ImageModel {
-  return (IMAGE_MODELS as readonly string[]).includes(value);
-}
-
-/**
- * Get the capability metadata for a model.
- */
-export function getModelCapabilities(model: ImageModel): ImageModelCapabilities {
-  return IMAGE_MODEL_CAPABILITIES[model];
-}
-
-/**
  * Pure validation helper. Returns a human-readable error message if the
  * model/resolution/aspect-ratio combination is unsupported, otherwise null.
  *

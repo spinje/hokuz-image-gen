@@ -2,32 +2,6 @@
  * Type definitions for Nano Banana MCP Server
  */
 
-import type {
-  AspectRatio,
-  Resolution,
-  OutputFormat,
-  ImageModel,
-} from "./constants.js";
-
-/**
- * Configuration for image generation requests
- */
-export interface ImageGenerationConfig {
-  /** Model to use for generation */
-  model: ImageModel;
-  /**
-   * Aspect ratio for the generated image. Optional: when omitted (edit "auto"),
-   * no aspect ratio is sent and the model preserves the input's native ratio.
-   */
-  aspectRatio?: AspectRatio;
-  /** Resolution/quality setting */
-  resolution: Resolution;
-  /** Temperature for creativity (0.0-2.0) */
-  temperature: number;
-  /** Requested output image format */
-  outputFormat: OutputFormat;
-}
-
 /**
  * A single generated image result
  */
@@ -50,18 +24,6 @@ export interface GeminiImageResponse {
   images: GeneratedImage[];
   /** Text description from the model (if any) */
   description?: string;
-}
-
-/**
- * Result of saving an image to disk
- */
-export interface SavedImageResult {
-  /** Full path where the image was saved */
-  path: string;
-  /** Output format used */
-  format: OutputFormat;
-  /** Size in bytes */
-  size: number;
 }
 
 /**

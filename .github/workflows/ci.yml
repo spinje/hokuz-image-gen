@@ -1,7 +1,8 @@
 name: CI
 
 # Pull requests are the verification point. One job runs the same gate as
-# `npm run check` locally (plus the build) so nothing reaches main unverified.
+# `npm run check` locally (plus the build). Direct pushes to main are not
+# checked; merge through a PR.
 on:
   pull_request:
     branches: [main]
