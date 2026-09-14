@@ -68,6 +68,10 @@ A local MCP (Model Context Protocol) server that exposes two tools, `nanobanana_
 │       ├── harness.ts          # connectTestClient(): real server + SDK Client, InMemoryTransport
 │       ├── server.test.ts      # Published tool contract (names, annotations, JSON Schema)
 │       └── constants.test.ts
+├── .claude/
+│   ├── agents/                 # review-* lenses + REVIEW-PROTOCOL.md (see Review Battery)
+│   ├── skills/deep-review/     # /deep-review orchestrator: dispatch lenses, evaluate, action plan
+│   └── commands/test-reflect.md # self-audit of tests you just wrote
 ├── .github/workflows/ci.yml    # PR gate: build, typecheck, lint, test
 ├── eslint.config.js, vitest.config.ts, tsconfig.json, tsconfig.test.json
 ├── README.md                   # User docs incl. hand-maintained model speed/cost tables
@@ -132,7 +136,7 @@ When the SDK's schema validation rejects a call, the client receives `{ isError:
 
 ## Testing
 
-`npm test` runs 54 tests in about half a second with no network access. The suite exists to make the gotchas above and the invariants below fail loudly when broken; it is not a coverage exercise.
+`npm test` runs every `src/**/*.test.ts` (54 tests, about half a second, no network). The suite exists to make the gotchas above and the invariants below fail loudly when broken; it is not a coverage exercise.
 
 - `services/__tests__/file-utils.test.ts` — output path rules (trailing separator, extension replacement, `-N` suffixes in both modes, `~`), 7 MB limit, URL loading via mocked `fetch`.
 - `services/__tests__/gemini-client.test.ts` — exact Interactions request shape, `aspect_ratio` omitted for `auto`, `parseInteraction` de-dup/fallbacks, API error mapping, `GEMINI_API_KEY` precedence.
@@ -209,7 +213,9 @@ All failures become `McpError(type, message, details?)` with an actionable messa
 4. Ships with its tests. A change without a test that would fail on regression is incomplete.
 5. Ends with `npm run check` green.
 
-**Keep the four hand-maintained surfaces in sync** when a task adds a parameter, model, or tool or changes a documented behaviour: this file, the README tables, both `TOOL_DESCRIPTION`s, and the schema `.describe()` strings. Stale instruction files have caused real errors.
+**Review battery.** Before a PR, or after any phase that touches schemas, descriptions, `file-utils.ts`, the request path, or tests, run `/deep-review` (scope: `staged` | `unstaged` | `branch`). It picks 1-4 lenses from `.claude/agents/review-*.md` — silent-failures, tool-contract, test-fidelity, input-safety, simplicity — evaluates their findings, and produces an action plan; you own the verdict, not the lenses. `review-falsifier` runs the built server against the real API and costs money: `--falsify` or an explicit ask only. After writing tests, run `/test-reflect`.
+
+**Keep the four hand-maintained surfaces in sync** when a task adds a parameter, model, or tool or changes a documented behaviour: this file, the README tables, both `TOOL_DESCRIPTION`s, and the schema `.describe()` strings — plus any review lens in `.claude/agents/` that cites the changed fact. Stale instruction files have caused real errors.
 
 ## User Decisions and Recommendations
 
