@@ -113,9 +113,9 @@ export const LIMITS = {
 
 /** Environment variable names for configuration */
 export const ENV_VARS = {
-  /** Primary API key environment variable */
+  /** Fallback API key environment variable (accepted for compatibility) */
   googleApiKey: "GOOGLE_API_KEY",
-  /** Fallback API key environment variable */
+  /** Preferred API key environment variable; checked first */
   geminiApiKey: "GEMINI_API_KEY",
 } as const;
 
@@ -180,20 +180,6 @@ export const IMAGE_MODEL_CAPABILITIES: Record<ImageModel, ImageModelCapabilities
     supportsStructuredOutputs: true,
   },
 };
-
-/**
- * Type guard: is the given string one of the supported image models?
- */
-export function isImageModel(value: string): value is ImageModel {
-  return (IMAGE_MODELS as readonly string[]).includes(value);
-}
-
-/**
- * Get the capability metadata for a model.
- */
-export function getModelCapabilities(model: ImageModel): ImageModelCapabilities {
-  return IMAGE_MODEL_CAPABILITIES[model];
-}
 
 /**
  * Pure validation helper. Returns a human-readable error message if the

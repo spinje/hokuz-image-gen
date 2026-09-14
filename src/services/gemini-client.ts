@@ -110,7 +110,7 @@ function buildResponseFormat(config: GenerationConfig) {
  * The shape of an interaction returned by the SDK, narrowed to the fields we
  * consume. Kept local to avoid depending on non-exported SDK type aliases.
  */
-interface InteractionLike {
+export interface InteractionLike {
   status?: string;
   output_text?: string;
   output_image?: { data?: string; mime_type?: string };
@@ -129,7 +129,7 @@ interface InteractionLike {
 /**
  * Extract images and text description from an interaction response.
  */
-function parseInteraction(interaction: InteractionLike): GeminiImageResponse {
+export function parseInteraction(interaction: InteractionLike): GeminiImageResponse {
   const images: GeneratedImage[] = [];
   const seen = new Set<string>();
   let description: string | undefined;

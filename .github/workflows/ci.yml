@@ -1,0 +1,39 @@
+name: CI
+
+# Pull requests are the verification point. One job runs the same gate as
+# `npm run check` locally (plus the build). Direct pushes to main are not
+# checked; merge through a PR.
+on:
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  check:
+    name: Build, typecheck, lint, test
+    runs-on: ubuntu-latest
+    # Bounded so a hung step cannot bill toward the platform default of six
+    # hours. The whole gate runs in well under a minute of real work.
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm run build
+      # The cheap checks run even after an earlier failure so one red step does
+      # not hide the others' signal.
+      - run: npm run typecheck
+        if: ${{ !cancelled() }}
+      - run: npm run lint
+        if: ${{ !cancelled() }}
+      - run: npm test
+        if: ${{ !cancelled() }}

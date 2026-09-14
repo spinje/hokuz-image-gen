@@ -60,8 +60,7 @@ Returns:
     "success": boolean,
     "images": [
       {
-        "path": string (if output_path provided),
-        "dataUrl": string (if no output_path),
+        "path": string,
         "format": string
       }
     ],
@@ -86,7 +85,7 @@ export function registerGenerateImageTool(server: McpServer): void {
       inputSchema: GenerateImageInputSchema,
       outputSchema: GenerateImageOutputSchema,
       annotations: {
-        readOnlyHint: false, // Creates files when output_path provided
+        readOnlyHint: false, // Always writes the result to output_path
         destructiveHint: false, // Doesn't delete existing data
         idempotentHint: false, // Same prompt produces different images
         openWorldHint: true, // Interacts with external Google API
@@ -94,7 +93,8 @@ export function registerGenerateImageTool(server: McpServer): void {
     },
     async (params) => {
       try {
-        // Apply defaults for optional parameters (MCP does not auto-apply Zod defaults)
+        // The SDK has already applied the schema's .default() values; these fallbacks
+        // are defence in depth only. Optionality is decided by .default() in the schema.
         const model = params.model ?? DEFAULTS.model;
         const aspectRatio = params.aspect_ratio ?? DEFAULTS.aspectRatio;
         const resolution = params.resolution ?? DEFAULTS.resolution;

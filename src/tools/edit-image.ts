@@ -23,13 +23,8 @@ import {
   loadImage,
   resolveRequestedOutputFormat,
 } from "../services/file-utils.js";
-import {
-  McpError,
-  ErrorType,
-  type InputImage,
-  type GeneratedImage,
-} from "../types.js";
-import { LIMITS, DEFAULTS } from "../constants.js";
+import { McpError, type InputImage, type GeneratedImage } from "../types.js";
+import { DEFAULTS } from "../constants.js";
 
 /**
  * Tool description for LLM discoverability
@@ -95,7 +90,7 @@ export function registerEditImageTool(server: McpServer): void {
       inputSchema: EditImageInputSchema,
       outputSchema: EditImageOutputSchema,
       annotations: {
-        readOnlyHint: false, // Creates files when output_path provided
+        readOnlyHint: false, // Always writes the result to output_path
         destructiveHint: false, // Doesn't delete existing data
         idempotentHint: false, // Same inputs can produce different results
         openWorldHint: true, // Interacts with external Google API
@@ -103,15 +98,8 @@ export function registerEditImageTool(server: McpServer): void {
     },
     async (params) => {
       try {
-        // Validate number of input images
-        if (params.image_paths.length > LIMITS.maxInputImages) {
-          throw new McpError(
-            ErrorType.TOO_MANY_IMAGES,
-            `Error: Maximum ${LIMITS.maxInputImages} input images allowed. You provided ${params.image_paths.length}.`
-          );
-        }
-
-        // Apply defaults for optional parameters (MCP does not auto-apply Zod defaults)
+        // The SDK has already applied the schema's .default() values; these fallbacks
+        // are defence in depth only. Optionality is decided by .default() in the schema.
         const model = params.model ?? DEFAULTS.model;
         const aspectRatioParam = params.aspect_ratio ?? "auto";
         // "auto" -> omit aspect ratio so the model preserves the native ratio.
