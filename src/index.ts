@@ -53,7 +53,7 @@ async function main(): Promise<void> {
   // Validate API key is present before starting
   try {
     validateApiKey();
-  } catch (error) {
+  } catch {
     console.error(
       `ERROR: ${ENV_VARS.geminiApiKey} or ${ENV_VARS.googleApiKey} environment variable is required.`
     );
