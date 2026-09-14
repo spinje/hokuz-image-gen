@@ -5,13 +5,18 @@
  * in-memory transport without triggering the stdio startup in main().
  */
 
+import { createRequire } from "module";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { registerGenerateImageTool } from "./tools/generate-image.js";
 import { registerEditImageTool } from "./tools/edit-image.js";
 
-/** Server metadata */
-export const SERVER_NAME = "nano-banana-mcp-server";
-export const SERVER_VERSION = "1.0.0";
+/** Server metadata. The version is read from package.json so it cannot drift. */
+const pkg = createRequire(import.meta.url)("../package.json") as {
+  name: string;
+  version: string;
+};
+export const SERVER_NAME = pkg.name;
+export const SERVER_VERSION = pkg.version;
 
 /**
  * Create and configure the MCP server with all tools registered.

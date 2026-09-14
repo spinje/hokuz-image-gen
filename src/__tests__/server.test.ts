@@ -1,4 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
+import { createRequire } from "module";
 import { connectTestClient } from "./harness.js";
 
 let harness: Awaited<ReturnType<typeof connectTestClient>>;
@@ -12,6 +13,14 @@ afterEach(async () => {
 });
 
 describe("published tool contract", () => {
+  it("reports the package.json name and version to clients", async () => {
+    const pkg = createRequire(import.meta.url)("../../package.json") as {
+      name: string;
+      version: string;
+    };
+    expect(harness.client.getServerVersion()).toEqual({ name: pkg.name, version: pkg.version });
+  });
+
   it("registers exactly the two nanobanana_ tools with non-destructive, open-world annotations", async () => {
     const { tools } = await harness.client.listTools();
     expect(tools.map((t) => t.name).sort()).toEqual([

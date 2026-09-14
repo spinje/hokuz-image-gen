@@ -60,8 +60,7 @@ Returns:
     "success": boolean,
     "images": [
       {
-        "path": string (if output_path provided),
-        "dataUrl": string (if no output_path),
+        "path": string,
         "format": string
       }
     ],

@@ -23,13 +23,8 @@ import {
   loadImage,
   resolveRequestedOutputFormat,
 } from "../services/file-utils.js";
-import {
-  McpError,
-  ErrorType,
-  type InputImage,
-  type GeneratedImage,
-} from "../types.js";
-import { LIMITS, DEFAULTS } from "../constants.js";
+import { McpError, type InputImage, type GeneratedImage } from "../types.js";
+import { DEFAULTS } from "../constants.js";
 
 /**
  * Tool description for LLM discoverability
@@ -103,14 +98,6 @@ export function registerEditImageTool(server: McpServer): void {
     },
     async (params) => {
       try {
-        // Validate number of input images
-        if (params.image_paths.length > LIMITS.maxInputImages) {
-          throw new McpError(
-            ErrorType.TOO_MANY_IMAGES,
-            `Error: Maximum ${LIMITS.maxInputImages} input images allowed. You provided ${params.image_paths.length}.`
-          );
-        }
-
         // Apply defaults for optional parameters (MCP does not auto-apply Zod defaults)
         const model = params.model ?? DEFAULTS.model;
         const aspectRatioParam = params.aspect_ratio ?? "auto";

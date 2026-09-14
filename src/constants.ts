@@ -113,9 +113,9 @@ export const LIMITS = {
 
 /** Environment variable names for configuration */
 export const ENV_VARS = {
-  /** Primary API key environment variable */
+  /** Fallback API key environment variable (accepted for compatibility) */
   googleApiKey: "GOOGLE_API_KEY",
-  /** Fallback API key environment variable */
+  /** Preferred API key environment variable; checked first */
   geminiApiKey: "GEMINI_API_KEY",
 } as const;
 

@@ -37,7 +37,7 @@
   "homepage": "https://github.com/spinje/nano-banana-mcp-server#readme",
   "dependencies": {
     "@google/genai": "^2.10.0",
-    "@modelcontextprotocol/sdk": "^1.29.0",
+    "@modelcontextprotocol/sdk": "^1.30.0",
     "zod": "^4.4.3"
   },
   "devDependencies": {
