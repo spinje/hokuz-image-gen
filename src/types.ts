@@ -65,48 +65,6 @@ export interface SavedImageResult {
 }
 
 /**
- * Output structure for generate_image tool
- */
-export interface GenerateImageOutput {
-  /** Whether the operation succeeded */
-  success: boolean;
-  /** Array of generated image results */
-  images: Array<{
-    /** File path if saved to disk */
-    path?: string;
-    /** Base64 data URL if not saved to disk */
-    dataUrl?: string;
-    /** Image format */
-    format: string;
-  }>;
-  /** Model's text description of the generated image(s) */
-  description?: string;
-  /** Error message if operation failed */
-  error?: string;
-}
-
-/**
- * Output structure for edit_image tool
- */
-export interface EditImageOutput {
-  /** Whether the operation succeeded */
-  success: boolean;
-  /** Array of edited image results */
-  images: Array<{
-    /** File path if saved to disk */
-    path?: string;
-    /** Base64 data URL if not saved to disk */
-    dataUrl?: string;
-    /** Image format */
-    format: string;
-  }>;
-  /** Model's text description of the edited image(s) */
-  description?: string;
-  /** Error message if operation failed */
-  error?: string;
-}
-
-/**
  * Input image for editing operations
  */
 export interface InputImage {
@@ -123,7 +81,6 @@ export enum ErrorType {
   MISSING_API_KEY = "MISSING_API_KEY",
   INVALID_IMAGE_PATH = "INVALID_IMAGE_PATH",
   IMAGE_TOO_LARGE = "IMAGE_TOO_LARGE",
-  TOO_MANY_IMAGES = "TOO_MANY_IMAGES",
   API_RATE_LIMIT = "API_RATE_LIMIT",
   CONTENT_BLOCKED = "CONTENT_BLOCKED",
   FILE_WRITE_ERROR = "FILE_WRITE_ERROR",

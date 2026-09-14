@@ -52,30 +52,26 @@ A local MCP (Model Context Protocol) server that exposes two tools, `nanobanana_
 ```
 .
 ├── src/
-│   ├── index.ts                    # Entry point: API-key check, stdio transport
-│   ├── server.ts                   # createServer(); name/version read from package.json
-│   ├── constants.ts                # Models, capability registry, aspect ratios, resolutions, limits, defaults
-│   ├── types.ts                    # Shared interfaces, ErrorType enum, McpError
-│   ├── schemas/
-│   │   ├── generate.ts             # Zod input/output schema for nanobanana_generate_image
-│   │   └── edit.ts                 # Zod input/output schema for nanobanana_edit_image ('auto' aspect ratio)
+│   ├── index.ts                # Entry point: API-key check, stdio transport
+│   ├── server.ts               # createServer(); name/version from package.json
+│   ├── constants.ts            # Models, capability registry, limits, defaults
+│   ├── types.ts                # Shared interfaces, ErrorType, McpError
+│   ├── schemas/{generate,edit}.ts      # Zod input/output schemas (LLM reads the .describe() strings)
 │   ├── services/
-│   │   ├── gemini-client.ts        # Interactions API: request build, response parse, error mapping
-│   │   ├── file-utils.ts           # Output path resolution, image loading (file/URL), base64 helpers
-│   │   └── __tests__/              # Unit tests for the two services (SDK mocked, real temp dirs)
+│   │   ├── gemini-client.ts    # Interactions API: request build, response parse, error mapping
+│   │   ├── file-utils.ts       # Output path resolution, image loading (file/URL)
+│   │   └── __tests__/
 │   ├── tools/
-│   │   ├── generate-image.ts       # TOOL_DESCRIPTION + handler (num_images loop, saving)
-│   │   ├── edit-image.ts           # TOOL_DESCRIPTION + handler (image loading, 'auto')
-│   │   └── __tests__/              # Tool tests through a real MCP client over an in-memory transport
+│   │   ├── {generate,edit}-image.ts    # TOOL_DESCRIPTION + handler
+│   │   └── __tests__/          # Through a real MCP client over an in-memory transport
 │   └── __tests__/
-│       ├── harness.ts              # connectTestClient(): real server + SDK Client over InMemoryTransport
-│       ├── server.test.ts          # Published tool contract (names, annotations, JSON Schema)
-│       └── constants.test.ts       # Capability validation helper
-├── dist/                           # tsc output (gitignored); tests are excluded from emit
-├── .github/workflows/ci.yml        # PR gate: build, typecheck, lint, test
-├── eslint.config.js, vitest.config.ts, tsconfig.json
-├── README.md                       # User-facing docs incl. hand-maintained model speed/cost tables
-└── CLAUDE.md                       # This file
+│       ├── harness.ts          # connectTestClient(): real server + SDK Client, InMemoryTransport
+│       ├── server.test.ts      # Published tool contract (names, annotations, JSON Schema)
+│       └── constants.test.ts
+├── .github/workflows/ci.yml    # PR gate: build, typecheck, lint, test
+├── eslint.config.js, vitest.config.ts, tsconfig.json, tsconfig.test.json
+├── README.md                   # User docs incl. hand-maintained model speed/cost tables
+└── CLAUDE.md
 ```
 
 **Tool pattern** — each tool is three files with one job each: `schemas/<tool>.ts` (Zod shapes + `.describe()` strings the LLM reads), `tools/<tool>.ts` (the big `TOOL_DESCRIPTION` template string, defaults, orchestration, response formatting), and the shared services. Registration happens in `server.ts`. Tool names carry the `nanobanana_` prefix.
@@ -83,10 +79,10 @@ A local MCP (Model Context Protocol) server that exposes two tools, `nanobanana_
 ## Dev Environment
 
 - **Node ≥ 20.** `GEMINI_API_KEY` (preferred) or `GOOGLE_API_KEY` must be set to start the server; tests need neither.
-- `npm run build` — `tsc` to `dist/` (test files excluded)
+- `npm run build` — `tsc` to `dist/` (tests excluded from emit by `tsconfig.json`)
 - `npm run dev` — `tsx watch src/index.ts`
 - `npm start` — run the built server over stdio
-- `npm run typecheck` — `tsc --noEmit`
+- `npm run typecheck` — `tsc -p tsconfig.test.json` (src **and** tests, no emit)
 - `npm run lint` — ESLint, `--max-warnings=0`
 - `npm test` / `npm run test:watch` — Vitest (~0.5 s, no network)
 - `npm run check` — typecheck + lint + test. **This is the gate. Run it before calling a task done.** CI runs the same steps plus the build on every pull request.
@@ -153,23 +149,11 @@ When the SDK's schema validation rejects a call, the client receives `{ isError:
 
 **Manual verification** after changes that touch the API path: `npm run build`, register with an MCP client, run one real generation and one real edit, and try one invalid combination (Lite + 2K) to see the pre-flight error.
 
-## Adding a Parameter to an Existing Tool
+## Adding a Parameter or a Tool
 
-1. **Schema** (`src/schemas/generate.ts` / `edit.ts`): `new_param: z.enum(OPTIONS).default(DEFAULTS.newParam).describe("...")`. The `.describe()` string is read by the LLM — say what the options mean and name the default.
-2. **Handler** (`src/tools/*.ts`): `const newParam = params.new_param ?? DEFAULTS.newParam;` then pass it into `GenerationConfig`.
-3. **Service** (`src/services/gemini-client.ts`) if it changes the request.
-4. **Tool description** (the `TOOL_DESCRIPTION` template at the top of the tool file): add it to the Args list.
-5. **Tests in the same change:** the request-shape assertion in `gemini-client.test.ts` is an exact `toEqual` and will fail until updated; add a schema-default assertion in `server.test.ts` if the field has one.
-6. **README** parameter table.
-7. `npm run check`.
+**Parameter:** (1) schema field `z.enum(OPTIONS).default(DEFAULTS.x).describe("...")` — the describe string is read by the LLM, name the options and the default; (2) handler `params.x ?? DEFAULTS.x` into `GenerationConfig`; (3) service if the request changes; (4) the Args list in `TOOL_DESCRIPTION`; (5) tests in the same change — the exact request-shape `toEqual` in `gemini-client.test.ts` will fail until updated, and `server.test.ts` asserts schema defaults; (6) README parameter table; (7) `npm run check`.
 
-## Adding a New Tool
-
-1. `src/schemas/newtool.ts` — `NewToolInputSchema = z.object({...}).strict()`, `NewToolOutputSchema`, inferred types.
-2. `src/tools/newtool.ts` — `registerNewTool(server)` calling `server.registerTool("nanobanana_new_tool", { title, description, inputSchema, outputSchema, annotations }, handler)`. Copy the annotations block and the `catch` → `{ content, structuredContent: { success: false, error }, isError: true }` pattern from an existing tool.
-3. Register in `src/server.ts` and add the line to the startup banner in `src/index.ts`.
-4. Tests: a `tools/__tests__/newtool.test.ts` through `connectTestClient()`, and update the tool-name list in `server.test.ts`.
-5. README Tools section. `npm run check`.
+**Tool:** `src/schemas/newtool.ts` (`.strict()` input schema, output schema, inferred types) → `src/tools/newtool.ts` (`registerNewTool(server)` with a `nanobanana_` name; copy the annotations block and the `catch` → `{ content, structuredContent: { success: false, ... }, isError: true }` pattern from an existing tool) → register in `src/server.ts` and add the banner line in `src/index.ts` → `tools/__tests__/newtool.test.ts` through `connectTestClient()` and the name list in `server.test.ts` → README Tools section → `npm run check`.
 
 ## Google GenAI SDK Patterns
 

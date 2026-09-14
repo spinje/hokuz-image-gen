@@ -114,14 +114,7 @@ export const GenerateImageOutputSchema = z.object({
   images: z
     .array(
       z.object({
-        path: z
-          .string()
-          .optional()
-          .describe("File path where image was saved (if output_path was provided)"),
-        dataUrl: z
-          .string()
-          .optional()
-          .describe("Base64 data URL of the image (if no output_path was provided)"),
+        path: z.string().describe("File path where the image was saved"),
         format: z.string().describe("Image format (jpeg)"),
       })
     )

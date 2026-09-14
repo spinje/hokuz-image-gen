@@ -332,10 +332,3 @@ function getMimeTypeFromExtension(ext: string): string {
 export function getMimeType(format: OutputFormat): string {
   return MIME_TYPES[format];
 }
-
-/**
- * Convert base64 data to a data URL
- */
-export function toDataUrl(base64Data: string, mimeType: string): string {
-  return `data:${mimeType};base64,${base64Data}`;
-}

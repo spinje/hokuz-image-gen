@@ -10,7 +10,7 @@
     "build": "tsc",
     "clean": "rm -rf dist",
     "lint": "eslint . --max-warnings=0",
-    "typecheck": "tsc --noEmit",
+    "typecheck": "tsc -p tsconfig.test.json",
     "test": "vitest run",
     "test:watch": "vitest",
     "check": "npm run typecheck && npm run lint && npm run test"
