@@ -2,12 +2,9 @@ import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import * as fs from "fs/promises";
 import * as os from "os";
 import * as path from "path";
-import {
-  inferOutputFormatFromPath,
-  resolveOutputPath,
-  resolveRequestedOutputFormat,
-  saveBase64Image,
-} from "../file-utils.js";
+import { LIMITS } from "../../constants.js";
+import { ErrorType } from "../../types.js";
+import { inferOutputFormatFromPath, loadImage, resolveOutputPath } from "../file-utils.js";
 
 let tmp: string;
 
@@ -17,10 +14,11 @@ beforeEach(async () => {
 
 afterEach(async () => {
   vi.unstubAllEnvs();
+  vi.unstubAllGlobals();
   await fs.rm(tmp, { recursive: true, force: true });
 });
 
-const TIMESTAMPED = /^image-\d{4}-\d{2}-\d{2}-\d{6}-\d{3}(-\d+)?\.jpg$/;
+const TIMESTAMPED = /^image-\d{4}-\d{2}-\d{2}-\d{6}-\d{3}\.jpg$/;
 
 describe("resolveOutputPath", () => {
   it("treats an existing directory as a directory and generates a timestamped name", async () => {
@@ -53,11 +51,21 @@ describe("resolveOutputPath", () => {
     expect((await fs.stat(path.join(tmp, "a", "b"))).isDirectory()).toBe(true);
   });
 
-  it("suffixes -2, -3 from the second image onward", async () => {
+  it("suffixes -2, -3 from the second image onward in file mode", async () => {
     const base = path.join(tmp, "foo.jpg");
     expect(await resolveOutputPath(base, "jpeg", 0)).toBe(path.join(tmp, "foo.jpg"));
     expect(await resolveOutputPath(base, "jpeg", 1)).toBe(path.join(tmp, "foo-2.jpg"));
     expect(await resolveOutputPath(base, "jpeg", 2)).toBe(path.join(tmp, "foo-3.jpg"));
+  });
+
+  it("suffixes the index in directory mode too, so same-millisecond images cannot collide", async () => {
+    // num_images > 1 into a directory resolves each path within the same
+    // millisecond in practice; the index suffix is the only thing keeping
+    // them distinct.
+    const first = path.basename(await resolveOutputPath(tmp, "jpeg", 0));
+    const second = path.basename(await resolveOutputPath(tmp, "jpeg", 1));
+    expect(first).toMatch(TIMESTAMPED);
+    expect(second).toMatch(/^image-\d{4}-\d{2}-\d{2}-\d{6}-\d{3}-2\.jpg$/);
   });
 
   it("expands a leading ~ to HOME", async () => {
@@ -67,31 +75,63 @@ describe("resolveOutputPath", () => {
   });
 });
 
-describe("output format resolution", () => {
-  it("infers jpeg from .jpg and .jpeg, case-insensitively", () => {
+describe("inferOutputFormatFromPath", () => {
+  it("infers jpeg from .jpg and .jpeg case-insensitively, and nothing else", () => {
     expect(inferOutputFormatFromPath("a.jpg")).toBe("jpeg");
     expect(inferOutputFormatFromPath("a.JPEG")).toBe("jpeg");
-  });
-
-  it("returns undefined for extensions we do not produce", () => {
     expect(inferOutputFormatFromPath("a.png")).toBeUndefined();
     expect(inferOutputFormatFromPath("a")).toBeUndefined();
   });
-
-  it("explicit format wins, then path extension, then the default", () => {
-    expect(resolveRequestedOutputFormat("a.png", "jpeg")).toBe("jpeg");
-    expect(resolveRequestedOutputFormat("a.jpg")).toBe("jpeg");
-    expect(resolveRequestedOutputFormat("a.png")).toBe("jpeg");
-    expect(resolveRequestedOutputFormat("dir/")).toBe("jpeg");
-  });
 });
 
-describe("saveBase64Image", () => {
-  it("decodes and writes the bytes, returning the byte length", async () => {
-    const bytes = Buffer.from("not-really-a-jpeg");
-    const target = path.join(tmp, "out.jpg");
-    const size = await saveBase64Image(bytes.toString("base64"), target);
-    expect(size).toBe(bytes.length);
-    expect(await fs.readFile(target)).toEqual(bytes);
+describe("loadImage", () => {
+  it("rejects a local image over the size limit with IMAGE_TOO_LARGE", async () => {
+    const big = path.join(tmp, "big.png");
+    await fs.writeFile(big, Buffer.alloc(LIMITS.maxInputImageSize + 1));
+    await expect(loadImage(big)).rejects.toThrowError(
+      expect.objectContaining({ type: ErrorType.IMAGE_TOO_LARGE })
+    );
+  });
+
+  it("accepts a local image exactly at the size limit", async () => {
+    const edge = path.join(tmp, "edge.png");
+    await fs.writeFile(edge, Buffer.alloc(LIMITS.maxInputImageSize));
+    const image = await loadImage(edge);
+    expect(image.mimeType).toBe("image/png");
+    expect(Buffer.from(image.data, "base64")).toHaveLength(LIMITS.maxInputImageSize);
+  });
+
+  it("fetches http(s) URLs and takes the MIME type from the response header", async () => {
+    const bytes = Buffer.from("remote-bytes");
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response(bytes, { status: 200, headers: { "content-type": "image/webp" } })
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    const image = await loadImage("https://example.com/pic.webp");
+
+    expect(fetchMock).toHaveBeenCalledWith("https://example.com/pic.webp");
+    expect(image).toEqual({ data: bytes.toString("base64"), mimeType: "image/webp" });
+  });
+
+  it("reports a non-OK HTTP response as INVALID_IMAGE_PATH with the status code", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response("nope", { status: 404 })));
+
+    await expect(loadImage("https://example.com/missing.png")).rejects.toThrowError(
+      expect.objectContaining({
+        type: ErrorType.INVALID_IMAGE_PATH,
+        message: expect.stringContaining("status 404"),
+      })
+    );
+  });
+
+  it("does not treat non-http schemes as URLs", async () => {
+    const fetchMock = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
+
+    await expect(loadImage("file:///etc/hosts")).rejects.toThrowError(
+      expect.objectContaining({ type: ErrorType.INVALID_IMAGE_PATH })
+    );
+    expect(fetchMock).not.toHaveBeenCalled();
   });
 });

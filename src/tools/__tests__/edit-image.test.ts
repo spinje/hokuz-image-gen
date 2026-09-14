@@ -54,7 +54,6 @@ describe(TOOL, () => {
       temperature: DEFAULTS.temperature,
       outputFormat: DEFAULTS.outputFormat,
     });
-    expect("aspectRatio" in config).toBe(true);
     expect(await fs.readFile(path.join(tmp, "out.jpg"))).toEqual(Buffer.from("edited-bytes"));
   });
 

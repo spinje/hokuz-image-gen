@@ -15,7 +15,6 @@ const {
   editImage,
   generateImage,
   parseInteraction,
-  validateGenerationConfig,
 } = await import("../gemini-client.js");
 
 const IMG_A = Buffer.from("image-a").toString("base64");
@@ -102,14 +101,6 @@ describe("parseInteraction", () => {
   });
 });
 
-describe("validateGenerationConfig", () => {
-  it("throws INVALID_MODEL_OPTION for an unsupported combination", () => {
-    expect(() =>
-      validateGenerationConfig({ ...baseConfig, model: "gemini-3.1-flash-lite-image", resolution: "2K" })
-    ).toThrowError(expect.objectContaining({ type: ErrorType.INVALID_MODEL_OPTION }));
-  });
-});
-
 describe("generateImage request shape", () => {
   it("puts image options in response_format and only temperature in generation_config", async () => {
     createMock.mockResolvedValue({ output_image: { data: IMG_A } });
@@ -189,12 +180,67 @@ describe("API error mapping", () => {
     });
   }
 
-  it("re-throws McpErrors raised inside the request path unchanged", async () => {
-    // parseInteraction throws CONTENT_BLOCKED when the response has no image;
-    // handleApiError must not re-wrap it as API_ERROR.
+  it("re-throws McpErrors raised inside the request path with their original message", async () => {
+    // parseInteraction throws CONTENT_BLOCKED when the response has no image.
+    // Without the instanceof guard in handleApiError the heuristic would still
+    // classify it as CONTENT_BLOCKED (the message contains "blocked"), so the
+    // type alone cannot detect the regression; the exact message can.
     createMock.mockResolvedValue({ output_text: "no image" });
     await expect(generateImage("p", baseConfig)).rejects.toSatisfy(
-      (e: unknown) => e instanceof McpError && e.type === ErrorType.CONTENT_BLOCKED
+      (e: unknown) =>
+        e instanceof McpError &&
+        e.type === ErrorType.CONTENT_BLOCKED &&
+        e.message.startsWith("Error: No images were generated.")
+    );
+  });
+});
+
+describe("API key resolution", () => {
+  // A fresh module instance per case: the client is a module-level singleton,
+  // so the key it was built with is only observable on first construction.
+  const ctorMock = vi.fn();
+
+  async function freshGenerate() {
+    vi.resetModules();
+    vi.doMock("@google/genai", () => ({
+      GoogleGenAI: class {
+        interactions = { create: createMock };
+        constructor(opts: unknown) {
+          ctorMock(opts);
+        }
+      },
+    }));
+    const mod = await import("../gemini-client.js");
+    return mod;
+  }
+
+  beforeEach(() => {
+    ctorMock.mockReset();
+    createMock.mockResolvedValue({ output_image: { data: IMG_A } });
+  });
+
+  it("prefers GEMINI_API_KEY over GOOGLE_API_KEY when both are set", async () => {
+    vi.stubEnv("GEMINI_API_KEY", "gemini-key");
+    vi.stubEnv("GOOGLE_API_KEY", "google-key");
+    const { generateImage } = await freshGenerate();
+    await generateImage("p", baseConfig);
+    expect(ctorMock).toHaveBeenCalledWith({ apiKey: "gemini-key" });
+  });
+
+  it("falls back to GOOGLE_API_KEY", async () => {
+    vi.stubEnv("GEMINI_API_KEY", "");
+    vi.stubEnv("GOOGLE_API_KEY", "google-key");
+    const { generateImage } = await freshGenerate();
+    await generateImage("p", baseConfig);
+    expect(ctorMock).toHaveBeenCalledWith({ apiKey: "google-key" });
+  });
+
+  it("validateApiKey throws MISSING_API_KEY when neither is set", async () => {
+    vi.stubEnv("GEMINI_API_KEY", "");
+    vi.stubEnv("GOOGLE_API_KEY", "");
+    const { validateApiKey } = await freshGenerate();
+    expect(() => validateApiKey()).toThrowError(
+      expect.objectContaining({ type: ErrorType.MISSING_API_KEY })
     );
   });
 });

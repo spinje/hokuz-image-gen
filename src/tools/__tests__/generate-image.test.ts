@@ -105,6 +105,24 @@ describe(TOOL, () => {
     for (const p of paths) await fs.access(p);
   });
 
+  it("saves only the requested count when a single response carries extra images", async () => {
+    generateMock.mockResolvedValue({
+      images: [
+        { data: IMG, mimeType: "image/jpeg" },
+        { data: Buffer.from("second").toString("base64"), mimeType: "image/jpeg" },
+      ],
+    });
+
+    const result = await harness.callTool(TOOL, {
+      prompt: "p",
+      output_path: path.join(tmp, "one.jpg"),
+    });
+
+    expect(generateMock).toHaveBeenCalledTimes(1);
+    expect((result.structuredContent as { images: unknown[] }).images).toHaveLength(1);
+    expect(await fs.readdir(tmp)).toEqual(["one.jpg"]);
+  });
+
   it("keeps what it has and warns when a later request fails", async () => {
     generateMock
       .mockResolvedValueOnce(okResponse())
