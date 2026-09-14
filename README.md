@@ -47,7 +47,7 @@ Select a model with the optional `model` parameter on either tool. The default i
 
 ## Prerequisites
 
-- Node.js 18 or higher
+- Node.js 20 or higher
 - A Google AI Studio API key ([Get one here](https://aistudio.google.com/))
 
 ## Installation
@@ -209,17 +209,15 @@ output_path: ~/restored/
 ## Development
 
 ```bash
-# Install dependencies
-npm install
+npm install          # Install dependencies
+npm run build        # Compile to dist/
+npm run dev          # Development mode with auto-reload (tsx watch)
+npm run clean        # Remove build artifacts
 
-# Build
-npm run build
-
-# Development mode with auto-reload
-npm run dev
-
-# Clean build artifacts
-npm run clean
+npm run typecheck    # tsc --noEmit
+npm run lint         # ESLint (zero warnings allowed)
+npm test             # Vitest (no network; ~0.5 s)
+npm run check        # typecheck + lint + test — the gate CI runs on every pull request
 ```
 
 ## Project Structure
@@ -227,19 +225,26 @@ npm run clean
 ```
 .
 ├── src/
-│   ├── index.ts              # Entry point
-│   ├── constants.ts          # Configuration constants
-│   ├── types.ts              # TypeScript types
+│   ├── index.ts              # Entry point (stdio startup)
+│   ├── server.ts             # createServer(): registers tools
+│   ├── constants.ts          # Models, capability registry, limits, defaults
+│   ├── types.ts              # TypeScript types and McpError
 │   ├── schemas/
 │   │   ├── generate.ts       # Generate tool schema
 │   │   └── edit.ts           # Edit tool schema
 │   ├── services/
-│   │   ├── gemini-client.ts  # Gemini API client
-│   │   └── file-utils.ts     # File operations
-│   └── tools/
-│       ├── generate-image.ts # Generate tool
-│       └── edit-image.ts     # Edit tool
+│   │   ├── gemini-client.ts  # Gemini Interactions API client
+│   │   ├── file-utils.ts     # File operations
+│   │   └── __tests__/
+│   ├── tools/
+│   │   ├── generate-image.ts # Generate tool
+│   │   ├── edit-image.ts     # Edit tool
+│   │   └── __tests__/
+│   └── __tests__/            # Server contract tests + in-memory MCP harness
+├── .github/workflows/ci.yml  # PR gate: build, typecheck, lint, test
 ├── dist/                     # Compiled output (generated)
+├── eslint.config.js
+├── vitest.config.ts
 ├── package.json
 ├── tsconfig.json
 └── README.md
