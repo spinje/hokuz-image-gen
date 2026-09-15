@@ -42,3 +42,6 @@ test-*.webp
 image-*.png
 image-*.jpg
 image-*.webp
+
+# Working notes (plans, research); kept out of the repo on purpose
+docs/

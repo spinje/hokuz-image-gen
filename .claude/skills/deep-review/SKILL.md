@@ -26,7 +26,7 @@ Gauge with `git diff --stat` (or `--cached --stat`, or `main...HEAD --stat`):
 
 Counts are **ceilings**: deploy only lenses whose dimension the diff actually touches. A docs-only diff gets `review-tool-contract` alone. A standalone number in the invocation (`3`) overrides the tier as an exact count.
 
-**Sensitive changes get Full tier regardless of size:** anything in `file-utils.ts` (paths, fetch, writes), `gemini-client.ts` request building, or a schema/description change. Those must include `review-input-safety` or `review-tool-contract` respectively.
+**Sensitive changes get Full tier regardless of size:** anything in `file-utils.ts` (paths, fetch, writes), provider request building (`src/providers/*.ts`), or a schema/description change. Those must include `review-input-safety` or `review-tool-contract` respectively.
 
 **Protect your context window.** Never read the diff or whole files yourself — the subagents have expendable windows. The `--stat`, the file list, and small targeted verification reads are the exceptions.
 

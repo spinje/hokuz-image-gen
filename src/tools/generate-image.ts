@@ -1,8 +1,9 @@
 /**
  * Generate Image Tool Implementation
  *
- * Generates images from text prompts using the Nano Banana image models
- * (Nano Banana 2 / 2 Lite / Pro) via the Gemini Interactions API.
+ * Generates images from text prompts using either Google's Nano Banana models
+ * (Gemini Interactions API) or OpenAI's GPT Image 2.5 models, selected with
+ * the `model` parameter.
  */
 
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
@@ -11,67 +12,51 @@ import {
   GenerateImageOutputSchema,
   type GenerateImageOutput,
 } from "../schemas/generate.js";
+import { generateImage, validateGenerationConfig } from "../providers/index.js";
+import { resolveOutputPath, saveBase64Image } from "../services/file-utils.js";
 import {
-  generateImage,
-  validateGenerationConfig,
+  McpError,
+  sumUsage,
+  type GeneratedImage,
   type GenerationConfig,
-} from "../services/gemini-client.js";
-import {
-  resolveOutputPath,
-  saveBase64Image,
-  resolveRequestedOutputFormat,
-} from "../services/file-utils.js";
-import { McpError, type GeneratedImage } from "../types.js";
+  type UsageReport,
+} from "../types.js";
 import { DEFAULTS } from "../constants.js";
 
 /**
  * Tool description for LLM discoverability
  */
-const TOOL_DESCRIPTION = `Generate images from text prompts using the Nano Banana image models (Google's Gemini image models).
+const TOOL_DESCRIPTION = `Generate images from text prompts. Two providers behind one tool: Google's Nano Banana (Gemini) models and OpenAI's GPT Image 2.5 models. Pick with \`model\`.
 
-This tool creates high-quality AI-generated images based on your text description. It supports:
-- Selectable models: Nano Banana 2 (gemini-3.1-flash-image, default), Nano Banana 2 Lite (gemini-3.1-flash-lite-image), and Nano Banana Pro (gemini-3-pro-image)
-- Multiple aspect ratios (1:1, 16:9, 9:16, etc.)
-- Resolutions up to 4K (model-dependent: Lite is 1K only)
-- Output format: JPEG (the only format these models produce)
-- Generating 1-4 images per request
-- Temperature control for creativity
+Unsupported combinations (model x resolution / aspect ratio / output format / provider-only option) are rejected before any API call with an error naming the supported values. No silent downgrades.
 
-Unsupported model/resolution or model/aspect-ratio combinations are rejected before any API call (no silent downgrades).
-
-Choosing a model (approximate speed for a 1K image and per-image cost; verify current prices at https://ai.google.dev/gemini-api/docs/pricing):
-- gemini-3.1-flash-lite-image (Nano Banana 2 Lite): fastest (~5s), cheapest (~$0.034), 1K only. Use for drafts, thumbnails, and high-volume batches.
-- gemini-3.1-flash-image (Nano Banana 2, DEFAULT): balanced (~11s), ~$0.045-$0.15 depending on resolution (0.5K-4K), supports extreme aspect ratios. Best everyday choice.
-- gemini-3-pro-image (Nano Banana Pro): highest quality but slowest (~17s), ~$0.13 (1K/2K) to ~$0.24 (4K), 1K-4K. Use for hero shots, photorealism, and cinematic lighting.
-Higher resolutions are slower and cost more. num_images > 1 makes that many separate requests, so time and cost scale linearly.
+Models (approximate time and cost for one 1K image; verify at https://ai.google.dev/gemini-api/docs/pricing and https://developers.openai.com/api/docs/pricing):
+- gemini-3.1-flash-lite-image (Nano Banana 2 Lite): ~5s, ~$0.034, 1K only. Drafts, thumbnails, batches.
+- gemini-3.1-flash-image (Nano Banana 2, DEFAULT): ~11s, ~$0.045-$0.15 (0.5K-4K), extreme aspect ratios. Best everyday choice.
+- gemini-3-pro-image (Nano Banana Pro): ~17s, ~$0.13 (1K/2K) to ~$0.24 (4K). Photorealism, hero shots, factual/grounded content.
+- gpt-image-2.5-flare (OpenAI): fast; cost set by \`quality\` (medium ~$0.013 at 14s; high ~$0.05 at 18s; max ~$0.21 at 46s). Strong text rendering and prompt adherence.
+- gpt-image-2.5-sunburst (OpenAI): same prices, roughly 1.5-2x slower (high ~30s, max ~85s). Best for text-heavy posters, branding and precise composition; prefer flare for plain generation.
+OpenAI models: 1K or 2K only (about 1 and 4 megapixels; exact size is derived from aspect_ratio and returned), the ten base aspect ratios, jpeg/png/webp output, \`quality\` ladder, optional transparent background. Gemini models: jpeg only, \`temperature\`. Higher resolution and quality cost more and take longer. num_images > 1 makes that many separate requests: time and cost scale linearly, and OpenAI tier-1 accounts allow 5 images per minute.
 
 Args:
-  - prompt (string, required): Detailed text description of the image to generate
-  - output_path (string, required): File path to save the image. Can be a directory (filename will be auto-generated with timestamp) or a full file path
-  - model (string, optional): "gemini-3.1-flash-image" (default), "gemini-3.1-flash-lite-image", or "gemini-3-pro-image"
-  - aspect_ratio (string, optional): Image aspect ratio. Default: "1:1"
-  - resolution (string, optional): Image quality - "0.5K", "1K", "2K", or "4K". Default: "1K"
-  - output_format (string, optional): Output format - only "jpeg" is supported. Default: "jpeg"
-  - num_images (number, optional): Number of images to generate (1-4). Default: 1
-  - temperature (number, optional): Creativity level 0.0-2.0. Higher = more creative. Default: 1.0
+  - prompt (string, required): Detailed description of the image
+  - output_path (string, required): File path or directory (timestamped name) to save to. Extension is replaced to match output_format
+  - model (string, optional): see above. Default: "gemini-3.1-flash-image"
+  - aspect_ratio (string, optional): Default: "1:1". Extreme ratios (1:4, 4:1, 1:8, 8:1) are flash-only
+  - resolution (string, optional): "0.5K", "1K", "2K", "4K" per model. Default: "1K"
+  - output_format (string, optional): "jpeg" (all models), "png"/"webp" (OpenAI only). Default: "jpeg"
+  - quality (string, optional, OpenAI only): "low", "medium", "high", "xhigh", "max". Default: "medium"
+  - transparent_background (boolean, optional, OpenAI only): requires png or webp
+  - temperature (number, optional, Gemini only): 0.0-2.0. Default: 1.0
+  - num_images (number, optional): 1-4. Default: 1
 
-Returns:
-  {
-    "success": boolean,
-    "images": [
-      {
-        "path": string,
-        "format": string
-      }
-    ],
-    "description": string (model's description of generated image),
-    "error": string (if failed)
-  }
+Returns: { success, images: [{ path, format, width?, height? }], description?, usage? { input_tokens, output_tokens, estimated_cost_usd } (OpenAI only, estimated from token counts), warning? (fewer images than requested, with the reason), error? }
 
 Examples:
-  - Generate a landscape: prompt="A serene mountain lake at sunset with snow-capped peaks", aspect_ratio="16:9"
-  - Generate a portrait: prompt="Professional headshot of a confident businesswoman", aspect_ratio="3:4", output_path="~/images/"
-  - Generate multiple variations: prompt="Abstract art with vibrant colors", num_images=4, temperature=1.5`;
+  - Landscape: prompt="A serene mountain lake at sunset", aspect_ratio="16:9"
+  - Cheap draft on OpenAI: model="gpt-image-2.5-flare", quality="low", output_path="~/images/"
+  - Poster with text: model="gpt-image-2.5-sunburst", quality="high", aspect_ratio="2:3"
+  - Sticker: model="gpt-image-2.5-flare", transparent_background=true, output_format="png"`;
 
 /**
  * Register the generate_image tool with the MCP server
@@ -88,7 +73,7 @@ export function registerGenerateImageTool(server: McpServer): void {
         readOnlyHint: false, // Always writes the result to output_path
         destructiveHint: false, // Doesn't delete existing data
         idempotentHint: false, // Same prompt produces different images
-        openWorldHint: true, // Interacts with external Google API
+        openWorldHint: true, // Interacts with an external provider API
       },
     },
     async (params) => {
@@ -98,19 +83,20 @@ export function registerGenerateImageTool(server: McpServer): void {
         const model = params.model ?? DEFAULTS.model;
         const aspectRatio = params.aspect_ratio ?? DEFAULTS.aspectRatio;
         const resolution = params.resolution ?? DEFAULTS.resolution;
-        const temperature = params.temperature ?? DEFAULTS.temperature;
         const requestedCount = params.num_images ?? DEFAULTS.numImages;
-        const outputFormat = resolveRequestedOutputFormat(
-          params.output_path,
-          params.output_format
-        );
+        const outputFormat = params.output_format ?? DEFAULTS.outputFormat;
 
+        // Provider-specific options carry no schema default and are passed
+        // through as given: the provider that owns the option applies its own
+        // default, so an option the caller did not ask for stays undefined.
         const config: GenerationConfig = {
           model,
           aspectRatio,
           resolution,
-          temperature,
           outputFormat,
+          temperature: params.temperature,
+          quality: params.quality,
+          transparentBackground: params.transparent_background,
         };
 
         // Validate model options before any API call (fail fast, no downgrades)
@@ -120,6 +106,9 @@ export function registerGenerateImageTool(server: McpServer): void {
         // asking for one image. Stop once we have enough.
         const collected: GeneratedImage[] = [];
         const descriptions: string[] = [];
+        const usages: UsageReport[] = [];
+        let successfulRequests = 0;
+        let failureReason: string | undefined;
         for (
           let attempt = 0;
           collected.length < requestedCount && attempt < requestedCount;
@@ -128,15 +117,19 @@ export function registerGenerateImageTool(server: McpServer): void {
           try {
             const response = await generateImage(params.prompt, config);
             collected.push(...response.images);
+            successfulRequests++;
             if (response.description) descriptions.push(response.description);
+            if (response.usage) usages.push(response.usage);
           } catch (err) {
             // If we have no images yet, surface the error. Otherwise keep what
             // we got and warn that fewer than requested were produced.
             if (collected.length === 0) throw err;
+            failureReason = err instanceof Error ? err.message : String(err);
             break;
           }
         }
 
+        const usage = sumUsage(usages);
         const imagesToSave = collected.slice(0, requestedCount);
 
         // Process the generated images - save to files
@@ -154,6 +147,8 @@ export function registerGenerateImageTool(server: McpServer): void {
           outputImages.push({
             path: filePath,
             format: outputFormat,
+            width: image.width,
+            height: image.height,
           });
         }
 
@@ -161,17 +156,44 @@ export function registerGenerateImageTool(server: McpServer): void {
           ? Array.from(new Set(descriptions)).join("\n---\n")
           : undefined;
 
+        const warning =
+          outputImages.length < requestedCount
+            ? `Requested ${requestedCount} image(s) but only ${outputImages.length} were produced.` +
+              (failureReason ? ` The failed request reported: ${failureReason}` : "")
+            : undefined;
+
         const output: GenerateImageOutput = {
           success: true,
           images: outputImages,
           description,
+          usage: usage && {
+            input_tokens: usage.inputTokens,
+            output_tokens: usage.outputTokens,
+            estimated_cost_usd: usage.estimatedCostUsd,
+          },
+          warning,
         };
 
         // Format response text
-        const paths = outputImages.map((img) => img.path).join("\n  ");
+        const paths = outputImages
+          .map((img) =>
+            img.width && img.height
+              ? `${img.path} (${img.width}x${img.height})`
+              : img.path
+          )
+          .join("\n  ");
         let textContent = `Successfully generated ${outputImages.length} image(s):\n  ${paths}`;
-        if (outputImages.length < requestedCount) {
-          textContent += `\n\nWarning: requested ${requestedCount} image(s) but only ${outputImages.length} were produced.`;
+        if (usage) {
+          // Say so when the totals cover only some of the requests, rather
+          // than letting them read as the cost of the whole call.
+          const scope =
+            usages.length < successfulRequests
+              ? ` (reported for ${usages.length} of ${successfulRequests} requests)`
+              : "";
+          textContent += `\n\nUsage${scope}: ${usage.inputTokens} input + ${usage.outputTokens} output tokens, estimated cost $${usage.estimatedCostUsd.toFixed(4)}`;
+        }
+        if (warning) {
+          textContent += `\n\nWarning: ${warning}`;
         }
         if (description) {
           textContent += `\n\nDescription: ${description}`;

@@ -30,13 +30,25 @@ describe("published tool contract", () => {
     for (const tool of tools) {
       expect(tool.description).toBeTruthy();
       // Output items are always saved files: path and format, nothing optional.
-      const items = (
+      const outputProperties = (
         tool.outputSchema as unknown as {
-          properties: { images: { items: { required: string[]; properties: Record<string, unknown> } } };
+          properties: Record<string, unknown> & {
+            images: { items: { required: string[]; properties: Record<string, unknown> } };
+          };
         }
-      ).properties.images.items;
+      ).properties;
+      const items = outputProperties.images.items;
       expect(items.required.sort()).toEqual(["format", "path"]);
       expect(items.properties).not.toHaveProperty("dataUrl");
+      // Pixel size is optional because only OpenAI reports it.
+      expect(Object.keys(items.properties).sort()).toEqual([
+        "format",
+        "height",
+        "path",
+        "width",
+      ]);
+      expect(outputProperties).toHaveProperty("usage");
+      expect(outputProperties).toHaveProperty("warning");
       expect(tool.annotations).toEqual({
         readOnlyHint: false,
         destructiveHint: false,
@@ -55,23 +67,43 @@ describe("published tool contract", () => {
     const generate = tools.find((t) => t.name === "hokuz_generate_image")!;
     const props = generate.inputSchema.properties as Record<
       string,
-      { enum?: string[]; default?: unknown }
+      { enum?: string[]; default?: unknown; type?: string }
     >;
     expect(props.model.enum).toEqual([
       "gemini-3.1-flash-image",
       "gemini-3.1-flash-lite-image",
       "gemini-3-pro-image",
+      "gpt-image-2.5-flare",
+      "gpt-image-2.5-sunburst",
     ]);
     expect(props.model.default).toBe("gemini-3.1-flash-image");
     expect(props.aspect_ratio.default).toBe("1:1");
     expect(props.resolution.default).toBe("1K");
     expect(props.num_images.default).toBe(1);
-    expect(props.output_format.enum).toEqual(["jpeg"]);
+    expect(props.output_format.enum).toEqual(["jpeg", "png", "webp"]);
+    expect(props.output_format.default).toBe("jpeg");
     expect(generate.inputSchema.required).toEqual(["prompt", "output_path"]);
 
+    // Provider-specific options: published with their enum but no default, so
+    // the handler can tell "the LLM asked for this" from "the SDK filled it in".
+    expect(props.quality.enum).toEqual(["low", "medium", "high", "xhigh", "max"]);
+    expect(props.quality).not.toHaveProperty("default");
+    expect(props.temperature).not.toHaveProperty("default");
+    expect(props.transparent_background.type).toBe("boolean");
+    expect(props.transparent_background).not.toHaveProperty("default");
+
     const edit = tools.find((t) => t.name === "hokuz_edit_image")!;
-    const editProps = edit.inputSchema.properties as Record<string, { default?: unknown }>;
+    const editProps = edit.inputSchema.properties as Record<
+      string,
+      { default?: unknown; maxItems?: number }
+    >;
     expect(editProps.aspect_ratio.default).toBe("auto");
+    // Edit's resolution is optional with no default (gotcha 7): "auto" plus an
+    // explicit resolution is rejected, which a filled-in default would hide.
+    expect(editProps.resolution).not.toHaveProperty("default");
+    // The schema bound is the largest any model accepts; the per-model limit
+    // (Gemini 14) is enforced by the registry before any image is loaded.
+    expect(editProps.image_paths.maxItems).toBe(16);
     expect(edit.inputSchema.required).toEqual(["prompt", "image_paths", "output_path"]);
   });
 });

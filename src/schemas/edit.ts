@@ -8,6 +8,7 @@ import {
   ASPECT_RATIOS,
   RESOLUTIONS,
   OUTPUT_FORMATS,
+  QUALITIES,
   DEFAULTS,
   LIMITS,
 } from "../constants.js";
@@ -41,7 +42,11 @@ export const EditImageInputSchema = z
         `Maximum ${LIMITS.maxInputImages} input images allowed`
       )
       .describe(
-        `Array of local file paths or URLs to source images (1-${LIMITS.maxInputImages} images). For style transfer, provide the content image first, then the style reference. For multi-image composition, provide all images to combine.`
+        "Array of local file paths or URLs to source images. Gemini models: up to 14 images, 7 MB " +
+          "each (jpeg/png/webp/gif/heic/heif). OpenAI models: up to 16 images, 50 MB each, jpeg/png/webp " +
+          "only (gif/heic are rejected before the API call). Order matters: 'first image'/'second " +
+          "image' in the prompt refer to this order. For style transfer, provide the content image " +
+          "first, then the style reference."
       ),
 
     output_path: z
@@ -55,36 +60,61 @@ export const EditImageInputSchema = z
       .enum(IMAGE_MODELS)
       .default(DEFAULTS.model)
       .describe(
-        `Image model to use. Options: ${IMAGE_MODELS.join(", ")}. ` +
-          `'gemini-3.1-flash-image' (Nano Banana 2) is the balanced default (0.5K/1K/2K/4K); ` +
-          `'gemini-3.1-flash-lite-image' (Nano Banana 2 Lite) is cheapest/fastest (1K only); ` +
-          `'gemini-3-pro-image' (Nano Banana Pro) is highest quality (1K/2K/4K). ` +
-          `Default: ${DEFAULTS.model}`
+        "Image model. Google (Gemini API): 'gemini-3.1-flash-image' (Nano Banana 2, balanced default, 0.5K-4K, " +
+          "extreme aspect ratios), 'gemini-3.1-flash-lite-image' (Nano Banana 2 Lite, cheapest/fastest, 1K only), " +
+          "'gemini-3-pro-image' (Nano Banana Pro, highest quality, 1K-4K). OpenAI: 'gpt-image-2.5-flare' (fast, " +
+          "everyday generation), 'gpt-image-2.5-sunburst' (slower, best editing precision); both 1K/2K, quality " +
+          `ladder via 'quality'. Default: ${DEFAULTS.model}`
       ),
 
     aspect_ratio: z
       .enum(EDIT_ASPECT_RATIOS)
       .default("auto")
       .describe(
-        `Aspect ratio for the output image. 'auto' preserves the original aspect ratio. Options: auto, ${ASPECT_RATIOS.join(", ")}. ` +
-          `The extreme ratios (1:4, 4:1, 1:8, 8:1) are only supported by gemini-3.1-flash-image; ` +
-          `unsupported model/aspect combinations are rejected before the API call. Default: auto`
+        `Aspect ratio. Options: auto, ${ASPECT_RATIOS.join(", ")}. 'auto' keeps the input's ratio (on OpenAI ` +
+          "models the provider then chooses the output size, so an explicit resolution is rejected). The extreme ratios " +
+          "(1:4, 4:1, 1:8, 8:1) are supported only by gemini-3.1-flash-image; OpenAI models accept the other " +
+          "ten. Unsupported combinations are rejected before the API call. Default: auto"
       ),
 
+    // No .default(): see gotcha 7. With one, an explicit resolution could not
+    // be told from a filled-in default, and "auto" would silently ignore it.
     resolution: z
       .enum(RESOLUTIONS)
-      .default(DEFAULTS.resolution)
+      .optional()
       .describe(
-        `Output image resolution/quality. Options: ${RESOLUTIONS.join(", ")}. 4K provides highest quality. ` +
-          `Supported resolutions vary by model (Lite is 1K only; Pro is 1K/2K/4K); ` +
-          `unsupported model/resolution combinations are rejected before the API call. Default: ${DEFAULTS.resolution}`
+        `Output resolution. Options: ${RESOLUTIONS.join(", ")} per model (Gemini: Lite is 1K only, ` +
+          "Pro is 1K/2K/4K; OpenAI models: 1K or 2K, about 1 and 4 megapixels). Default: " +
+          `${DEFAULTS.resolution}. On OpenAI models with aspect_ratio 'auto' the provider chooses the ` +
+          "output size, so set an aspect_ratio to control the size; combining 'auto' with an explicit " +
+          "resolution is rejected. Unsupported combinations are rejected before the API call."
       ),
 
     output_format: z
       .enum(OUTPUT_FORMATS)
       .default(DEFAULTS.outputFormat)
       .describe(
-        `Output image format. Options: ${OUTPUT_FORMATS.join(", ")}. Default: ${DEFAULTS.outputFormat}`
+        `Output file format. Options: ${OUTPUT_FORMATS.join(", ")}. Gemini models produce jpeg only; ` +
+          "OpenAI models produce all three. The output_path extension is replaced to match. " +
+          `Default: ${DEFAULTS.outputFormat}`
+      ),
+
+    quality: z
+      .enum(QUALITIES)
+      .optional()
+      .describe(
+        `OpenAI models only. Options: ${QUALITIES.join(", ")}. Cost per 1K image scales roughly ` +
+          "$0.006 / $0.013 / $0.05 / $0.09 / $0.21 and latency 10 s to 90 s. Use medium for drafts and most " +
+          "work, high for final assets, xhigh/max only when high visibly fails. Gemini models reject this " +
+          `option. Default for OpenAI models: ${DEFAULTS.quality}`
+      ),
+
+    transparent_background: z
+      .boolean()
+      .optional()
+      .describe(
+        "OpenAI models only. true renders a transparent background; requires output_format png or " +
+          "webp. Gemini models reject `true`."
       ),
 
     num_images: z
@@ -110,9 +140,11 @@ export const EditImageInputSchema = z
         LIMITS.maxTemperature,
         `Temperature must not exceed ${LIMITS.maxTemperature}`
       )
-      .default(DEFAULTS.temperature)
+      .optional()
       .describe(
-        `Creativity/randomness control (${LIMITS.minTemperature}-${LIMITS.maxTemperature}). Higher values produce more varied results. Default: ${DEFAULTS.temperature}`
+        `Gemini models only. Creativity/randomness (${LIMITS.minTemperature}-${LIMITS.maxTemperature}); higher is ` +
+          "more varied. OpenAI models reject this option. Default for Gemini models: " +
+          `${DEFAULTS.temperature}`
       ),
   })
   .strict();
@@ -131,7 +163,15 @@ export const EditImageOutputSchema = z.object({
     .array(
       z.object({
         path: z.string().describe("File path where the image was saved"),
-        format: z.string().describe("Image format (jpeg)"),
+        format: z.string().describe("Image format (jpeg, png or webp)"),
+        width: z
+          .number()
+          .optional()
+          .describe("Image width in pixels, when the provider reports it"),
+        height: z
+          .number()
+          .optional()
+          .describe("Image height in pixels, when the provider reports it"),
       })
     )
     .describe("Array of edited images"),
@@ -139,6 +179,22 @@ export const EditImageOutputSchema = z.object({
     .string()
     .optional()
     .describe("Model's text description of the edited image(s)"),
+  usage: z
+    .object({
+      input_tokens: z.number(),
+      output_tokens: z.number(),
+      estimated_cost_usd: z.number(),
+    })
+    .optional()
+    .describe(
+      "Token usage summed over the requests made, with a cost estimated from those counts (OpenAI models only)"
+    ),
+  warning: z
+    .string()
+    .optional()
+    .describe(
+      "Set when fewer images than requested were produced; includes the failure reason"
+    ),
   error: z
     .string()
     .optional()

@@ -20,13 +20,14 @@ Follow `.claude/agents/REVIEW-PROTOCOL.md` (read it first). Lens-specifics on to
 | Input | Where it lands | Current behaviour |
 |---|---|---|
 | `output_path` | `resolveOutputPath` → `fs.writeFile` | `~` expanded to `$HOME`; `path.resolve` (so `..` works); trailing separator = directory, created if missing; parent directories created; **an existing file at the resolved path is overwritten silently** |
-| `image_paths[]` (local) | `readImageAsBase64` → `fs.readFile` | any readable path, `~` expanded; size checked AFTER the full read; MIME from extension, default `image/png` |
-| `image_paths[]` (URL) | `fetchImageAsBase64` → global `fetch` | `http:`/`https:` only (`isUrl`); **no host restriction** (localhost, link-local, private ranges all allowed); **body fully buffered before the size check**; no timeout; MIME from `content-type`, default `image/png` |
-| `GEMINI_API_KEY` / `GOOGLE_API_KEY` | `getApiKey` → `GoogleGenAI` | never printed; generic `API_ERROR` includes the SDK's error message verbatim — whether that can embed the key is a review point on any change to error text |
+| `image_paths[]` (local) | `loadInputImage` → `fs.stat`, then `fs.readFile` | any readable path, `~` expanded; MIME from the extension map, an unknown or missing extension rejected (no `image/png` default); type checked against the model's `inputMimeTypes` and size against its `maxInputImageBytes` (7 MB Gemini, 50 MB OpenAI) **before** the bytes are read |
+| `image_paths[]` (URL) | `loadInputImage` → global `fetch` | `http:`/`https:` only (`isUrl`); **no host restriction** (localhost, link-local, private ranges all allowed); 30 s `AbortSignal.timeout`; MIME from a normalised `content-type` (missing is rejected, no default) checked against the model's `inputMimeTypes`; then `content-length`, then a running byte count while the body streams, cancelling the read once the model's limit is passed |
+| `GEMINI_API_KEY` / `GOOGLE_API_KEY` | `getApiKey` (`providers/gemini.ts`) → `GoogleGenAI` | never printed; generic `API_ERROR` includes the SDK's error message verbatim — whether that can embed the key is a review point on any change to error text |
+| `OPENAI_API_KEY` | `getApiKey` (`providers/openai.ts`) → `OpenAI` | never printed; the mapped errors quote `error.message` from the API body and attach the raw `APIError` as `McpError.details` (not serialised into the tool result) — any change that surfaces `details` to the caller is a finding |
 | `prompt` | sent to the API | capped at `LIMITS.maxPromptLength` (50 000 chars) |
 | stdout | MCP JSON-RPC channel | `console.log` is a lint error; `console.error` only |
 
-**Known pre-existing behaviours (recorded, not findings unless the diff touches them):** silent overwrite of an existing output file; unrestricted fetch host; fetch buffering before size check; no fetch timeout; symlinks followed on read and write. These are trade-offs not yet decided, not endorsements — a change that touches the same code should be asked whether it makes them worse or is the moment to fix them.
+**Known pre-existing behaviours (recorded, not findings unless the diff touches them):** silent overwrite of an existing output file; unrestricted fetch host; symlinks followed on read and write. (Unbounded fetch buffering and the missing fetch timeout were closed by `loadInputImage`.) These are trade-offs not yet decided, not endorsements — a change that touches the same code should be asked whether it makes them worse or is the moment to fix them.
 
 ## Review Checklist
 
@@ -34,7 +35,7 @@ Follow `.claude/agents/REVIEW-PROTOCOL.md` (read it first). Lens-specifics on to
 For every change near `resolveOutputPath` or `saveBase64Image`: can the resolved path escape what the caller plausibly meant? New path components derived from user input (a filename from the prompt, a model name, a URL) are traversal review points. Does the change add a new way to overwrite, or a new directory creation, without the response saying where the file went? (`path` in `structuredContent` is the disclosure — keep it.)
 
 ### 2. Reads and Fetches
-New file reads: is the size limit still enforced, and before or after the buffer is allocated? New network calls: what hosts can they reach, what is the timeout, what is the maximum body size, what happens on redirect? A new URL-accepting input that does not go through `loadImage` is a finding — one gate, not two.
+New file reads: is the size limit still enforced, and is it checked from metadata before the bytes are read? New network calls: what hosts can they reach, what is the timeout, what is the maximum body size, what happens on redirect? A new URL-accepting input that does not go through `loadInputImage` is a finding — one gate, not two.
 
 ### 3. Secrets and Private Data in Output
 For every new or changed string that reaches `content[].text`, `structuredContent`, or stderr: can it contain the API key, an absolute path the user did not supply, or the raw SDK error body? Errors quoting the input path the user gave are fine; errors quoting internal state are not.

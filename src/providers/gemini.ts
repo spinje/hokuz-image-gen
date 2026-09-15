@@ -7,17 +7,14 @@
 
 import { GoogleGenAI } from "@google/genai";
 import {
+  DEFAULTS,
   ENV_VARS,
   MIME_TYPES,
-  IMAGE_SIZE_API_VALUES,
-  getUnsupportedModelOptionMessage,
-  type AspectRatio,
   type Resolution,
-  type OutputFormat,
-  type ImageModel,
 } from "../constants.js";
 import {
-  type GeminiImageResponse,
+  type GenerationConfig,
+  type ImageResponse,
   type GeneratedImage,
   type InputImage,
   McpError,
@@ -25,33 +22,42 @@ import {
 } from "../types.js";
 
 /**
- * Configuration for a single image generation/edit request.
- *
- * Note: `numImages` is intentionally NOT part of this config. Requesting
- * multiple images is handled in the tool layer by making repeated independent
- * requests, so the service is always "one request returns whatever it returns".
+ * Maps a public resolution token to the Interactions API `image_size` value,
+ * which uses "512" rather than "0.5K".
  */
-export interface GenerationConfig {
-  model: ImageModel;
-  /** Omitted (undefined) means "auto" — do not send an aspect ratio. */
-  aspectRatio?: AspectRatio;
-  resolution: Resolution;
-  temperature: number;
-  outputFormat: OutputFormat;
+const IMAGE_SIZE_API_VALUES: Record<Resolution, string> = {
+  "0.5K": "512",
+  "1K": "1K",
+  "2K": "2K",
+  "4K": "4K",
+};
+
+/** Human-readable provider name, for the startup banner. */
+export const label = "Google Gemini (Nano Banana)";
+
+/**
+ * Read the API key from the environment.
+ * GEMINI_API_KEY is preferred; GOOGLE_API_KEY is accepted for compatibility.
+ */
+function resolveApiKey(): string | undefined {
+  return process.env[ENV_VARS.geminiApiKey] || process.env[ENV_VARS.googleApiKey];
+}
+
+/** Whether this provider can be used at all; never throws. */
+export function hasApiKey(): boolean {
+  return Boolean(resolveApiKey());
 }
 
 /**
- * Get the API key from environment variables.
- * GEMINI_API_KEY is preferred; GOOGLE_API_KEY is accepted for compatibility.
+ * Get the API key, or explain which variable to set.
  */
 function getApiKey(): string {
-  const apiKey =
-    process.env[ENV_VARS.geminiApiKey] || process.env[ENV_VARS.googleApiKey];
+  const apiKey = resolveApiKey();
 
   if (!apiKey) {
     throw new McpError(
       ErrorType.MISSING_API_KEY,
-      `Error: API key not found. Set the ${ENV_VARS.geminiApiKey} or ${ENV_VARS.googleApiKey} environment variable. Get your key at https://aistudio.google.com/`
+      `Error: ${ENV_VARS.geminiApiKey} is not set, so Gemini models cannot be used. Set ${ENV_VARS.geminiApiKey} (or ${ENV_VARS.googleApiKey}) in the MCP server's environment — get a key at https://aistudio.google.com/ — or choose an OpenAI model.`
     );
   }
 
@@ -75,32 +81,18 @@ function getClient(): GoogleGenAI {
 }
 
 /**
- * Validate a generation config against the model capability registry.
- * Throws INVALID_MODEL_OPTION before any API request is made.
- */
-export function validateGenerationConfig(config: GenerationConfig): void {
-  const message = getUnsupportedModelOptionMessage({
-    model: config.model,
-    resolution: config.resolution,
-    aspectRatio: config.aspectRatio,
-  });
-  if (message) {
-    throw new McpError(ErrorType.INVALID_MODEL_OPTION, message);
-  }
-}
-
-/**
  * Build the `response_format` object for an image interaction.
  *
  * - `mime_type` is "image/jpeg". These models output JPEG only; the API
  *   rejects any other value (verified live: "image/png" returns a 400).
  * - `aspect_ratio` is only included when defined (edit "auto" omits it so the
  *   model preserves the input image's native ratio).
+ * - a config without a resolution gets this provider's default.
  */
 function buildResponseFormat(config: GenerationConfig) {
   return {
     type: "image" as const,
-    image_size: IMAGE_SIZE_API_VALUES[config.resolution],
+    image_size: IMAGE_SIZE_API_VALUES[config.resolution ?? DEFAULTS.resolution],
     mime_type: MIME_TYPES[config.outputFormat] as "image/jpeg",
     ...(config.aspectRatio ? { aspect_ratio: config.aspectRatio } : {}),
   };
@@ -129,7 +121,7 @@ export interface InteractionLike {
 /**
  * Extract images and text description from an interaction response.
  */
-export function parseInteraction(interaction: InteractionLike): GeminiImageResponse {
+export function parseInteraction(interaction: InteractionLike): ImageResponse {
   const images: GeneratedImage[] = [];
   const seen = new Set<string>();
   let description: string | undefined;
@@ -183,8 +175,7 @@ export function parseInteraction(interaction: InteractionLike): GeminiImageRespo
 export async function generateImage(
   prompt: string,
   config: GenerationConfig
-): Promise<GeminiImageResponse> {
-  validateGenerationConfig(config);
+): Promise<ImageResponse> {
   const client = getClient();
 
   try {
@@ -192,7 +183,7 @@ export async function generateImage(
       model: config.model,
       input: prompt,
       response_format: buildResponseFormat(config),
-      generation_config: { temperature: config.temperature },
+      generation_config: { temperature: config.temperature ?? DEFAULTS.temperature },
     });
 
     return parseInteraction(interaction as InteractionLike);
@@ -208,8 +199,7 @@ export async function editImage(
   prompt: string,
   inputImages: InputImage[],
   config: GenerationConfig
-): Promise<GeminiImageResponse> {
-  validateGenerationConfig(config);
+): Promise<ImageResponse> {
   const client = getClient();
 
   try {
@@ -228,7 +218,7 @@ export async function editImage(
       model: config.model,
       input,
       response_format: buildResponseFormat(config),
-      generation_config: { temperature: config.temperature },
+      generation_config: { temperature: config.temperature ?? DEFAULTS.temperature },
     });
 
     return parseInteraction(interaction as InteractionLike);
@@ -255,7 +245,7 @@ function handleApiError(error: unknown): never {
   ) {
     throw new McpError(
       ErrorType.API_RATE_LIMIT,
-      "Error: Rate limit exceeded. Please wait before making more requests."
+      "Error: Gemini rate limit exceeded. Wait before retrying, lower num_images, or use an OpenAI model."
     );
   }
 
@@ -267,7 +257,7 @@ function handleApiError(error: unknown): never {
   ) {
     throw new McpError(
       ErrorType.MISSING_API_KEY,
-      `Error: Invalid or missing API key. Please check your ${ENV_VARS.geminiApiKey} environment variable.`
+      `Error: Invalid or missing API key. Please check your ${ENV_VARS.geminiApiKey} environment variable, or choose an OpenAI model.`
     );
   }
 
@@ -288,11 +278,4 @@ function handleApiError(error: unknown): never {
     `Error: API request failed. ${errorMessage}`,
     error
   );
-}
-
-/**
- * Validate that the client can be initialized (checks for API key)
- */
-export function validateApiKey(): void {
-  getApiKey();
 }

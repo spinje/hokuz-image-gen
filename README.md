@@ -1,6 +1,6 @@
 # hokuz-image-gen
 
-An MCP (Model Context Protocol) server for generating and editing images using Google's Gemini image models via the [Interactions API](https://ai.google.dev/gemini-api/docs/image-generation). Both tools accept an optional `model` parameter; the default is `gemini-3.1-flash-image` (Nano Banana 2).
+An MCP (Model Context Protocol) server for generating and editing images using Google's Gemini image models via the [Interactions API](https://ai.google.dev/gemini-api/docs/image-generation) and OpenAI's GPT Image 2.5 models via the [Images API](https://developers.openai.com/api/docs/guides/images-vision). Both tools accept an optional `model` parameter; the default is `gemini-3.1-flash-image` (Nano Banana 2).
 
 - [Features](#features)
 - [Models](#models)
@@ -12,23 +12,29 @@ An MCP (Model Context Protocol) server for generating and editing images using G
 
 ## Features
 
-- **Selectable models**: Choose between Nano Banana 2, Nano Banana 2 Lite, and Nano Banana Pro (see the [model table](#models) below)
+- **Two providers, one tool set**: Google's Nano Banana (Gemini) models and OpenAI's GPT Image 2.5 models, selected with `model` (see the [model table](#models) below)
 - **Text-to-Image Generation**: Create images from detailed text prompts
 - **Image Editing**: Modify existing images with natural language instructions
 - **Style Transfer**: Apply artistic styles from reference images
-- **Multi-Image Composition**: Combine up to 14 images into new compositions
+- **Multi-Image Composition**: Combine up to 14 images (Gemini) or 16 (OpenAI) into new compositions
 - **High Resolution**: Up to 4K output (model-dependent)
-- **Model-aware validation**: Unsupported model/resolution or model/aspect-ratio combinations are rejected before any API call — no silent downgrades
+- **PNG, WebP and transparent backgrounds**: OpenAI models produce `jpeg`, `png` or `webp`, with an optional transparent background (png/webp only)
+- **Cost reporting**: OpenAI results include the token counts used and a cost estimated from them
+- **Model-aware validation**: Unsupported combinations of model, resolution, aspect ratio and provider-only option are rejected before any API call — no silent downgrades
 
 ## Models
 
-Select a model with the optional `model` parameter on either tool. The default is `gemini-3.1-flash-image`. All three output **JPEG only** and share the same tool interface — capability differences are validated before any API call.
+Select a model with the optional `model` parameter on either tool. The default is `gemini-3.1-flash-image`. Gemini models output **JPEG only**; OpenAI models output **JPEG, PNG or WebP**. All five share the same tool interface — capability differences are validated before any API call.
 
-| Model ID | Name | Best for | Resolutions | Extreme aspect ratios | Speed¹ | Cost²/image |
-|----------|------|----------|-------------|-----------------------|--------|-------------|
-| `gemini-3.1-flash-image` (default) | Nano Banana 2 | Balanced generalist | `0.5K`, `1K`, `2K`, `4K` | Yes (`1:4`, `4:1`, `1:8`, `8:1`) | ~11 s | ~$0.07 (1K) |
-| `gemini-3.1-flash-lite-image` | Nano Banana 2 Lite | Cheapest / fastest | `1K` only | No | ~5 s | ~$0.034 |
-| `gemini-3-pro-image` | Nano Banana Pro | Highest quality | `1K`, `2K`, `4K` | No | ~17 s | ~$0.13 (1K) |
+| Model ID | Provider | Name | Best for | Resolutions | Extreme aspect ratios | Speed¹ | Cost²/image |
+|----------|----------|------|----------|-------------|-----------------------|--------|-------------|
+| `gemini-3.1-flash-image` (default) | Google | Nano Banana 2 | Balanced generalist | `0.5K`, `1K`, `2K`, `4K` | Yes (`1:4`, `4:1`, `1:8`, `8:1`) | ~11 s | ~$0.07 (1K) |
+| `gemini-3.1-flash-lite-image` | Google | Nano Banana 2 Lite | Cheapest / fastest | `1K` only | No | ~5 s | ~$0.034 |
+| `gemini-3-pro-image` | Google | Nano Banana Pro | Highest quality | `1K`, `2K`, `4K` | No | ~17 s | ~$0.13 (1K) |
+| `gpt-image-2.5-flare` | OpenAI | GPT Image 2.5 Flare | Text rendering, prompt adherence | `1K`, `2K` | No | ~14 s (medium) | set by `quality` |
+| `gpt-image-2.5-sunburst` | OpenAI | GPT Image 2.5 Sunburst | Text-heavy posters, branding, faithful edits | `1K`, `2K` | No | ~18 s (medium) | set by `quality` |
+
+OpenAI models take `quality` and `transparent_background` instead of `temperature`, and their pixel size is derived from `aspect_ratio` + `resolution` (`1K` ≈ 1 megapixel, `2K` ≈ 4) and reported back as `width`/`height`. Gemini models take `temperature` and reject the OpenAI-only options; the reverse also holds. Input images: Gemini takes up to 14 at 7 MB each (jpeg/png/webp/gif/heic/heif), OpenAI up to 16 at 50 MB each (jpeg/png/webp only).
 
 ## Performance & cost
 
@@ -43,12 +49,26 @@ Select a model with the optional `model` parameter on either tool. The default i
 | `2K`       | _n/a_              | ~$0.101               | ~$0.134         |
 | `4K`       | _n/a_              | ~$0.151               | ~$0.240         |
 
-**Rule of thumb:** default to **Flash** for everyday work; drop to **Lite** for drafts, thumbnails, and high-volume batches where speed and cost matter most; reach for **Pro** for hero shots, photorealism, and cinematic lighting where the extra time and cost are justified.
+**GPT Image 2.5 cost by quality** (1K, estimated; Flare and Sunburst bill identically):
+
+| `quality` | Cost²/image | Flare speed¹ | Sunburst speed¹ |
+|-----------|-------------|--------------|-----------------|
+| `low`     | ~$0.006     | ~10 s        | ~16 s           |
+| `medium`  | ~$0.013     | ~14 s        | ~18 s           |
+| `high`    | ~$0.05      | ~18 s        | ~30 s           |
+| `xhigh`   | ~$0.09      | ~27 s        | ~47 s           |
+| `max`     | ~$0.21      | ~46 s        | ~85 s           |
+
+`2K` roughly doubles the output-token cost of the same quality. `output_format` does not change the price, but a PNG file is roughly 16x the size of the same image as JPEG on disk. Reference images on an edit cost about $0.01 each (~1000 input tokens per 1K image), versus a fraction of a cent on Gemini — for compositions with 4+ reference images prefer `gemini-3.1-flash-image`. OpenAI prices are token-based ($5 / $8 / $30 per million text-input / image-input / image-output tokens, **verify on the [OpenAI pricing page](https://developers.openai.com/api/docs/pricing)**); every OpenAI result reports the measured token counts and the cost estimated from them.
+
+**Rule of thumb:** default to **Flash** for everyday work; drop to **Lite** for drafts, thumbnails, and high-volume batches where speed and cost matter most; reach for **Pro** for hero shots, photorealism, and cinematic lighting where the extra time and cost are justified. Reach for **Flare** or **Sunburst** when the image carries text or must match a precise composition, and raise `quality` only as far as the result needs.
 
 ## Prerequisites
 
-- Node.js 20 or higher
-- A Google AI Studio API key ([Get one here](https://aistudio.google.com/))
+- Node.js 22 or higher
+- At least one provider API key:
+  - Google AI Studio, for the `gemini-*` models ([get one here](https://aistudio.google.com/))
+  - OpenAI, for the `gpt-image-*` models ([get one here](https://platform.openai.com/api-keys))
 
 ## Installation
 
@@ -66,13 +86,17 @@ npm run build
 
 ## Configuration
 
-Set your API key as an environment variable:
+Set at least one provider API key as an environment variable:
 
 ```bash
 export GEMINI_API_KEY="your-api-key-here"
 # or, for compatibility
 export GOOGLE_API_KEY="your-api-key-here"
+
+export OPENAI_API_KEY="your-api-key-here"
 ```
+
+The server refuses to start with no key at all. With only one key it still starts and serves both tools; a model belonging to the missing provider fails with an error naming the variable to set.
 
 ## Usage
 
@@ -82,11 +106,13 @@ Add the server to Claude Code as a local stdio MCP server:
 
 ```bash
 export GEMINI_API_KEY="your-api-key-here"
+export OPENAI_API_KEY="your-api-key-here"
 
 claude mcp add hokuz-image-gen \
   --scope local \
   --transport stdio \
   --env GEMINI_API_KEY="$GEMINI_API_KEY" \
+  --env OPENAI_API_KEY="$OPENAI_API_KEY" \
   -- node /absolute/path/to/hokuz-image-gen/dist/index.js
 
 claude mcp list
@@ -105,7 +131,8 @@ Add to your Claude Desktop configuration file (`~/Library/Application Support/Cl
       "command": "node",
       "args": ["/absolute/path/to/hokuz-image-gen/dist/index.js"],
       "env": {
-        "GEMINI_API_KEY": "your-api-key-here"
+        "GEMINI_API_KEY": "your-api-key-here",
+        "OPENAI_API_KEY": "your-api-key-here"
       }
     }
   }
@@ -131,13 +158,15 @@ Generate images from text prompts.
 | Parameter | Type | Required | Default | Description |
 |-----------|------|----------|---------|-------------|
 | `prompt` | string | Yes | - | Text description of the image to generate |
-| `output_path` | string | Yes | - | File path to save the image (directory or full path). Any extension is normalized to `.jpg` |
-| `model` | string | No | `"gemini-3.1-flash-image"` | Model ID: `gemini-3.1-flash-image`, `gemini-3.1-flash-lite-image`, `gemini-3-pro-image` |
-| `aspect_ratio` | string | No | `"1:1"` | `1:1`, `2:3`, `3:2`, `3:4`, `4:3`, `4:5`, `5:4`, `9:16`, `16:9`, `21:9`; plus `1:4`, `4:1`, `1:8`, `8:1` (flash only). Rejected if unsupported by the chosen model |
-| `resolution` | string | No | `"1K"` | `0.5K`, `1K`, `2K`, `4K`. Rejected if unsupported by the chosen model (Lite is `1K` only; Pro is `1K`/`2K`/`4K`) |
-| `output_format` | string | No | `"jpeg"` | Only `jpeg` is supported (these models output JPEG) |
+| `output_path` | string | Yes | - | File path to save the image (directory or full path). Any extension is normalized to match `output_format` |
+| `model` | string | No | `"gemini-3.1-flash-image"` | Model ID: `gemini-3.1-flash-image`, `gemini-3.1-flash-lite-image`, `gemini-3-pro-image`, `gpt-image-2.5-flare`, `gpt-image-2.5-sunburst` |
+| `aspect_ratio` | string | No | `"1:1"` | `1:1`, `2:3`, `3:2`, `3:4`, `4:3`, `4:5`, `5:4`, `9:16`, `16:9`, `21:9`; plus `1:4`, `4:1`, `1:8`, `8:1` (flash only). OpenAI models accept the ten base ratios. Rejected if unsupported by the chosen model |
+| `resolution` | string | No | `"1K"` | `0.5K`, `1K`, `2K`, `4K`. Rejected if unsupported by the chosen model (Lite is `1K` only; Pro is `1K`/`2K`/`4K`; OpenAI models are `1K`/`2K`, where `1K` ≈ 1 megapixel and `2K` ≈ 4, derived from `aspect_ratio`) |
+| `output_format` | string | No | `"jpeg"` | `jpeg` (all models), `png` or `webp` (OpenAI models only). The `output_path` extension is replaced to match |
+| `quality` | string | No | `"medium"` (OpenAI models) | **OpenAI models only.** `low`, `medium`, `high`, `xhigh`, `max` — see the [cost table](#performance--cost). Rejected on Gemini models |
+| `transparent_background` | boolean | No | - | **OpenAI models only.** `true` renders a transparent background; requires `output_format` `png` or `webp` (JPEG has no alpha channel). Rejected on Gemini models |
 | `num_images` | number | No | `1` | Number of images (1-4). Produced via repeated requests |
-| `temperature` | number | No | `1.0` | Creativity (0.0-2.0) |
+| `temperature` | number | No | `1.0` (Gemini models) | **Gemini models only.** Creativity (0.0-2.0). Rejected on OpenAI models |
 
 **Examples:**
 
@@ -150,6 +179,8 @@ output_path: ~/images/headshot.jpg
 aspect_ratio: 3:4
 ```
 
+**Returns** (both tools): `{ success, images: [{ path, format, width?, height? }], description?, usage?, warning?, error? }`. `width`/`height` are set only by providers that report the pixel size (OpenAI). `usage` — `{ input_tokens, output_tokens, estimated_cost_usd }`, summed over the requests made — is present for OpenAI results only, and its cost is estimated from the token counts, not billed. `warning` is set when fewer images than requested were produced and carries the failing request's error.
+
 ### hokuz_edit_image
 
 Edit existing images using text instructions.
@@ -159,14 +190,16 @@ Edit existing images using text instructions.
 | Parameter | Type | Required | Default | Description |
 |-----------|------|----------|---------|-------------|
 | `prompt` | string | Yes | - | Editing instruction |
-| `image_paths` | string[] | Yes | - | Array of image paths or URLs (1-14 images) |
-| `output_path` | string | Yes | - | File path to save result (directory or full path). Any extension is normalized to `.jpg` |
-| `model` | string | No | `"gemini-3.1-flash-image"` | Model ID: `gemini-3.1-flash-image`, `gemini-3.1-flash-lite-image`, `gemini-3-pro-image` |
-| `aspect_ratio` | string | No | `"auto"` | `auto` (preserve original) or any generate ratio. Rejected if unsupported by the chosen model |
-| `resolution` | string | No | `"1K"` | `0.5K`, `1K`, `2K`, `4K`. Rejected if unsupported by the chosen model (Lite is `1K` only; Pro is `1K`/`2K`/`4K`) |
-| `output_format` | string | No | `"jpeg"` | Only `jpeg` is supported (these models output JPEG) |
+| `image_paths` | string[] | Yes | - | Array of image paths or URLs, in prompt order ("first image" / "second image"). Gemini models: up to 14 images, 7 MB each, jpeg/png/webp/gif/heic/heif. OpenAI models: up to 16 images, 50 MB each, jpeg/png/webp only. The count is checked before any image is read; the type as each one is loaded, still before any API call |
+| `output_path` | string | Yes | - | File path to save result (directory or full path). Any extension is normalized to match `output_format` |
+| `model` | string | No | `"gemini-3.1-flash-image"` | Model ID: `gemini-3.1-flash-image`, `gemini-3.1-flash-lite-image`, `gemini-3-pro-image`, `gpt-image-2.5-flare`, `gpt-image-2.5-sunburst` |
+| `aspect_ratio` | string | No | `"auto"` | `auto` (preserve original) or any generate ratio. On OpenAI models `auto` lets the provider choose the output size, so set a ratio to control it. Rejected if unsupported by the chosen model |
+| `resolution` | string | No | `1K` (applied by the provider) | `0.5K`, `1K`, `2K`, `4K`. Rejected if unsupported by the chosen model (Lite is `1K` only; Pro is `1K`/`2K`/`4K`; OpenAI models are `1K`/`2K`, where `1K` ≈ 1 megapixel and `2K` ≈ 4, derived from `aspect_ratio`). No schema default here: on an OpenAI model it needs an explicit `aspect_ratio`, and `auto` plus a resolution is rejected |
+| `output_format` | string | No | `"jpeg"` | `jpeg` (all models), `png` or `webp` (OpenAI models only). The `output_path` extension is replaced to match |
+| `quality` | string | No | `"medium"` (OpenAI models) | **OpenAI models only.** `low`, `medium`, `high`, `xhigh`, `max` — see the [cost table](#performance--cost). Rejected on Gemini models |
+| `transparent_background` | boolean | No | - | **OpenAI models only.** `true` renders a transparent background; requires `output_format` `png` or `webp` (JPEG has no alpha channel). Rejected on Gemini models |
 | `num_images` | number | No | `1` | Number of variations (1-4). Produced via repeated requests |
-| `temperature` | number | No | `1.0` | Creativity (0.0-2.0) |
+| `temperature` | number | No | `1.0` (Gemini models) | **Gemini models only.** Creativity (0.0-2.0). Rejected on OpenAI models |
 
 **Examples:**
 
@@ -201,6 +234,13 @@ output_path: ~/restored/
 - Create consistent visual branding
 - Transform images into different art styles
 
+### Stickers, Logos and Overlays
+- Transparent PNG or WebP output — `gpt-image-2.5-flare` with `transparent_background: true` and `output_format: "png"`
+
+### Text-Heavy and Branding Work
+- Posters, packaging mockups and social cards whose text must read correctly — `gpt-image-2.5-sunburst` at `quality: "high"`
+- Edits where approved details (faces, logos, layout) must survive unchanged
+
 ### Multi-Image Composition
 - Combine product shots into catalogs
 - Create composite scenes
@@ -232,8 +272,12 @@ npm run check        # typecheck + lint + test — the gate CI runs on every pul
 │   ├── schemas/
 │   │   ├── generate.ts       # Generate tool schema
 │   │   └── edit.ts           # Edit tool schema
+│   ├── providers/
+│   │   ├── index.ts          # Validation + dispatch on the registry's provider
+│   │   ├── gemini.ts         # Gemini Interactions API client
+│   │   ├── openai.ts         # OpenAI Images API client
+│   │   └── __tests__/
 │   ├── services/
-│   │   ├── gemini-client.ts  # Gemini Interactions API client
 │   │   ├── file-utils.ts     # File operations
 │   │   └── __tests__/
 │   ├── tools/
@@ -252,23 +296,59 @@ npm run check        # typecheck + lint + test — the gate CI runs on every pul
 
 ## Troubleshooting
 
-### "API key not found"
-Ensure `GEMINI_API_KEY` or `GOOGLE_API_KEY` is set in your environment or MCP client configuration.
+### "No provider API key found" (the server will not start)
+Set `GEMINI_API_KEY` (or `GOOGLE_API_KEY`) and/or `OPENAI_API_KEY` in your environment or MCP client configuration. At least one is required.
+
+### "GEMINI_API_KEY is not set" / "OPENAI_API_KEY is not set, so '…' cannot be used"
+The server started with the other provider's key. Either set the named variable, or choose a model from the provider whose key is present.
 
 ### "Model … does not support resolution/aspect ratio …"
-The requested option is not valid for the chosen model, and the request is rejected before any API call. Check the [Models](#models) table — for example, Lite is `1K` only, Pro does not support the extreme aspect ratios, and only Flash supports `0.5K` and `1:4`/`4:1`/`1:8`/`8:1`. Either switch models or pick a supported value.
+The requested option is not valid for the chosen model, and the request is rejected before any API call. Check the [Models](#models) table — for example, Lite is `1K` only, Pro does not support the extreme aspect ratios, only Flash supports `0.5K` and `1:4`/`4:1`/`1:8`/`8:1`, and OpenAI models accept `1K`/`2K` and the ten base ratios. Either switch models or pick a supported value.
+
+### "Model … does not support output_format 'png'"
+Gemini models produce JPEG only. Use `gpt-image-2.5-flare` or `gpt-image-2.5-sunburst` for `png`/`webp`, or leave `output_format` at `jpeg`.
+
+### "transparent_background requires output_format 'png' or 'webp'"
+JPEG has no alpha channel, and the OpenAI API rejects that combination outright. Set `output_format` to `png` or `webp`, or drop `transparent_background`.
+
+### "Model … does not support transparent_background"
+Transparency is an OpenAI-only option. Use `gpt-image-2.5-flare` or `gpt-image-2.5-sunburst` with `output_format` `png` or `webp`.
+
+### "Model … accepts at most 14 input images"
+Gemini models take 14 reference images, OpenAI models 16. Remove images, or switch to an OpenAI model. The count is checked before any image is read.
+
+### "Model … does not accept image/gif input"
+OpenAI models accept jpeg, png and webp only; GIF and HEIC are rejected before the API call. Convert the image, or use a Gemini model, which accepts both.
+
+### "Model … does not accept 'quality'" / "does not accept 'temperature'"
+`quality` is OpenAI-only and `temperature` is Gemini-only. Omit the option, or switch to a model of the other provider. Neither has a schema default, so an option only reaches the request when you send it.
+
+### "Model … cannot apply resolution … when aspect_ratio is 'auto'"
+On OpenAI models the pixel size is derived from `aspect_ratio`, and `auto` (the `hokuz_edit_image` default) hands the choice to the provider, so a `resolution` could not be honoured. Set an `aspect_ratio` to control the size, or omit `resolution`. Gemini models apply `resolution` whatever the ratio.
+
+### "OpenAI denied access (403)"
+GPT Image models may require organisation verification in the [OpenAI dashboard](https://platform.openai.com/settings/organization/general). Until that clears, use a Gemini model.
+
+### "OpenAI's content moderation blocked this request"
+The prompt or an input image tripped OpenAI's moderation. The message names the stage and categories; rephrase the prompt or change the inputs.
 
 ### "Content was blocked"
 The prompt may have triggered safety filters. Try rephrasing with less explicit or controversial content.
 
 ### "Rate limit exceeded"
-You've made too many requests. Wait a few minutes before trying again.
+You've made too many requests. Wait a few minutes before trying again. OpenAI tier-1 accounts allow about 5 images per minute, so `num_images: 4` on a GPT Image model is close to the ceiling.
 
 ### "Image file not found"
 Verify the image path is correct. Use absolute paths or paths relative to home (`~/`).
 
-### "Image exceeds 7MB limit"
-Resize your input image to be smaller than 7MB.
+### "Image at … is …MB, above the …MB limit for '…'"
+Each input image must fit the selected model's limit: 7 MB on Gemini models, 50 MB on OpenAI models. The size is checked before the file is read (and, for a URL, before the body is downloaded). Resize the image, or use an OpenAI model.
+
+### "Cannot determine the image type of …"
+Local inputs are typed by their file extension, URLs by the response's `content-type` header. When neither says what the file is, the request stops rather than guessing — a guess would hide exactly the files the format check exists to catch. Rename the file to its real extension (`.jpg`, `.png`, `.webp`, `.gif`, `.heic`, `.heif`), or, for a URL that serves no `content-type`, download the image and pass a local path.
+
+### "Could not fetch image from …"
+The server could not read the URL: a non-OK status, a connection failure, or no response within 30 seconds. Check the URL, or download the image and pass a local path.
 
 ## License
 
