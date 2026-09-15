@@ -6,8 +6,8 @@ import { DEFAULTS } from "../../constants.js";
 
 const { editMock } = vi.hoisted(() => ({ editMock: vi.fn() }));
 
-vi.mock("../../services/gemini-client.js", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("../../services/gemini-client.js")>();
+vi.mock("../../providers/index.js", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../../providers/index.js")>();
   return { ...actual, editImage: editMock };
 });
 
@@ -53,6 +53,7 @@ describe(TOOL, () => {
       resolution: DEFAULTS.resolution,
       temperature: DEFAULTS.temperature,
       outputFormat: DEFAULTS.outputFormat,
+      quality: undefined,
     });
     expect(await fs.readFile(path.join(tmp, "out.jpg"))).toEqual(Buffer.from("edited-bytes"));
   });
@@ -117,6 +118,40 @@ describe(TOOL, () => {
     });
     expect(result.isError).toBe(true);
     expect(firstText(result)).toMatch(/Invalid arguments.*image_paths/s);
+    expect(editMock).not.toHaveBeenCalled();
+  });
+
+  it("applies each provider's own optional defaults and omits the other's", async () => {
+    await harness.callTool(TOOL, {
+      prompt: "p",
+      image_paths: [first],
+      output_path: tmp,
+      model: "gpt-image-2.5-flare",
+    });
+
+    expect(editMock.mock.calls[0][2]).toEqual({
+      model: "gpt-image-2.5-flare",
+      aspectRatio: undefined,
+      resolution: DEFAULTS.resolution,
+      outputFormat: DEFAULTS.outputFormat,
+      quality: DEFAULTS.quality,
+      temperature: undefined,
+    });
+  });
+
+  it("rejects an explicit temperature on an OpenAI model before loading any image", async () => {
+    const result = await harness.callTool(TOOL, {
+      prompt: "p",
+      image_paths: [path.join(tmp, "does-not-exist.png")],
+      output_path: tmp,
+      model: "gpt-image-2.5-flare",
+      temperature: 0.2,
+    });
+
+    expect(result.isError).toBe(true);
+    expect(firstText(result)).toBe(
+      "Error: Model 'gpt-image-2.5-flare' (GPT Image 2.5 Flare) does not accept 'temperature'; it is a Gemini-only option. Omit it, or use a gemini-* model."
+    );
     expect(editMock).not.toHaveBeenCalled();
   });
 });

@@ -7,8 +7,8 @@ import { ErrorType, McpError } from "../../types.js";
 
 const { generateMock } = vi.hoisted(() => ({ generateMock: vi.fn() }));
 
-vi.mock("../../services/gemini-client.js", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("../../services/gemini-client.js")>();
+vi.mock("../../providers/index.js", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../../providers/index.js")>();
   return { ...actual, generateImage: generateMock };
 });
 
@@ -52,6 +52,7 @@ describe(TOOL, () => {
       resolution: DEFAULTS.resolution,
       temperature: DEFAULTS.temperature,
       outputFormat: DEFAULTS.outputFormat,
+      quality: undefined,
     });
 
     const saved = path.join(tmp, "lake.jpg");
@@ -138,7 +139,13 @@ describe(TOOL, () => {
     expect(generateMock).toHaveBeenCalledTimes(2);
     expect(result.structuredContent).toMatchObject({ success: true });
     expect((result.structuredContent as { images: unknown[] }).images).toHaveLength(1);
-    expect(firstText(result)).toContain("Warning: requested 3 image(s) but only 1 were produced");
+    expect(result.structuredContent).toMatchObject({
+      warning:
+        "Requested 3 image(s) but only 1 were produced. The failed request reported: Error: Rate limit exceeded.",
+    });
+    expect(firstText(result)).toContain(
+      "Warning: Requested 3 image(s) but only 1 were produced. The failed request reported: Error: Rate limit exceeded."
+    );
   });
 
   it("surfaces the error when the first request fails", async () => {
@@ -181,5 +188,98 @@ describe(TOOL, () => {
     expect(firstText(unknown)).toMatch(/Invalid arguments/);
 
     expect(generateMock).not.toHaveBeenCalled();
+  });
+
+  it("applies each provider's own optional defaults and omits the other's", async () => {
+    generateMock.mockResolvedValue(okResponse());
+
+    await harness.callTool(TOOL, {
+      prompt: "p",
+      output_path: tmp,
+      model: "gpt-image-2.5-flare",
+    });
+
+    expect(generateMock.mock.calls[0][1]).toEqual({
+      model: "gpt-image-2.5-flare",
+      aspectRatio: DEFAULTS.aspectRatio,
+      resolution: DEFAULTS.resolution,
+      outputFormat: DEFAULTS.outputFormat,
+      quality: DEFAULTS.quality,
+      temperature: undefined,
+    });
+  });
+
+  it("rejects an explicit quality on a Gemini model before calling the provider", async () => {
+    const result = await harness.callTool(TOOL, {
+      prompt: "p",
+      output_path: tmp,
+      quality: "high",
+    });
+
+    expect(result.isError).toBe(true);
+    expect(firstText(result)).toBe(
+      "Error: Model 'gemini-3.1-flash-image' (Nano Banana 2) does not accept 'quality'; it is an OpenAI-only option. Omit it, or use gpt-image-2.5-flare / gpt-image-2.5-sunburst."
+    );
+    expect(generateMock).not.toHaveBeenCalled();
+  });
+
+  it("rejects an explicit temperature on an OpenAI model before calling the provider", async () => {
+    const result = await harness.callTool(TOOL, {
+      prompt: "p",
+      output_path: tmp,
+      model: "gpt-image-2.5-sunburst",
+      temperature: 0.2,
+    });
+
+    expect(result.isError).toBe(true);
+    expect(firstText(result)).toBe(
+      "Error: Model 'gpt-image-2.5-sunburst' (GPT Image 2.5 Sunburst) does not accept 'temperature'; it is a Gemini-only option. Omit it, or use a gemini-* model."
+    );
+    expect(generateMock).not.toHaveBeenCalled();
+  });
+
+  it("reports the provider's pixel size and sums usage across the num_images loop", async () => {
+    generateMock.mockResolvedValue({
+      images: [{ data: IMG, mimeType: "image/jpeg", width: 1360, height: 768 }],
+      usage: { inputTokens: 15, outputTokens: 229, estimatedCostUsd: 0.007 },
+    });
+
+    const result = await harness.callTool(TOOL, {
+      prompt: "p",
+      output_path: tmp,
+      model: "gpt-image-2.5-flare",
+      aspect_ratio: "16:9",
+      num_images: 2,
+    });
+
+    expect(result.structuredContent).toMatchObject({
+      usage: { input_tokens: 30, output_tokens: 458, estimated_cost_usd: 0.014 },
+    });
+    const images = (result.structuredContent as {
+      images: Array<{ width?: number; height?: number }>;
+    }).images;
+    expect(images.map((i) => [i.width, i.height])).toEqual([
+      [1360, 768],
+      [1360, 768],
+    ]);
+    expect(firstText(result)).toContain("(1360x768)");
+    expect(firstText(result)).toContain(
+      "Usage: 30 input + 458 output tokens, estimated cost $0.0140"
+    );
+  });
+
+  it("omits usage and dimensions for a provider that reports neither", async () => {
+    generateMock.mockResolvedValue(okResponse());
+
+    const result = await harness.callTool(TOOL, { prompt: "p", output_path: tmp });
+
+    // toEqual treats an undefined-valued key as absent, which is what a JSON
+    // transport delivers; the point is that neither field carries a value.
+    expect(result.structuredContent).toEqual({
+      success: true,
+      images: [{ path: expect.any(String), format: "jpeg" }],
+    });
+    expect(firstText(result)).not.toContain("Usage:");
+    expect(firstText(result)).toContain("Successfully generated 1 image(s)");
   });
 });

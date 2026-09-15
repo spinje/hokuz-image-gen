@@ -10,35 +10,15 @@ import {
   ENV_VARS,
   MIME_TYPES,
   IMAGE_SIZE_API_VALUES,
-  getUnsupportedModelOptionMessage,
-  type AspectRatio,
-  type Resolution,
-  type OutputFormat,
-  type ImageModel,
 } from "../constants.js";
 import {
-  type GeminiImageResponse,
+  type GenerationConfig,
+  type ImageResponse,
   type GeneratedImage,
   type InputImage,
   McpError,
   ErrorType,
 } from "../types.js";
-
-/**
- * Configuration for a single image generation/edit request.
- *
- * Note: `numImages` is intentionally NOT part of this config. Requesting
- * multiple images is handled in the tool layer by making repeated independent
- * requests, so the service is always "one request returns whatever it returns".
- */
-export interface GenerationConfig {
-  model: ImageModel;
-  /** Omitted (undefined) means "auto" — do not send an aspect ratio. */
-  aspectRatio?: AspectRatio;
-  resolution: Resolution;
-  temperature: number;
-  outputFormat: OutputFormat;
-}
 
 /**
  * Get the API key from environment variables.
@@ -51,7 +31,7 @@ function getApiKey(): string {
   if (!apiKey) {
     throw new McpError(
       ErrorType.MISSING_API_KEY,
-      `Error: API key not found. Set the ${ENV_VARS.geminiApiKey} or ${ENV_VARS.googleApiKey} environment variable. Get your key at https://aistudio.google.com/`
+      `Error: ${ENV_VARS.geminiApiKey} is not set, so Gemini models cannot be used. Set ${ENV_VARS.geminiApiKey} (or ${ENV_VARS.googleApiKey}) in the MCP server's environment — get a key at https://aistudio.google.com/ — or choose an OpenAI model.`
     );
   }
 
@@ -72,21 +52,6 @@ function getClient(): GoogleGenAI {
     clientInstance = new GoogleGenAI({ apiKey });
   }
   return clientInstance;
-}
-
-/**
- * Validate a generation config against the model capability registry.
- * Throws INVALID_MODEL_OPTION before any API request is made.
- */
-export function validateGenerationConfig(config: GenerationConfig): void {
-  const message = getUnsupportedModelOptionMessage({
-    model: config.model,
-    resolution: config.resolution,
-    aspectRatio: config.aspectRatio,
-  });
-  if (message) {
-    throw new McpError(ErrorType.INVALID_MODEL_OPTION, message);
-  }
 }
 
 /**
@@ -129,7 +94,7 @@ export interface InteractionLike {
 /**
  * Extract images and text description from an interaction response.
  */
-export function parseInteraction(interaction: InteractionLike): GeminiImageResponse {
+export function parseInteraction(interaction: InteractionLike): ImageResponse {
   const images: GeneratedImage[] = [];
   const seen = new Set<string>();
   let description: string | undefined;
@@ -183,8 +148,7 @@ export function parseInteraction(interaction: InteractionLike): GeminiImageRespo
 export async function generateImage(
   prompt: string,
   config: GenerationConfig
-): Promise<GeminiImageResponse> {
-  validateGenerationConfig(config);
+): Promise<ImageResponse> {
   const client = getClient();
 
   try {
@@ -208,8 +172,7 @@ export async function editImage(
   prompt: string,
   inputImages: InputImage[],
   config: GenerationConfig
-): Promise<GeminiImageResponse> {
-  validateGenerationConfig(config);
+): Promise<ImageResponse> {
   const client = getClient();
 
   try {
@@ -255,7 +218,7 @@ function handleApiError(error: unknown): never {
   ) {
     throw new McpError(
       ErrorType.API_RATE_LIMIT,
-      "Error: Rate limit exceeded. Please wait before making more requests."
+      "Error: Gemini rate limit exceeded. Wait before retrying, lower num_images, or use an OpenAI model."
     );
   }
 
@@ -267,7 +230,7 @@ function handleApiError(error: unknown): never {
   ) {
     throw new McpError(
       ErrorType.MISSING_API_KEY,
-      `Error: Invalid or missing API key. Please check your ${ENV_VARS.geminiApiKey} environment variable.`
+      `Error: Invalid or missing API key. Please check your ${ENV_VARS.geminiApiKey} environment variable, or choose an OpenAI model.`
     );
   }
 
@@ -288,11 +251,4 @@ function handleApiError(error: unknown): never {
     `Error: API request failed. ${errorMessage}`,
     error
   );
-}
-
-/**
- * Validate that the client can be initialized (checks for API key)
- */
-export function validateApiKey(): void {
-  getApiKey();
 }

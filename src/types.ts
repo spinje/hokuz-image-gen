@@ -2,6 +2,14 @@
  * Type definitions for the image server
  */
 
+import type {
+  AspectRatio,
+  ImageModel,
+  OutputFormat,
+  Quality,
+  Resolution,
+} from "./constants.js";
+
 /**
  * A single generated image result
  */
@@ -17,13 +25,47 @@ export interface GeneratedImage {
 }
 
 /**
- * Response from the Gemini API for image generation
+ * Token usage and estimated cost for one provider request.
+ *
+ * Only providers that report token counts populate this (OpenAI); the cost is
+ * derived from those counts and the hand-maintained price table, so it is an
+ * estimate, not a billed amount.
  */
-export interface GeminiImageResponse {
+export interface UsageReport {
+  inputTokens: number;
+  outputTokens: number;
+  estimatedCostUsd: number;
+}
+
+/**
+ * Configuration for a single image generation/edit request.
+ *
+ * Note: `numImages` is intentionally NOT part of this config. Requesting
+ * multiple images is handled in the tool layer by making repeated independent
+ * requests, so a provider is always "one request returns whatever it returns".
+ */
+export interface GenerationConfig {
+  model: ImageModel;
+  /** Omitted (undefined) means "auto" — let the model choose the ratio. */
+  aspectRatio?: AspectRatio;
+  resolution: Resolution;
+  outputFormat: OutputFormat;
+  /** Gemini only; undefined on models that do not accept it. */
+  temperature?: number;
+  /** OpenAI only; undefined on models that do not accept it. */
+  quality?: Quality;
+}
+
+/**
+ * Result of one provider request
+ */
+export interface ImageResponse {
   /** Array of generated images */
   images: GeneratedImage[];
   /** Text description from the model (if any) */
   description?: string;
+  /** Token usage, when the provider reports it */
+  usage?: UsageReport;
 }
 
 /**

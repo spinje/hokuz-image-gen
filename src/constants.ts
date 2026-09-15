@@ -2,16 +2,22 @@
  * Constants for the image server
  */
 
+/** Model providers this server can call. */
+export type Provider = "google" | "openai";
+
 /**
- * Supported image models (exact Gemini model IDs).
+ * Supported image models (exact provider model IDs).
  *
- * These map to the "Nano Banana" family of image models and are called through
- * the Gemini Interactions API.
+ * The Gemini IDs map to the "Nano Banana" family and are called through the
+ * Gemini Interactions API; the OpenAI IDs are GPT Image 2.5 models called
+ * through the Images API.
  */
 export const IMAGE_MODELS = [
   "gemini-3.1-flash-image",
   "gemini-3.1-flash-lite-image",
   "gemini-3-pro-image",
+  "gpt-image-2.5-flare",
+  "gpt-image-2.5-sunburst",
 ] as const;
 
 /** Image model type */
@@ -63,7 +69,7 @@ export const RESOLUTIONS = ["0.5K", "1K", "2K", "4K"] as const;
 export type Resolution = (typeof RESOLUTIONS)[number];
 
 /**
- * Maps a public resolution token to the API `image_size` value.
+ * Maps a public resolution token to the Gemini API `image_size` value.
  * The Interactions API uses "512" rather than "0.5K".
  */
 export const IMAGE_SIZE_API_VALUES: Record<Resolution, string> = {
@@ -74,9 +80,20 @@ export const IMAGE_SIZE_API_VALUES: Record<Resolution, string> = {
 } as const;
 
 /**
+ * OpenAI quality ladder. Cost and latency rise steeply across it; the schema
+ * `.describe()` string carries the numbers a caller needs to choose.
+ *
+ * "auto" is deliberately not exposed: its cost is not knowable in advance.
+ */
+export const QUALITIES = ["low", "medium", "high", "xhigh", "max"] as const;
+
+/** Quality type */
+export type Quality = (typeof QUALITIES)[number];
+
+/**
  * Supported output formats.
  *
- * Note: the Interactions API for these models produces JPEG only. Its
+ * Note: the Gemini Interactions API for these models produces JPEG only. Its
  * `response_format.mime_type` accepts only "image/jpeg" (PNG and WebP are not
  * supported), so JPEG is the sole output format.
  */
@@ -92,7 +109,10 @@ export const DEFAULTS = {
   resolution: "1K" as Resolution,
   outputFormat: "jpeg" as OutputFormat,
   numImages: 1,
+  /** Applied by the handler for models that accept temperature (Gemini). */
   temperature: 1.0,
+  /** Applied by the handler for models that accept quality (OpenAI). */
+  quality: "medium" as Quality,
 } as const;
 
 /** API and input limits */
@@ -113,10 +133,23 @@ export const LIMITS = {
 
 /** Environment variable names for configuration */
 export const ENV_VARS = {
-  /** Fallback API key environment variable (accepted for compatibility) */
+  /** Fallback Gemini API key environment variable (accepted for compatibility) */
   googleApiKey: "GOOGLE_API_KEY",
-  /** Preferred API key environment variable; checked first */
+  /** Preferred Gemini API key environment variable; checked first */
   geminiApiKey: "GEMINI_API_KEY",
+  /** OpenAI API key environment variable */
+  openaiApiKey: "OPENAI_API_KEY",
+} as const;
+
+/**
+ * OpenAI image token prices in USD per million tokens. Hand-maintained from
+ * https://developers.openai.com/api/docs/pricing and cited in the README;
+ * used only to turn the reported token counts into an estimated cost.
+ */
+export const OPENAI_PRICE_PER_MILLION_TOKENS = {
+  textInput: 5,
+  imageInput: 8,
+  imageOutput: 30,
 } as const;
 
 /** MIME types for output formats */
@@ -135,10 +168,16 @@ export const FILE_EXTENSIONS: Record<OutputFormat, string> = {
 export interface ImageModelCapabilities {
   /** Human-friendly marketing name */
   label: string;
+  /** Which provider module handles this model */
+  provider: Provider;
   /** Resolutions the model supports */
   resolutions: readonly Resolution[];
   /** Aspect ratios the model supports */
   aspectRatios: readonly AspectRatio[];
+  /** Quality levels the model accepts; empty means the option is rejected */
+  qualities: readonly Quality[];
+  /** Whether the model accepts a temperature */
+  supportsTemperature: boolean;
   /** Whether the model accepts PDF input (metadata only; not implemented) */
   supportsPdfInput: boolean;
   /** Whether the model supports search grounding (metadata only) */
@@ -150,40 +189,71 @@ export interface ImageModelCapabilities {
 /**
  * Capability registry keyed by exact model ID.
  *
- * Validation against this registry happens in-process before any Google API
+ * Validation against this registry happens in-process before any provider API
  * request is made. Unsupported combinations are rejected rather than silently
  * downgraded.
  */
 export const IMAGE_MODEL_CAPABILITIES: Record<ImageModel, ImageModelCapabilities> = {
   "gemini-3.1-flash-lite-image": {
     label: "Nano Banana 2 Lite",
+    provider: "google",
     resolutions: ["1K"],
     aspectRatios: BASE_ASPECT_RATIOS,
+    qualities: [],
+    supportsTemperature: true,
     supportsPdfInput: false,
     supportsSearchGrounding: false,
     supportsStructuredOutputs: false,
   },
   "gemini-3.1-flash-image": {
     label: "Nano Banana 2",
+    provider: "google",
     resolutions: ["0.5K", "1K", "2K", "4K"],
     aspectRatios: ASPECT_RATIOS,
+    qualities: [],
+    supportsTemperature: true,
     supportsPdfInput: true,
     supportsSearchGrounding: true,
     supportsStructuredOutputs: false,
   },
   "gemini-3-pro-image": {
     label: "Nano Banana Pro",
+    provider: "google",
     resolutions: ["1K", "2K", "4K"],
     aspectRatios: BASE_ASPECT_RATIOS,
+    qualities: [],
+    supportsTemperature: true,
     supportsPdfInput: false,
     supportsSearchGrounding: true,
     supportsStructuredOutputs: true,
+  },
+  "gpt-image-2.5-flare": {
+    label: "GPT Image 2.5 Flare",
+    provider: "openai",
+    resolutions: ["1K", "2K"],
+    aspectRatios: BASE_ASPECT_RATIOS,
+    qualities: QUALITIES,
+    supportsTemperature: false,
+    supportsPdfInput: false,
+    supportsSearchGrounding: false,
+    supportsStructuredOutputs: false,
+  },
+  "gpt-image-2.5-sunburst": {
+    label: "GPT Image 2.5 Sunburst",
+    provider: "openai",
+    resolutions: ["1K", "2K"],
+    aspectRatios: BASE_ASPECT_RATIOS,
+    qualities: QUALITIES,
+    supportsTemperature: false,
+    supportsPdfInput: false,
+    supportsSearchGrounding: false,
+    supportsStructuredOutputs: false,
   },
 };
 
 /**
  * Pure validation helper. Returns a human-readable error message if the
- * model/resolution/aspect-ratio combination is unsupported, otherwise null.
+ * combination of options is unsupported by the model, otherwise null.
  *
  * Kept free of McpError to avoid coupling constants to the error domain;
  * callers translate the message into an McpError.
@@ -192,15 +262,26 @@ export function getUnsupportedModelOptionMessage(args: {
   model: ImageModel;
   resolution: Resolution;
   aspectRatio?: AspectRatio;
+  quality?: Quality;
+  temperature?: number;
 }): string | null {
   const caps = IMAGE_MODEL_CAPABILITIES[args.model];
+  const who = `Model '${args.model}' (${caps.label})`;
 
   if (!caps.resolutions.includes(args.resolution)) {
-    return `Error: Model '${args.model}' (${caps.label}) does not support resolution '${args.resolution}'. Supported resolutions: ${caps.resolutions.join(", ")}.`;
+    return `Error: ${who} does not support resolution '${args.resolution}'. Supported resolutions: ${caps.resolutions.join(", ")}. Choose one of those, or a model that supports '${args.resolution}'.`;
   }
 
   if (args.aspectRatio && !caps.aspectRatios.includes(args.aspectRatio)) {
-    return `Error: Model '${args.model}' (${caps.label}) does not support aspect ratio '${args.aspectRatio}'. Supported aspect ratios: ${caps.aspectRatios.join(", ")}.`;
+    return `Error: ${who} does not support aspect ratio '${args.aspectRatio}'. Supported aspect ratios: ${caps.aspectRatios.join(", ")}. Choose one of those, or a model that supports '${args.aspectRatio}'.`;
+  }
+
+  if (args.quality !== undefined && caps.qualities.length === 0) {
+    return `Error: ${who} does not accept 'quality'; it is an OpenAI-only option. Omit it, or use gpt-image-2.5-flare / gpt-image-2.5-sunburst.`;
+  }
+
+  if (args.temperature !== undefined && !caps.supportsTemperature) {
+    return `Error: ${who} does not accept 'temperature'; it is a Gemini-only option. Omit it, or use a gemini-* model.`;
   }
 
   return null;

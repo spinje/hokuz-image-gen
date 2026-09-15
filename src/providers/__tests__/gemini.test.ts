@@ -15,7 +15,7 @@ const {
   editImage,
   generateImage,
   parseInteraction,
-} = await import("../gemini-client.js");
+} = await import("../gemini.js");
 
 const IMG_A = Buffer.from("image-a").toString("base64");
 const IMG_B = Buffer.from("image-b").toString("base64");
@@ -133,13 +133,6 @@ describe("generateImage request shape", () => {
     const { response_format } = createMock.mock.calls[0][0];
     expect(response_format).not.toHaveProperty("aspect_ratio");
   });
-
-  it("validates before calling the API", async () => {
-    await expect(
-      generateImage("a prompt", { ...baseConfig, model: "gemini-3-pro-image", aspectRatio: "1:4" })
-    ).rejects.toThrowError(expect.objectContaining({ type: ErrorType.INVALID_MODEL_OPTION }));
-    expect(createMock).not.toHaveBeenCalled();
-  });
 });
 
 describe("editImage request shape", () => {
@@ -213,7 +206,7 @@ describe("API key resolution", () => {
         }
       },
     }));
-    const mod = await import("../gemini-client.js");
+    const mod = await import("../gemini.js");
     return mod;
   }
 
@@ -238,12 +231,18 @@ describe("API key resolution", () => {
     expect(ctorMock).toHaveBeenCalledWith({ apiKey: "google-key" });
   });
 
-  it("validateApiKey throws MISSING_API_KEY when neither is set", async () => {
+  it("names the variable to set, and the alternative, when neither key is present", async () => {
     vi.stubEnv("GEMINI_API_KEY", "");
     vi.stubEnv("GOOGLE_API_KEY", "");
-    const { validateApiKey } = await freshGenerate();
-    expect(() => validateApiKey()).toThrowError(
-      expect.objectContaining({ type: ErrorType.MISSING_API_KEY })
-    );
+    const { generateImage } = await freshGenerate();
+    // vi.resetModules() gives this module graph its own McpError class, so
+    // match on the shape rather than instanceof.
+    await expect(generateImage("p", baseConfig)).rejects.toMatchObject({
+      type: ErrorType.MISSING_API_KEY,
+      message: expect.stringMatching(
+        /GEMINI_API_KEY is not set.*choose an OpenAI model/s
+      ),
+    });
+    expect(createMock).not.toHaveBeenCalled();
   });
 });
