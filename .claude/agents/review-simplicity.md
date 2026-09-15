@@ -26,7 +26,7 @@ Follow `.claude/agents/REVIEW-PROTOCOL.md` (read it first). Lens-specifics on to
 
 ## What to Hunt
 
-1. **Emergent duplication.** Two pieces solved the same sub-problem independently — near-identical helpers, parallel shapes, copy-pasted blocks in both tools that are NOT part of the archetype. Also: a new bespoke helper that near-duplicates an existing one in `file-utils.ts` or `gemini-client.ts`.
+1. **Emergent duplication.** Two pieces solved the same sub-problem independently — near-identical helpers, parallel shapes, copy-pasted blocks in both tools that are NOT part of the archetype. Also: a new bespoke helper that near-duplicates an existing one in `file-utils.ts` or a `providers/*.ts` module. The two provider modules are deliberately parallel, not shared: a helper pulled up between them needs a reason beyond "both have one".
 2. **Interface complexity that outgrew its use.** A parameter only one caller sets; a config field nothing reads; an option threaded through three layers for one branch. Count the call sites.
 3. **Dead scaffolding.** Helpers, types, exports, intermediate variables left from how the code was BUILT rather than what it needs to BE. (This repo has shed several already: `toDataUrl`, duplicate output interfaces, an unused enum member.)
 4. **Premature abstraction.** A generic, a base helper, or an indirection introduced for one or two cases that would read more simply inlined. Elegance must be earned.

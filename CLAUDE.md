@@ -35,15 +35,15 @@ When in doubt, ask: *"What would have to be true for this to work reliably under
 
 ## Project Overview
 
-A local MCP (Model Context Protocol) server that exposes two tools, `hokuz_generate_image` and `hokuz_edit_image`, backed by Google's Nano Banana image models (Gemini 3.1 Flash Image, Flash Lite Image, and Gemini 3 Pro Image) through the Gemini **Interactions API**. It runs over stdio, is started by an MCP client such as Claude Code or Claude Desktop, and writes JPEG files to disk. The calling LLM reads the tool descriptions and JSON Schemas we publish; those strings are the product's user interface.
+A local MCP (Model Context Protocol) server that exposes two tools, `hokuz_generate_image` and `hokuz_edit_image`, backed by two providers: Google's Nano Banana image models (Gemini 3.1 Flash Image, Flash Lite Image, Gemini 3 Pro Image) through the Gemini **Interactions API**, and OpenAI's GPT Image 2.5 models (Flare, Sunburst) through the **Images API**. The caller picks with `model`. It runs over stdio, is started by an MCP client such as Claude Code or Claude Desktop, and writes JPEG files to disk. The calling LLM reads the tool descriptions and JSON Schemas we publish; those strings are the product's user interface.
 
-**Core principle:** the server never silently downgrades. Unsupported model/resolution/aspect-ratio combinations are rejected in-process before any API call, with an error that names the supported values.
+**Core principle:** the server never silently downgrades. Unsupported combinations of model, resolution, aspect ratio and provider-only option are rejected in-process before any API call, with an error that names the supported values or the model to switch to.
 
 ### Tech Stack
 
-- **Runtime:** Node 20+, TypeScript 5, ESM with Node16 module resolution
+- **Runtime:** Node 22+, TypeScript 5, ESM with Node16 module resolution
 - **Protocol:** `@modelcontextprotocol/sdk` (`McpServer`, stdio transport)
-- **Model API:** `@google/genai` (`client.interactions.create`)
+- **Model APIs:** `@google/genai` (`client.interactions.create`) and `openai` (`client.images.generate` / `client.images.edit`; requires Node 22)
 - **Validation:** Zod 4 (input/output schemas, published to clients as JSON Schema)
 - **Tooling:** Vitest, ESLint 9+ flat config with `typescript-eslint`, GitHub Actions on pull requests
 
@@ -52,13 +52,17 @@ A local MCP (Model Context Protocol) server that exposes two tools, `hokuz_gener
 ```
 .
 ├── src/
-│   ├── index.ts                # Entry point: API-key check, stdio transport
+│   ├── index.ts                # Entry point: provider-key check, stdio transport
 │   ├── server.ts               # createServer(); name/version from package.json
-│   ├── constants.ts            # Models, capability registry, limits, defaults
-│   ├── types.ts                # Shared interfaces, ErrorType, McpError
+│   ├── constants.ts            # Models, capability registry, limits, defaults, pricing
+│   ├── types.ts                # GenerationConfig, ImageResponse, ErrorType, McpError
 │   ├── schemas/{generate,edit}.ts      # Zod input/output schemas (LLM reads the .describe() strings)
+│   ├── providers/
+│   │   ├── index.ts            # validateGenerationConfig + dispatch on the registry's `provider`
+│   │   ├── gemini.ts           # Interactions API: request build, response parse, error mapping
+│   │   ├── openai.ts           # Images API: size derivation, request build, parse, error mapping
+│   │   └── __tests__/
 │   ├── services/
-│   │   ├── gemini-client.ts    # Interactions API: request build, response parse, error mapping
 │   │   ├── file-utils.ts       # Output path resolution, image loading (file/URL)
 │   │   └── __tests__/
 │   ├── tools/
@@ -82,7 +86,7 @@ A local MCP (Model Context Protocol) server that exposes two tools, `hokuz_gener
 
 ## Dev Environment
 
-- **Node ≥ 20.** `GEMINI_API_KEY` (preferred) or `GOOGLE_API_KEY` must be set to start the server; tests need neither.
+- **Node ≥ 22** (`openai@7` requires it). At least one provider key must be set to start the server: `GEMINI_API_KEY` (preferred) or `GOOGLE_API_KEY` for Gemini models, `OPENAI_API_KEY` for GPT Image models. Tests need none.
 - `npm run build` — `tsc` to `dist/` (tests excluded from emit by `tsconfig.json`)
 - `npm run dev` — `tsx watch src/index.ts`
 - `npm start` — run the built server over stdio
@@ -99,9 +103,9 @@ A local MCP (Model Context Protocol) server that exposes two tools, `hokuz_gener
 
 The MCP SDK validates incoming arguments with our Zod schema and passes the **parsed** result to the handler, so defaults are applied by the SDK. More importantly, `.default()` is what makes a field *optional* in the JSON Schema clients see: drop it and the SDK marks the field `required` and rejects every call that omits it (pinned by `src/__tests__/server.test.ts`). Handlers still apply `params.x ?? DEFAULTS.x` as defence in depth; keep doing that, but do not rely on it to make a field optional.
 
-### 2. Image options live in `response_format`, not `generation_config`
+### 2. Gemini image options live in `response_format`, not `generation_config`
 
-The client uses the **Interactions API** (`client.interactions.create`). Aspect ratio, resolution, and MIME type go in `response_format` (an `ImageResponseFormat`). `generation_config.image_config` exists but is `@deprecated` in the SDK — do not use it.
+`providers/gemini.ts` uses the **Interactions API** (`client.interactions.create`). Aspect ratio, resolution, and MIME type go in `response_format` (an `ImageResponseFormat`). `generation_config.image_config` exists but is `@deprecated` in the SDK — do not use it. (OpenAI is unrelated: `providers/openai.ts` passes `size`, `quality`, `output_format` and `background` as top-level request fields.)
 
 ```typescript
 response_format: {
@@ -114,9 +118,9 @@ response_format: {
 
 Only `temperature` goes in `generation_config`. The Interactions request has **no safety-settings field**; content moderation uses Google's defaults and there is nothing to configure.
 
-### 3. These models output JPEG only
+### 3. Gemini models output JPEG only, so the server does
 
-`response_format.mime_type` accepts only `"image/jpeg"`; the SDK types it as that literal and the API returns HTTP 400 for anything else. So `OUTPUT_FORMATS` is `["jpeg"]` and every saved file is `.jpg`. Do not add PNG/WebP output without a transcoding dependency (a deliberate non-goal). Input images may be PNG/WebP/GIF/HEIC.
+`response_format.mime_type` accepts only `"image/jpeg"`; the SDK types it as that literal and the API returns HTTP 400 for anything else. So `OUTPUT_FORMATS` is `["jpeg"]` and every saved file is `.jpg`. Never transcode: the format the provider returns is the format written. (The OpenAI Images API does accept `png` and `webp` — widening `OUTPUT_FORMATS` is planned, not shipped, and the registry has no per-model `outputFormats` axis yet.) Input images may be PNG/WebP/GIF/HEIC.
 
 ### 4. stdout is the MCP protocol channel
 
@@ -128,44 +132,66 @@ Anything written to stdout corrupts the JSON-RPC stream. Log with `console.error
 
 ### 6. Some capability flags are metadata only
 
-`IMAGE_MODEL_CAPABILITIES[*].supportsPdfInput / supportsSearchGrounding / supportsStructuredOutputs` are recorded but **not wired to anything**. Only `resolutions` and `aspectRatios` drive validation. Do not assume the others gate behaviour.
+`IMAGE_MODEL_CAPABILITIES[*].supportsPdfInput / supportsSearchGrounding / supportsStructuredOutputs` are recorded but **not wired to anything**. Only `resolutions`, `aspectRatios`, `qualities`, `supportsTemperature` and `provider` drive behaviour. Do not assume the others gate anything.
 
 ### 7. Invalid arguments come back as a tool result, not a protocol error
 
 When the SDK's schema validation rejects a call, the client receives `{ isError: true, content: [{ text: "Input validation error: ..." }] }`, not a JSON-RPC error. Tests and clients should check `isError`, not expect a rejection.
 
+### 8. Provider-specific options are `.optional()` with **no** schema default
+
+`quality` (OpenAI) and `temperature` (Gemini) exist for one provider only. They are published `.optional()` with no `.default()`, which is the opposite of gotcha 1's rule for every shared option — deliberately. The handler applies the provider's default itself (`params.x ?? (caps.<axis> ? DEFAULTS.x : undefined)`), so an option only reaches `GenerationConfig` when the caller asked for it or the model accepts it. Without this the handler could not tell "the LLM asked for temperature 0.2 on an OpenAI model" from "the SDK filled the default in", and would have to ignore the request silently. Give such an option a `.default()` and every call to the other provider's models starts failing validation.
+
 ## Testing
 
-`npm test` runs every `src/**/*.test.ts` (54 tests, about half a second, no network). The suite exists to make the gotchas above and the invariants below fail loudly when broken; it is not a coverage exercise.
+`npm test` runs every `src/**/*.test.ts` (the suite, about half a second, no network). The suite exists to make the gotchas above and the invariants below fail loudly when broken; it is not a coverage exercise.
 
 - `services/__tests__/file-utils.test.ts` — output path rules (trailing separator, extension replacement, `-N` suffixes in both modes, `~`), 7 MB limit, URL loading via mocked `fetch`.
-- `services/__tests__/gemini-client.test.ts` — exact Interactions request shape, `aspect_ratio` omitted for `auto`, `parseInteraction` de-dup/fallbacks, API error mapping, `GEMINI_API_KEY` precedence.
-- `tools/__tests__/*.test.ts` — defaults reach the service, validation before image loading and before any API call, `num_images` loop and partial-failure warning, files written, schema-boundary rejections.
-- `__tests__/server.test.ts` — tool names, annotations, JSON Schema enums/defaults/`required`, package.json version. `__tests__/constants.test.ts` — validation messages and the "defaults are valid" invariant.
+- `providers/__tests__/gemini.test.ts` — exact Interactions request shape, `aspect_ratio` omitted for `auto`, `parseInteraction` de-dup/fallbacks, API error mapping, `GEMINI_API_KEY` precedence.
+- `providers/__tests__/openai.test.ts` — exact `images.generate` request shape, size derivation (spot checks plus an invariant sweep over every ratio x resolution), edit files in order with an explicit MIME type, parse of dimensions and the cost arithmetic, error mapping by status and by `code`, missing-key path.
+- `providers/__tests__/index.test.ts` — dispatch to the provider the registry names, and validation before dispatch.
+- `tools/__tests__/*.test.ts` — defaults reach the provider (including the per-provider `quality`/`temperature` rule), validation before image loading and before any API call, `num_images` loop with summed `usage` and the partial-failure `warning`, files written, schema-boundary rejections.
+- `__tests__/server.test.ts` — tool names, annotations, JSON Schema enums/defaults/`required`, output schema shape, package.json version. `__tests__/constants.test.ts` — validation messages and the "defaults are valid for every model" invariant.
 
-**How tool tests work:** `connectTestClient()` in `src/__tests__/harness.ts` builds the real server via `createServer()` and connects an SDK `Client` over `InMemoryTransport`. Only the Gemini service functions are mocked (`vi.mock` with `importOriginal`, so `validateGenerationConfig` stays real). This exercises the SDK's input and output schema validation exactly as a production client would.
+**How tool tests work:** `connectTestClient()` in `src/__tests__/harness.ts` builds the real server via `createServer()` and connects an SDK `Client` over `InMemoryTransport`. Only `providers/index.js`'s `generateImage` / `editImage` are mocked (`vi.mock` with `importOriginal`, so `validateGenerationConfig` stays real). This exercises the SDK's input and output schema validation exactly as a production client would.
 
 **What to test:** the seams — request building, response parsing, path resolution, default application, validation order, and the published schema. Exact assertions on deterministic values; every "must not be called / must not appear" paired with a presence assertion in the same medium.
 
-**What never to test:** Zod's own validation, the MCP SDK's transport, the Google SDK, or what the compiler already checks (`Record<ImageModel, ...>` completeness, enum membership). One test per archetype; do not restate a generate test for edit unless edit's behaviour differs.
+**What never to test:** Zod's own validation, the MCP SDK's transport, the Google or OpenAI SDK, or what the compiler already checks (`Record<ImageModel, ...>` completeness, enum membership). One test per archetype; do not restate a generate test for edit unless edit's behaviour differs.
 
 **Before a test counts as done, mutate the code it guards and read the failure count.** A test that stays green when its behaviour breaks is deleted, not kept. Restore mutations from a saved copy, never with `git checkout -- <file>` on a dirty tree.
 
-**Manual verification** after changes that touch the API path: `npm run build`, register with an MCP client, run one real generation and one real edit, and try one invalid combination (Lite + 2K) to see the pre-flight error.
+**Manual verification** after changes that touch the API path: `npm run build`, register with an MCP client, run one real generation and one real edit **per provider that changed**, and try one invalid combination (Lite + 2K, or Flare + `temperature`) to see the pre-flight error.
 
 ## Adding a Parameter or a Tool
 
-**Parameter:** (1) schema field `z.enum(OPTIONS).default(DEFAULTS.x).describe("...")` — the describe string is read by the LLM, name the options and the default; (2) handler `params.x ?? DEFAULTS.x` into `GenerationConfig`; (3) service if the request changes; (4) the Args list in `TOOL_DESCRIPTION`; (5) tests in the same change — the exact request-shape `toEqual` in `gemini-client.test.ts` will fail until updated, and `server.test.ts` asserts schema defaults; (6) README parameter table; (7) `npm run check`.
+**Parameter:** (1) schema field `z.enum(OPTIONS).default(DEFAULTS.x).describe("...")` — the describe string is read by the LLM, name the options and the default; (2) handler `params.x ?? DEFAULTS.x` into `GenerationConfig`; (3) the provider modules if the request changes; (4) the Args list in **both** `TOOL_DESCRIPTION`s; (5) tests in the same change — the exact request-shape `toEqual` in `providers/__tests__/gemini.test.ts` and `openai.test.ts` will fail until updated, and `server.test.ts` asserts schema defaults; (6) both README parameter tables; (7) `npm run check`.
+
+A parameter only one provider accepts follows gotcha 8 instead: `.optional()` with no `.default()`, a registry axis that says which models take it, a `getUnsupportedModelOptionMessage` branch naming the alternative, and the handler applying the provider's default.
 
 **Tool:** `src/schemas/newtool.ts` (`.strict()` input schema, output schema, inferred types) → `src/tools/newtool.ts` (`registerNewTool(server)` with a `hokuz_` name; copy the annotations block and the `catch` → `{ content, structuredContent: { success: false, ... }, isError: true }` pattern from an existing tool) → register in `src/server.ts` and add the banner line in `src/index.ts` → `tools/__tests__/newtool.test.ts` through `connectTestClient()` and the name list in `server.test.ts` → README Tools section → `npm run check`.
 
-## Google GenAI SDK Patterns
+## Provider Modules
+
+`providers/index.ts` is the only entry point tools use. It runs `validateGenerationConfig(config)` (which throws `INVALID_MODEL_OPTION` from `getUnsupportedModelOptionMessage`) and then calls `generateImage` / `editImage` on the module named by `IMAGE_MODEL_CAPABILITIES[config.model].provider`. Both modules export the same two functions with the same signatures and neither validates: adding a third provider is a module plus one registry value, not an interface. `enabledProviders()` lives here too and is what `index.ts` boots on.
+
+### Gemini (`providers/gemini.ts`)
 
 One singleton `GoogleGenAI` client (key resolved `GEMINI_API_KEY` → `GOOGLE_API_KEY`). Generate sends `input: prompt` (a string); edit sends `input: [...imageBlocks, { type: "text", text: prompt }]` with images first so "first/second image" prompts resolve in order. Both use `response_format: buildResponseFormat(config)` (gotcha 2) and `generation_config: { temperature }`.
 
 **Response parsing** (`parseInteraction`, exported): reads `interaction.output_image` first, then scans `steps[]` of type `model_output` for additional `image`/`text` blocks (de-duplicated by data), falls back to `output_text` for the description, and throws `CONTENT_BLOCKED` if no image was found.
 
 **Error mapping** (`handleApiError`): `McpError`s we raised pass through unchanged; otherwise message heuristics map 429/"rate limit" → `API_RATE_LIMIT`, 401/403/"api key" → `MISSING_API_KEY`, "blocked"/"safety" → `CONTENT_BLOCKED`, else `API_ERROR`.
+
+### OpenAI (`providers/openai.ts`)
+
+One singleton `OpenAI` client from `OPENAI_API_KEY`. Both calls send `{ model, prompt, n: 1, size, quality, output_format, background: "opaque" }`; edit adds `image`, an array of `toFile(Buffer.from(data, "base64"), "image-N.<ext>", { type: mimeType })` in input order. **The explicit `{ type }` is load-bearing**: a buffer without it uploads as `application/octet-stream` and the API rejects it. There is no `input_fidelity` — the SDK's doc comment claims it exists, but every current GPT Image model rejects it (`invalid_input_fidelity_model`), so it is not a parameter. The Images API has no `temperature`.
+
+**Size derivation** (`openaiSize`, exported): OpenAI takes a free-form `WIDTHxHEIGHT`, not a resolution token, so the size is `sqrt(area * w / h) x sqrt(area * h / w)` with each edge rounded to a multiple of 16, where `area` is 1024² for `1K` and 2048² for `2K` (the same "area" reading of the tokens Gemini uses, which is why it does not reproduce OpenAI's 1536x1024 presets). No aspect ratio (edit `auto`) sends `size: "auto"` and the provider picks. The API's own rules — both edges ÷16, aspect within 1:3..3:1, edge ≤ 3840, 655,360..8,294,400 pixels — are swept in the test.
+
+**Response parsing** (`parseImagesResponse`, exported): `data[].b64_json` → images, `size` → `width`/`height` (absent when the response says `auto`), `usage` → `{ inputTokens, outputTokens, estimatedCostUsd }` where the cost is `(text_tokens·5 + image_tokens·8 + output_tokens·30) / 1e6` from `OPENAI_PRICE_PER_MILLION_TOKENS`. No image → `API_ERROR`.
+
+**Error mapping** (`handleApiError`): `McpError` pass-through, then `instanceof APIError` with `code === "moderation_blocked"` → `CONTENT_BLOCKED` (message carries the stage and categories), then `status` 401 → `MISSING_API_KEY`, 403/404 → `API_ERROR`, 429 → `API_RATE_LIMIT`, other 4xx → `API_ERROR` (an edit also names the accepted input formats), else a retryable `API_ERROR`. A non-`APIError` is reported as `(network)`.
 
 ## File Utility Patterns
 
@@ -188,19 +214,21 @@ All failures become `McpError(type, message, details?)` with an actionable messa
 
 ## Constants Reference (`src/constants.ts`)
 
-- `IMAGE_MODELS`: `gemini-3.1-flash-image` (default, Nano Banana 2), `gemini-3.1-flash-lite-image`, `gemini-3-pro-image`. Exact IDs; do not guess new ones.
-- `IMAGE_MODEL_CAPABILITIES`: per-model `resolutions` and `aspectRatios` drive validation (gotcha 6).
-- `ASPECT_RATIOS`: 10 base + `1:4`, `4:1`, `1:8`, `8:1` (flash only). `RESOLUTIONS`: `0.5K`, `1K`, `2K`, `4K` (`0.5K` → API `"512"`; Lite is `1K` only; Pro has no `0.5K`).
-- `LIMITS`: 14 input images, 4 output images, 7 MB per input, temperature 0–2. `DEFAULTS`: flash, `1:1`, `1K`, jpeg, 1 image, temperature 1.0 (pinned as a valid combination by test).
+- `IMAGE_MODELS`: `gemini-3.1-flash-image` (default, Nano Banana 2), `gemini-3.1-flash-lite-image`, `gemini-3-pro-image`, `gpt-image-2.5-flare`, `gpt-image-2.5-sunburst`. Exact IDs; do not guess new ones.
+- `IMAGE_MODEL_CAPABILITIES`: per-model `provider`, `resolutions`, `aspectRatios`, `qualities` (empty = the option is rejected) and `supportsTemperature` drive behaviour; the three `supports*` metadata flags do not (gotcha 6).
+- `ASPECT_RATIOS`: 10 base + `1:4`, `4:1`, `1:8`, `8:1` (flash only; OpenAI models take the base ten). `RESOLUTIONS`: `0.5K`, `1K`, `2K`, `4K` (`0.5K` → Gemini API `"512"`; Lite is `1K` only; Pro has no `0.5K`; OpenAI models are `1K`/`2K`). `QUALITIES`: `low`, `medium`, `high`, `xhigh`, `max` — OpenAI only, and `auto` is deliberately not exposed because its cost is unknowable.
+- `OPENAI_PRICE_PER_MILLION_TOKENS`: `{ textInput: 5, imageInput: 8, imageOutput: 30 }`, hand-maintained, the only input to the reported cost estimate.
+- `LIMITS`: 14 input images, 4 output images, 7 MB per input, temperature 0–2. `DEFAULTS`: flash, `1:1`, `1K`, jpeg, 1 image, temperature 1.0 (Gemini), quality `medium` (OpenAI) — pinned as a valid combination for every model by test.
 
-`num_images > 1` is **repeated independent requests**, not an API count parameter. The loop stops early on a failure if at least one image was collected and the response text warns about the shortfall. Edit `aspect_ratio: "auto"` means `config.aspectRatio` is `undefined` and `aspect_ratio` is omitted from the request; never coerce it to `1:1`.
+`num_images > 1` is **repeated independent requests**, not an API count parameter (OpenAI's `n` is billed the same way and would return one aggregate `usage`). The loop stops early on a failure if at least one image was collected; the shortfall and the failing request's message go into `warning`, in both the response text and `structuredContent`. `usage` is summed across the iterations. Edit `aspect_ratio: "auto"` means `config.aspectRatio` is `undefined` and `aspect_ratio` is omitted from the request; never coerce it to `1:1`.
 
 ### Adding or updating a model
 
 1. Add the exact ID to `IMAGE_MODELS` and an entry to `IMAGE_MODEL_CAPABILITIES`.
 2. New resolution/aspect tokens go in `RESOLUTIONS` / `ASPECT_RATIOS` (and `IMAGE_SIZE_API_VALUES` for a resolution).
-3. Smoke-test the ID against the Interactions API; IDs are not guaranteed stable.
-4. Update the model enum assertion in `server.test.ts`, the model paragraphs in both `TOOL_DESCRIPTION`s and both schemas' `model.describe()`, and the README model and cost tables. Speed/cost figures are hand-maintained in those four places.
+3. Smoke-test the ID against that provider's API; IDs are not guaranteed stable.
+4. If the model belongs to a new provider, add it to `Provider`, write `providers/<name>.ts` exporting `generateImage` / `editImage`, extend `providerFor` and `enabledProviders`, and add the key to `ENV_VARS`.
+5. Update the model enum assertion in `server.test.ts`, the model paragraphs in both `TOOL_DESCRIPTION`s and both schemas' `model.describe()`, and the README model and cost tables. Speed/cost figures are hand-maintained in those four places.
 
 ## Claude's Operating Guidelines
 

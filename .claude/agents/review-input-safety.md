@@ -22,7 +22,8 @@ Follow `.claude/agents/REVIEW-PROTOCOL.md` (read it first). Lens-specifics on to
 | `output_path` | `resolveOutputPath` → `fs.writeFile` | `~` expanded to `$HOME`; `path.resolve` (so `..` works); trailing separator = directory, created if missing; parent directories created; **an existing file at the resolved path is overwritten silently** |
 | `image_paths[]` (local) | `readImageAsBase64` → `fs.readFile` | any readable path, `~` expanded; size checked AFTER the full read; MIME from extension, default `image/png` |
 | `image_paths[]` (URL) | `fetchImageAsBase64` → global `fetch` | `http:`/`https:` only (`isUrl`); **no host restriction** (localhost, link-local, private ranges all allowed); **body fully buffered before the size check**; no timeout; MIME from `content-type`, default `image/png` |
-| `GEMINI_API_KEY` / `GOOGLE_API_KEY` | `getApiKey` → `GoogleGenAI` | never printed; generic `API_ERROR` includes the SDK's error message verbatim — whether that can embed the key is a review point on any change to error text |
+| `GEMINI_API_KEY` / `GOOGLE_API_KEY` | `getApiKey` (`providers/gemini.ts`) → `GoogleGenAI` | never printed; generic `API_ERROR` includes the SDK's error message verbatim — whether that can embed the key is a review point on any change to error text |
+| `OPENAI_API_KEY` | `getApiKey` (`providers/openai.ts`) → `OpenAI` | never printed; the mapped errors quote `error.message` from the API body and attach the raw `APIError` as `McpError.details` (not serialised into the tool result) — any change that surfaces `details` to the caller is a finding |
 | `prompt` | sent to the API | capped at `LIMITS.maxPromptLength` (50 000 chars) |
 | stdout | MCP JSON-RPC channel | `console.log` is a lint error; `console.error` only |
 

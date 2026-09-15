@@ -34,7 +34,7 @@ Follow `.claude/agents/REVIEW-PROTOCOL.md` (read it first). Lens-specifics on to
 | `DEFAULTS`, `LIMITS`, `IMAGE_MODEL_CAPABILITIES` | `src/constants.ts` | hand |
 | README parameter tables, model table, cost table | `README.md` | hand |
 | `CLAUDE.md` gotchas and constants reference | `CLAUDE.md` | hand |
-| Contract tests | `src/__tests__/server.test.ts` (enums, defaults, required), request-shape `toEqual` in `src/services/__tests__/gemini-client.test.ts` | hand |
+| Contract tests | `src/__tests__/server.test.ts` (enums, defaults, required, output shape), request-shape `toEqual` in `src/providers/__tests__/gemini.test.ts` and `openai.test.ts` | hand |
 | Review lens files that cite the fact | `.claude/agents/review-*.md` | hand |
 
 **Two tools, one archetype.** Generate and edit share every optional parameter and the same handler shape. A change to one tool's schema, description, default handling, or response formatting almost always belongs on the other. Diff them after reading: `diff <(sed -n '/^const TOOL_DESCRIPTION/,/^`;/p' src/tools/generate-image.ts) <(sed -n '/^const TOOL_DESCRIPTION/,/^`;/p' src/tools/edit-image.ts)` is a cheap start.
