@@ -1,7 +1,7 @@
 {
   "name": "hokuz-image-gen",
   "version": "1.0.0",
-  "description": "MCP server for generating and editing images with Google's Gemini (Nano Banana) image models",
+  "description": "MCP server for generating and editing images with Google's Gemini (Nano Banana) and OpenAI's GPT Image models",
   "type": "module",
   "main": "dist/index.js",
   "scripts": {
@@ -16,12 +16,13 @@
     "check": "npm run typecheck && npm run lint && npm run test"
   },
   "engines": {
-    "node": ">=20"
+    "node": ">=22"
   },
   "keywords": [
     "mcp",
     "hokuz",
     "gemini",
+    "openai",
     "image-generation",
     "mcp-server"
   ],
@@ -38,6 +39,7 @@
   "dependencies": {
     "@google/genai": "^2.10.0",
     "@modelcontextprotocol/sdk": "^1.30.0",
+    "openai": "^7.15.0",
     "zod": "^4.4.3"
   },
   "devDependencies": {
