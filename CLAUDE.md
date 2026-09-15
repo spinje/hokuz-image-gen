@@ -35,7 +35,7 @@ When in doubt, ask: *"What would have to be true for this to work reliably under
 
 ## Project Overview
 
-A local MCP (Model Context Protocol) server that exposes two tools, `hokuz_generate_image` and `hokuz_edit_image`, backed by two providers: Google's Nano Banana image models (Gemini 3.1 Flash Image, Flash Lite Image, Gemini 3 Pro Image) through the Gemini **Interactions API**, and OpenAI's GPT Image 2.5 models (Flare, Sunburst) through the **Images API**. The caller picks with `model`. It runs over stdio, is started by an MCP client such as Claude Code or Claude Desktop, and writes JPEG files to disk. The calling LLM reads the tool descriptions and JSON Schemas we publish; those strings are the product's user interface.
+A local MCP (Model Context Protocol) server that exposes two tools, `hokuz_generate_image` and `hokuz_edit_image`, backed by two providers: Google's Nano Banana image models (Gemini 3.1 Flash Image, Flash Lite Image, Gemini 3 Pro Image) through the Gemini **Interactions API**, and OpenAI's GPT Image 2.5 models (Flare, Sunburst) through the **Images API**. The caller picks with `model`. It runs over stdio, is started by an MCP client such as Claude Code or Claude Desktop, and writes JPEG, PNG or WebP files to disk (Gemini models produce JPEG only). The calling LLM reads the tool descriptions and JSON Schemas we publish; those strings are the product's user interface.
 
 **Core principle:** the server never silently downgrades. Unsupported combinations of model, resolution, aspect ratio and provider-only option are rejected in-process before any API call, with an error that names the supported values or the model to switch to.
 
@@ -118,9 +118,9 @@ response_format: {
 
 Only `temperature` goes in `generation_config`. The Interactions request has **no safety-settings field**; content moderation uses Google's defaults and there is nothing to configure.
 
-### 3. Gemini models output JPEG only, so the server does
+### 3. Gemini models output JPEG only; OpenAI models take the format as given
 
-`response_format.mime_type` accepts only `"image/jpeg"`; the SDK types it as that literal and the API returns HTTP 400 for anything else. So `OUTPUT_FORMATS` is `["jpeg"]` and every saved file is `.jpg`. Never transcode: the format the provider returns is the format written. (The OpenAI Images API does accept `png` and `webp` — widening `OUTPUT_FORMATS` is planned, not shipped, and the registry has no per-model `outputFormats` axis yet.) Input images may be PNG/WebP/GIF/HEIC.
+`response_format.mime_type` accepts only `"image/jpeg"`; the SDK types it as that literal and the API returns HTTP 400 for anything else. That is why the registry's `outputFormats` is `["jpeg"]` for every Gemini model, and why `buildResponseFormat` can cast — validation has already rejected anything else. OpenAI models produce all of `OUTPUT_FORMATS` (`jpeg`, `png`, `webp`); the requested format is sent as `output_format` and decides both the returned image's MIME type and the saved file's extension. Never transcode: the format the provider returns is the format written. PNG files are roughly 16x the size of the same JPEG (verified live). `background: "transparent"` needs `png` or `webp` — with `jpeg` the API returns a hard 400, which is why the registry rejects that pair in-process.
 
 ### 4. stdout is the MCP protocol channel
 
@@ -130,21 +130,18 @@ Anything written to stdout corrupts the JSON-RPC stream. Log with `console.error
 
 `tsconfig` uses Node16 module resolution, so `import { x } from "./constants.js"` even though the source file is `.ts`. A bare `./constants` import compiles to a runtime "module not found".
 
-### 6. Some capability flags are metadata only
-
-`IMAGE_MODEL_CAPABILITIES[*].supportsPdfInput / supportsSearchGrounding / supportsStructuredOutputs` are recorded but **not wired to anything**. Only `resolutions`, `aspectRatios`, `qualities`, `supportsTemperature` and `provider` drive behaviour. Do not assume the others gate anything.
-
-### 7. Invalid arguments come back as a tool result, not a protocol error
+### 6. Invalid arguments come back as a tool result, not a protocol error
 
 When the SDK's schema validation rejects a call, the client receives `{ isError: true, content: [{ text: "Input validation error: ..." }] }`, not a JSON-RPC error. Tests and clients should check `isError`, not expect a rejection.
 
-### 8. Options a handler must not default are `.optional()` with **no** schema default
+### 7. Options a handler must not default are `.optional()` with **no** schema default
 
-`quality` (OpenAI), `temperature` (Gemini) and edit's `resolution` are published `.optional()` with no `.default()`, which is the opposite of gotcha 1's rule for every shared option — deliberately. The handler passes them through exactly as given and **the provider that owns the option applies its default** (`config.x ?? DEFAULTS.x` in `providers/gemini.ts` / `providers/openai.ts`), so an option reaches the request as a default only where that default is valid. Without this the handler could not tell "the LLM asked for temperature 0.2 on an OpenAI model" from "the SDK filled the default in", and would have to ignore the request silently. The three cases:
+`quality` (OpenAI), `temperature` (Gemini) and edit's `resolution` are published `.optional()` with no `.default()`, which is the opposite of gotcha 1's rule for every shared option — deliberately. `transparent_background` (OpenAI) follows the same rule. The handler passes them through exactly as given and **the provider that owns the option applies its default** (`config.x ?? DEFAULTS.x` in `providers/gemini.ts` / `providers/openai.ts`), so an option reaches the request as a default only where that default is valid. Without this the handler could not tell "the LLM asked for temperature 0.2 on an OpenAI model" from "the SDK filled the default in", and would have to ignore the request silently. The cases:
 
 - `temperature` on an OpenAI model → rejected, naming the Gemini alternative. Gemini applies `DEFAULTS.temperature` when the config carries none.
 - `quality` on a Gemini model → rejected, naming the OpenAI models. OpenAI applies `DEFAULTS.quality` when the config carries none.
 - edit `resolution` with `aspect_ratio: "auto"` on an OpenAI model → rejected, because the provider derives the pixel size from the ratio and `size: "auto"` would drop the resolution. Generate keeps its `.default("1K")`: it always has a ratio.
+- `transparent_background: true` on a Gemini model → rejected, naming the OpenAI models; `false` is what every model already does, so it passes. No default: OpenAI's `background` is `"opaque"` unless the caller asked otherwise.
 
 Give such an option a `.default()` and every call it cannot apply to starts either failing validation or being silently ignored.
 
@@ -152,11 +149,11 @@ Give such an option a `.default()` and every call it cannot apply to starts eith
 
 `npm test` runs every `src/**/*.test.ts` (the suite, about half a second, no network). The suite exists to make the gotchas above and the invariants below fail loudly when broken; it is not a coverage exercise.
 
-- `services/__tests__/file-utils.test.ts` — output path rules (trailing separator, extension replacement, `-N` suffixes in both modes, `~`), 7 MB limit, URL loading via mocked `fetch`.
+- `services/__tests__/file-utils.test.ts` — output path rules (trailing separator, extension replacement, `-N` suffixes in both modes, `~`), the caller-supplied size limit on both the file and URL paths, URL loading via mocked `fetch`.
 - `providers/__tests__/gemini.test.ts` — exact Interactions request shape, `aspect_ratio` omitted for `auto`, `parseInteraction` de-dup/fallbacks, API error mapping, `GEMINI_API_KEY` precedence.
 - `providers/__tests__/openai.test.ts` — exact `images.generate` request shape, size derivation (spot checks plus an invariant sweep over every ratio x resolution), edit files in order with an explicit MIME type, parse of dimensions and the cost arithmetic, error mapping by status and by `code`, missing-key path.
 - `providers/__tests__/index.test.ts` — dispatch to the provider the registry names, and validation before dispatch.
-- `tools/__tests__/*.test.ts` — defaults reach the provider (including the per-provider `quality`/`temperature` rule), validation before image loading and before any API call, `num_images` loop with summed `usage` and the partial-failure `warning`, files written, schema-boundary rejections.
+- `tools/__tests__/*.test.ts` — defaults reach the provider (including the per-provider `quality`/`temperature` rule), validation before image loading and before any API call, the per-model input count/size/type rejections, `num_images` loop with summed `usage` and the partial-failure `warning`, files written (with the format's extension), schema-boundary rejections.
 - `__tests__/server.test.ts` — tool names, annotations, JSON Schema enums/defaults/`required`, output schema shape, package.json version. `__tests__/constants.test.ts` — validation messages and the "defaults are valid for every model" invariant.
 
 **How tool tests work:** `connectTestClient()` in `src/__tests__/harness.ts` builds the real server via `createServer()` and connects an SDK `Client` over `InMemoryTransport`. Only `providers/index.js`'s `generateImage` / `editImage` are mocked (`vi.mock` with `importOriginal`, so `validateGenerationConfig` stays real). This exercises the SDK's input and output schema validation exactly as a production client would.
@@ -173,13 +170,13 @@ Give such an option a `.default()` and every call it cannot apply to starts eith
 
 **Parameter:** (1) schema field `z.enum(OPTIONS).default(DEFAULTS.x).describe("...")` — the describe string is read by the LLM, name the options and the default; (2) handler `params.x ?? DEFAULTS.x` into `GenerationConfig`; (3) the provider modules if the request changes; (4) the Args list in **both** `TOOL_DESCRIPTION`s; (5) tests in the same change — the exact request-shape `toEqual` in `providers/__tests__/gemini.test.ts` and `openai.test.ts` will fail until updated, and `server.test.ts` asserts schema defaults; (6) both README parameter tables; (7) `npm run check`.
 
-A parameter only one provider accepts follows gotcha 8 instead: `.optional()` with no `.default()`, a registry axis that says which models take it, a `getUnsupportedModelOptionMessage` branch naming the alternative, and the provider module applying its own default.
+A parameter only one provider accepts follows gotcha 7 instead: `.optional()` with no `.default()`, a registry axis that says which models take it, a `getUnsupportedModelOptionMessage` branch naming the alternative, and the provider module applying its own default.
 
 **Tool:** `src/schemas/newtool.ts` (`.strict()` input schema, output schema, inferred types) → `src/tools/newtool.ts` (`registerNewTool(server)` with a `hokuz_` name; copy the annotations block and the `catch` → `{ content, structuredContent: { success: false, ... }, isError: true }` pattern from an existing tool) → register in `src/server.ts` and add the banner line in `src/index.ts` → `tools/__tests__/newtool.test.ts` through `connectTestClient()` and the name list in `server.test.ts` → README Tools section → `npm run check`.
 
 ## Provider Modules
 
-`providers/index.ts` is the only entry point tools use. It runs `validateGenerationConfig(config)` (which throws `INVALID_MODEL_OPTION` from `getUnsupportedModelOptionMessage`) and then calls `generateImage` / `editImage` on the module named by `IMAGE_MODEL_CAPABILITIES[config.model].provider`. One table, `const PROVIDERS: Record<Provider, ProviderModule>`, is the whole dispatch: every module exports `label`, `hasApiKey()`, `generateImage` and `editImage`, and neither validates. `providerLabel(p)` (the startup banner) and `enabledProviders()` (which `index.ts` boots on) are lookups over the same table, so adding a provider is a `Provider` union member plus one table entry. Each module also applies its own defaults for the options it owns (gotcha 8).
+`providers/index.ts` is the only entry point tools use. It runs `validateGenerationConfig(config)` (which throws `INVALID_MODEL_OPTION` from `getUnsupportedModelOptionMessage`) and then calls `generateImage` / `editImage` on the module named by `IMAGE_MODEL_CAPABILITIES[config.model].provider`. One table, `const PROVIDERS: Record<Provider, ProviderModule>`, is the whole dispatch: every module exports `label`, `hasApiKey()`, `generateImage` and `editImage`, and neither validates. `providerLabel(p)` (the startup banner) and `enabledProviders()` (which `index.ts` boots on) are lookups over the same table, so adding a provider is a `Provider` union member plus one table entry. Each module also applies its own defaults for the options it owns (gotcha 7).
 
 ### Gemini (`providers/gemini.ts`)
 
@@ -191,13 +188,13 @@ One singleton `GoogleGenAI` client (key resolved `GEMINI_API_KEY` → `GOOGLE_AP
 
 ### OpenAI (`providers/openai.ts`)
 
-One singleton `OpenAI` client from `OPENAI_API_KEY`. Both calls send `{ model, prompt, n: 1, size, quality, output_format, background: "opaque" }`; edit adds `image`, an array of `toFile(Buffer.from(data, "base64"), "image-N.<ext>", { type: mimeType })` in input order. **The explicit `{ type }` is load-bearing**: a buffer without it uploads as `application/octet-stream` and the API rejects it. There is no `input_fidelity` — the SDK's doc comment claims it exists, but every current GPT Image model rejects it (`invalid_input_fidelity_model`), so it is not a parameter. The Images API has no `temperature`.
+One singleton `OpenAI` client from `OPENAI_API_KEY`. Both calls send `{ model, prompt, n: 1, size, quality, output_format, background }`, where `background` is `"transparent"` only when the caller asked and `"opaque"` otherwise (never `"auto"`: the cost and the alpha channel must be predictable); edit adds `image`, an array of `toFile(Buffer.from(data, "base64"), "image-N.<ext>", { type: mimeType })` in input order. **The explicit `{ type }` is load-bearing**: a buffer without it uploads as `application/octet-stream` and the API rejects it. There is no `input_fidelity` — the SDK's doc comment claims it exists, but every current GPT Image model rejects it (`invalid_input_fidelity_model`), so it is not a parameter. The Images API has no `temperature`.
 
 **Size derivation** (`openaiSize`, exported): OpenAI takes a free-form `WIDTHxHEIGHT`, not a resolution token, so the size is `sqrt(area * w / h) x sqrt(area * h / w)` with each edge rounded to a multiple of 16, where `area` is 1024² for `1K` and 2048² for `2K` (the same "area" reading of the tokens Gemini uses, which is why it does not reproduce OpenAI's 1536x1024 presets). No aspect ratio (edit `auto`) sends `size: "auto"` and the provider picks. The API's own rules — both edges ÷16, aspect within 1:3..3:1, edge ≤ 3840, 655,360..8,294,400 pixels — are swept in the test.
 
 **Response parsing** (`parseImagesResponse`, exported, and called **outside** the try/catch so its errors are never relabelled as request failures): `data[].b64_json` → images, `size` → `width`/`height` (absent only when the size cannot be parsed; a `size: "auto"` request comes back with the real `WxH`), `usage` → `{ inputTokens, outputTokens, estimatedCostUsd }` where the cost is `(text_tokens·5 + image_tokens·8 + output_tokens·30) / 1e6` from `OPENAI_PRICE_PER_MILLION_TOKENS`. A `usage` without `input_tokens_details` yields no report rather than dropping the image. No image → `API_ERROR`.
 
-**Error mapping** (`handleApiError`): `McpError` pass-through, then `instanceof APIError` with `code === "moderation_blocked"` → `CONTENT_BLOCKED` (message carries the stage and categories), then `status` 401 → `MISSING_API_KEY`, 403/404 → `API_ERROR`, 429 → `API_RATE_LIMIT`, other 4xx → `API_ERROR` (an edit also names the accepted input formats), else a retryable `API_ERROR` (status or `network`). A non-`APIError` — only the SDK call is wrapped — is a retryable `API_ERROR` that quotes the message and claims nothing about its cause.
+**Error mapping** (`handleApiError`): `McpError` pass-through, then `instanceof APIError` with `code === "moderation_blocked"` → `CONTENT_BLOCKED` (message carries the stage and categories), then `status` 401 → `MISSING_API_KEY`, 403/404 → `API_ERROR`, 429 → `API_RATE_LIMIT`, other 4xx → `API_ERROR`, else a retryable `API_ERROR` (status or `network`). A non-`APIError` — only the SDK call is wrapped — is a retryable `API_ERROR` that quotes the message and claims nothing about its cause.
 
 ## File Utility Patterns
 
@@ -205,26 +202,26 @@ One singleton `OpenAI` client from `OPENAI_API_KEY`. Both calls send `{ model, p
 
 ```
 "~/images/" or an existing directory  → directory mode: create if missing,
-                                         image-YYYY-MM-DD-HHmmss-SSS[-N].jpg
-"~/images/foo.png"                     → file mode: extension replaced → foo.jpg
-"~/images/foo"                         → file mode: extension appended → foo.jpg
+                                         image-YYYY-MM-DD-HHmmss-SSS[-N].<ext>
+"~/images/foo.png"                     → file mode: extension replaced → foo.jpg (jpeg)
+"~/images/foo"                         → file mode: extension appended → foo.jpg (jpeg)
 A TRAILING SEPARATOR always means directory, even if it does not exist yet.
 index ≥ 1 appends -2, -3, … in both modes (this is the same-millisecond collision guard).
 ```
 
-`loadImage(pathOrUrl)` dispatches on `http(s)://` to `fetch` (MIME from `content-type`) or reads the file (MIME from extension, default `image/png`). Both enforce `LIMITS.maxInputImageSize` (7 MB).
+`loadImage(pathOrUrl, maxBytes)` dispatches on `http(s)://` to `fetch` (MIME from `content-type`) or reads the file (MIME from extension, default `image/png`). Both enforce `maxBytes`, which the edit tool passes from the selected model's `maxInputImageBytes` (Gemini 7 MB, OpenAI 50 MB). The loaded MIME type is then checked against the model's `inputMimeTypes` — that check needs the bytes, so it is the one validation that runs after loading, still before any API call.
 
 ## Error Handling
 
-All failures become `McpError(type, message, details?)` with an actionable message that starts with `Error:`. Handlers catch everything and return `{ content: [{ type: "text", text }], structuredContent: { success: false, images: [], error }, isError: true }`. Validation (`validateGenerationConfig`) runs before any API call and, in edit, before any image is loaded.
+All failures become `McpError(type, message, details?)` with an actionable message that starts with `Error:`. Handlers catch everything and return `{ content: [{ type: "text", text }], structuredContent: { success: false, images: [], error }, isError: true }`. Validation (`validateGenerationConfig`, including the input-image count) runs before any API call and, in edit, before any image is loaded; `getUnsupportedInputImageMessage` then runs per image as it is loaded.
 
 ## Constants Reference (`src/constants.ts`)
 
 - `IMAGE_MODELS`: `gemini-3.1-flash-image` (default, Nano Banana 2), `gemini-3.1-flash-lite-image`, `gemini-3-pro-image`, `gpt-image-2.5-flare`, `gpt-image-2.5-sunburst`. Exact IDs; do not guess new ones.
-- `IMAGE_MODEL_CAPABILITIES`: per-model `provider`, `resolutions`, `aspectRatios`, `qualities` (empty = the option is rejected) and `supportsTemperature` drive behaviour; the three `supports*` metadata flags do not (gotcha 6).
-- `ASPECT_RATIOS`: 10 base + `1:4`, `4:1`, `1:8`, `8:1` (flash only; OpenAI models take the base ten). `RESOLUTIONS`: `0.5K`, `1K`, `2K`, `4K` (`0.5K` → Gemini API `"512"`; Lite is `1K` only; Pro has no `0.5K`; OpenAI models are `1K`/`2K`). `QUALITIES`: `low`, `medium`, `high`, `xhigh`, `max` — OpenAI only, and `auto` is deliberately not exposed because its cost is unknowable.
+- `IMAGE_MODEL_CAPABILITIES`: every field drives behaviour — `provider`, `resolutions`, `aspectRatios`, `outputFormats`, `qualities` (empty = the option is rejected), `supportsTemperature`, `supportsTransparentBackground`, `maxInputImages`, `maxInputImageBytes`, `inputMimeTypes`. Adding a field that gates nothing is how the old dead `supports*` flags happened; don't.
+- `ASPECT_RATIOS`: 10 base + `1:4`, `4:1`, `1:8`, `8:1` (flash only; OpenAI models take the base ten). `RESOLUTIONS`: `0.5K`, `1K`, `2K`, `4K` (`0.5K` → Gemini API `"512"`; Lite is `1K` only; Pro has no `0.5K`; OpenAI models are `1K`/`2K`). `QUALITIES`: `low`, `medium`, `high`, `xhigh`, `max` — OpenAI only, and `auto` is deliberately not exposed because its cost is unknowable. `OUTPUT_FORMATS`: `jpeg`, `png`, `webp` (Gemini models take `jpeg` only).
 - `OPENAI_PRICE_PER_MILLION_TOKENS`: `{ textInput: 5, imageInput: 8, imageOutput: 30 }`, hand-maintained, the only input to the reported cost estimate.
-- `LIMITS`: 14 input images, 4 output images, 7 MB per input, temperature 0–2. `DEFAULTS`: flash, `1:1`, `1K`, jpeg, 1 image, temperature 1.0 (Gemini), quality `medium` (OpenAI) — pinned as a valid combination for every model by test.
+- `LIMITS`: 16 input images (the schema bound: the largest per-model limit), 4 output images, temperature 0–2. Per-model input limits and types live in the registry. `DEFAULTS`: flash, `1:1`, `1K`, jpeg, 1 image, temperature 1.0 (Gemini), quality `medium` (OpenAI) — pinned as a valid combination for every model by test.
 
 `num_images > 1` is **repeated independent requests**, not an API count parameter (OpenAI's `n` is billed the same way and would return one aggregate `usage`). The loop stops early on a failure if at least one image was collected; the shortfall and the failing request's message go into `warning`, in both the response text and `structuredContent`. `usage` is summed across the iterations. Edit `aspect_ratio: "auto"` means `config.aspectRatio` is `undefined` and `aspect_ratio` is omitted from the request; never coerce it to `1:1`.
 
