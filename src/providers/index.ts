@@ -22,15 +22,22 @@ import * as gemini from "./gemini.js";
 import * as openai from "./openai.js";
 
 /**
- * Throw INVALID_MODEL_OPTION before any provider request is made.
+ * Throw INVALID_MODEL_OPTION before any provider request is made — and, for an
+ * edit, before any input image is loaded.
  */
-export function validateGenerationConfig(config: GenerationConfig): void {
+export function validateGenerationConfig(
+  config: GenerationConfig,
+  options: { inputImageCount?: number } = {}
+): void {
   const message = getUnsupportedModelOptionMessage({
     model: config.model,
     resolution: config.resolution,
     aspectRatio: config.aspectRatio,
+    outputFormat: config.outputFormat,
     quality: config.quality,
     temperature: config.temperature,
+    transparentBackground: config.transparentBackground,
+    inputImageCount: options.inputImageCount,
   });
   if (message) {
     throw new McpError(ErrorType.INVALID_MODEL_OPTION, message);
@@ -84,7 +91,7 @@ export async function editImage(
   inputImages: InputImage[],
   config: GenerationConfig
 ): Promise<ImageResponse> {
-  validateGenerationConfig(config);
+  validateGenerationConfig(config, { inputImageCount: inputImages.length });
   return providerFor(config.model).editImage(prompt, inputImages, config);
 }
 

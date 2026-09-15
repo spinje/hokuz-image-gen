@@ -70,8 +70,9 @@ export const GenerateImageInputSchema = z
       .enum(OUTPUT_FORMATS)
       .default(DEFAULTS.outputFormat)
       .describe(
-        `Output file format. Options: ${OUTPUT_FORMATS.join(", ")} — every model produces jpeg. ` +
-          `The output_path extension is replaced to match. Default: ${DEFAULTS.outputFormat}`
+        `Output file format. Options: ${OUTPUT_FORMATS.join(", ")}. Gemini models produce jpeg only; ` +
+          "OpenAI models produce all three. The output_path extension is replaced to match. " +
+          `Default: ${DEFAULTS.outputFormat}`
       ),
 
     quality: z
@@ -82,6 +83,14 @@ export const GenerateImageInputSchema = z
           "$0.006 / $0.013 / $0.05 / $0.09 / $0.21 and latency 10 s to 90 s. Use medium for drafts and most " +
           "work, high for final assets, xhigh/max only when high visibly fails. Gemini models reject this " +
           `option. Default for OpenAI models: ${DEFAULTS.quality}`
+      ),
+
+    transparent_background: z
+      .boolean()
+      .optional()
+      .describe(
+        "OpenAI models only. true renders a transparent background; requires output_format png or " +
+          "webp. Gemini models reject this option."
       ),
 
     num_images: z
@@ -130,7 +139,7 @@ export const GenerateImageOutputSchema = z.object({
     .array(
       z.object({
         path: z.string().describe("File path where the image was saved"),
-        format: z.string().describe("Image format (jpeg)"),
+        format: z.string().describe("Image format (jpeg, png or webp)"),
         width: z
           .number()
           .optional()

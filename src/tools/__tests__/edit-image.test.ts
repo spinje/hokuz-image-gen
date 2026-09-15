@@ -57,6 +57,7 @@ describe(TOOL, () => {
       temperature: undefined,
       outputFormat: DEFAULTS.outputFormat,
       quality: undefined,
+      transparentBackground: undefined,
     });
     expect(await fs.readFile(path.join(tmp, "out.jpg"))).toEqual(Buffer.from("edited-bytes"));
   });
@@ -116,12 +117,75 @@ describe(TOOL, () => {
   it("rejects more than the maximum number of input images at the schema boundary", async () => {
     const result = await harness.callTool(TOOL, {
       prompt: "p",
-      image_paths: Array.from({ length: 15 }, () => first),
+      image_paths: Array.from({ length: 17 }, () => first),
       output_path: tmp,
     });
     expect(result.isError).toBe(true);
     expect(firstText(result)).toMatch(/Invalid arguments.*image_paths/s);
     expect(editMock).not.toHaveBeenCalled();
+  });
+
+  it("rejects more input images than the model accepts before reading any of them", async () => {
+    // Within the schema bound (16) but over the Gemini limit; the paths do not
+    // exist, so a "not found" here would mean a file was read first.
+    const missing = Array.from({ length: 15 }, (_, i) => path.join(tmp, `missing-${i}.png`));
+
+    const result = await harness.callTool(TOOL, {
+      prompt: "p",
+      image_paths: missing,
+      output_path: tmp,
+    });
+
+    expect(result.isError).toBe(true);
+    expect(firstText(result)).toBe(
+      "Error: Model 'gemini-3.1-flash-image' (Nano Banana 2) accepts at most 14 input images; 15 were given. Remove images, or use an OpenAI model (up to 16)."
+    );
+    expect(editMock).not.toHaveBeenCalled();
+  });
+
+  it("rejects an input image over the selected model's size limit", async () => {
+    const big = path.join(tmp, "big.png");
+    await fs.writeFile(big, Buffer.alloc(7 * 1024 * 1024 + 1));
+
+    const result = await harness.callTool(TOOL, {
+      prompt: "p",
+      image_paths: [big],
+      output_path: tmp,
+    });
+
+    expect(result.isError).toBe(true);
+    expect(firstText(result)).toBe(
+      `Error: Image at '${big}' is 7.00MB, above the 7MB limit for the selected model. Resize it, or choose a model with a larger input limit.`
+    );
+    expect(editMock).not.toHaveBeenCalled();
+  });
+
+  it("rejects an input type the model does not accept, once loaded and before the API call", async () => {
+    const gif = path.join(tmp, "loop.gif");
+    await fs.writeFile(gif, "gif-image");
+
+    const rejected = await harness.callTool(TOOL, {
+      prompt: "p",
+      image_paths: [gif],
+      output_path: tmp,
+      model: "gpt-image-2.5-flare",
+    });
+
+    expect(rejected.isError).toBe(true);
+    expect(firstText(rejected)).toBe(
+      `Error: Model 'gpt-image-2.5-flare' (GPT Image 2.5 Flare) does not accept image/gif input ('${gif}'). Supported input formats: jpeg, png, webp. Convert the image, or use a Gemini model.`
+    );
+    expect(editMock).not.toHaveBeenCalled();
+
+    // The same model takes the PNG next to it.
+    const accepted = await harness.callTool(TOOL, {
+      prompt: "p",
+      image_paths: [first],
+      output_path: tmp,
+      model: "gpt-image-2.5-flare",
+    });
+    expect(accepted.isError).toBeFalsy();
+    expect(editMock).toHaveBeenCalledTimes(1);
   });
 
   it("rejects an explicit resolution on an OpenAI model with the default 'auto' ratio", async () => {

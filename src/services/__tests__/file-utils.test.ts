@@ -2,9 +2,11 @@ import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import * as fs from "fs/promises";
 import * as os from "os";
 import * as path from "path";
-import { LIMITS } from "../../constants.js";
 import { ErrorType } from "../../types.js";
-import { inferOutputFormatFromPath, loadImage, resolveOutputPath } from "../file-utils.js";
+import { loadImage, resolveOutputPath } from "../file-utils.js";
+
+/** Stands in for a model's `maxInputImageBytes`, which the caller passes in. */
+const MAX_BYTES = 1024 * 1024;
 
 let tmp: string;
 
@@ -75,30 +77,48 @@ describe("resolveOutputPath", () => {
   });
 });
 
-describe("inferOutputFormatFromPath", () => {
-  it("infers jpeg from .jpg and .jpeg case-insensitively, and nothing else", () => {
-    expect(inferOutputFormatFromPath("a.jpg")).toBe("jpeg");
-    expect(inferOutputFormatFromPath("a.JPEG")).toBe("jpeg");
-    expect(inferOutputFormatFromPath("a.png")).toBeUndefined();
-    expect(inferOutputFormatFromPath("a")).toBeUndefined();
-  });
-});
-
 describe("loadImage", () => {
-  it("rejects a local image over the size limit with IMAGE_TOO_LARGE", async () => {
+  it("enforces the limit it was given, not a fixed one, and names it", async () => {
     const big = path.join(tmp, "big.png");
-    await fs.writeFile(big, Buffer.alloc(LIMITS.maxInputImageSize + 1));
-    await expect(loadImage(big)).rejects.toThrowError(
-      expect.objectContaining({ type: ErrorType.IMAGE_TOO_LARGE })
+    await fs.writeFile(big, Buffer.alloc(MAX_BYTES + 1));
+
+    await expect(loadImage(big, MAX_BYTES)).rejects.toThrowError(
+      expect.objectContaining({
+        type: ErrorType.IMAGE_TOO_LARGE,
+        message: expect.stringContaining("is 1.00MB, above the 1MB limit for the selected model"),
+      })
     );
+
+    // The same file is within reach of a model with a larger limit.
+    const image = await loadImage(big, 2 * MAX_BYTES);
+    expect(Buffer.from(image.data, "base64")).toHaveLength(MAX_BYTES + 1);
   });
 
-  it("accepts a local image exactly at the size limit", async () => {
+  it("accepts a local image exactly at the limit", async () => {
     const edge = path.join(tmp, "edge.png");
-    await fs.writeFile(edge, Buffer.alloc(LIMITS.maxInputImageSize));
-    const image = await loadImage(edge);
+    await fs.writeFile(edge, Buffer.alloc(MAX_BYTES));
+    const image = await loadImage(edge, MAX_BYTES);
     expect(image.mimeType).toBe("image/png");
-    expect(Buffer.from(image.data, "base64")).toHaveLength(LIMITS.maxInputImageSize);
+    expect(Buffer.from(image.data, "base64")).toHaveLength(MAX_BYTES);
+  });
+
+  it("enforces the same limit on a fetched image", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue(
+        new Response(Buffer.alloc(MAX_BYTES + 1), {
+          status: 200,
+          headers: { "content-type": "image/png" },
+        })
+      )
+    );
+
+    await expect(loadImage("https://example.com/big.png", MAX_BYTES)).rejects.toThrowError(
+      expect.objectContaining({
+        type: ErrorType.IMAGE_TOO_LARGE,
+        message: expect.stringContaining("above the 1MB limit for the selected model"),
+      })
+    );
   });
 
   it("fetches http(s) URLs and takes the MIME type from the response header", async () => {
@@ -108,7 +128,7 @@ describe("loadImage", () => {
     );
     vi.stubGlobal("fetch", fetchMock);
 
-    const image = await loadImage("https://example.com/pic.webp");
+    const image = await loadImage("https://example.com/pic.webp", MAX_BYTES);
 
     expect(fetchMock).toHaveBeenCalledWith("https://example.com/pic.webp");
     expect(image).toEqual({ data: bytes.toString("base64"), mimeType: "image/webp" });
@@ -117,7 +137,7 @@ describe("loadImage", () => {
   it("reports a non-OK HTTP response as INVALID_IMAGE_PATH with the status code", async () => {
     vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response("nope", { status: 404 })));
 
-    await expect(loadImage("https://example.com/missing.png")).rejects.toThrowError(
+    await expect(loadImage("https://example.com/missing.png", MAX_BYTES)).rejects.toThrowError(
       expect.objectContaining({
         type: ErrorType.INVALID_IMAGE_PATH,
         message: expect.stringContaining("status 404"),
@@ -129,7 +149,7 @@ describe("loadImage", () => {
     const fetchMock = vi.fn();
     vi.stubGlobal("fetch", fetchMock);
 
-    await expect(loadImage("file:///etc/hosts")).rejects.toThrowError(
+    await expect(loadImage("file:///etc/hosts", MAX_BYTES)).rejects.toThrowError(
       expect.objectContaining({ type: ErrorType.INVALID_IMAGE_PATH })
     );
     expect(fetchMock).not.toHaveBeenCalled();

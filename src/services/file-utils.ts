@@ -4,12 +4,7 @@
 
 import * as fs from "fs/promises";
 import * as path from "path";
-import {
-  FILE_EXTENSIONS,
-  LIMITS,
-  DEFAULTS,
-  type OutputFormat,
-} from "../constants.js";
+import { FILE_EXTENSIONS, type OutputFormat } from "../constants.js";
 import { type InputImage, McpError, ErrorType } from "../types.js";
 
 /**
@@ -30,47 +25,6 @@ export function generateTimestampFilename(): string {
   const millis = String(now.getMilliseconds()).padStart(3, "0");
 
   return `image-${year}-${month}-${day}-${hours}${minutes}${seconds}-${millis}`;
-}
-
-/**
- * Infer an output format from a file path's extension.
- *
- * @returns The matching OutputFormat, or undefined if the extension is absent
- *          or not one we produce.
- */
-export function inferOutputFormatFromPath(
-  outputPath: string
-): OutputFormat | undefined {
-  const ext = path.extname(outputPath).toLowerCase();
-  switch (ext) {
-    case ".jpg":
-    case ".jpeg":
-      return "jpeg";
-    default:
-      return undefined;
-  }
-}
-
-/**
- * Resolve the output format to request/save, given an optional explicit format
- * and the output path.
- *
- * Precedence:
- *   1. An explicit requested format wins.
- *   2. Otherwise infer from the output path extension.
- *   3. Otherwise fall back to the default output format.
- *
- * In practice the SDK always fills output_format from the schema default, so
- * step 2 only matters for direct callers of this function.
- */
-export function resolveRequestedOutputFormat(
-  outputPath: string,
-  requestedFormat?: OutputFormat
-): OutputFormat {
-  if (requestedFormat) {
-    return requestedFormat;
-  }
-  return inferOutputFormatFromPath(outputPath) ?? DEFAULTS.outputFormat;
 }
 
 /**
@@ -116,7 +70,7 @@ async function ensureDirectory(dirPath: string): Promise<void> {
  * Resolve the output path for saving an image
  *
  * @param outputPath - User-provided path (file or directory)
- * @param format - Output format (jpeg)
+ * @param format - Output format (jpeg, png or webp)
  * @param index - Image index for multiple images (0-based)
  * @returns Resolved absolute file path
  */
@@ -189,12 +143,35 @@ export async function saveBase64Image(
 }
 
 /**
+ * Reject an input image above the selected model's per-image limit.
+ *
+ * @param maxBytes - The model's `maxInputImageBytes` from the capability registry
+ */
+function assertWithinSizeLimit(
+  buffer: Buffer,
+  source: string,
+  maxBytes: number
+): void {
+  if (buffer.length <= maxBytes) return;
+
+  const sizeMB = (buffer.length / (1024 * 1024)).toFixed(2);
+  throw new McpError(
+    ErrorType.IMAGE_TOO_LARGE,
+    `Error: Image at '${source}' is ${sizeMB}MB, above the ${maxBytes / (1024 * 1024)}MB limit for the selected model. Resize it, or choose a model with a larger input limit.`
+  );
+}
+
+/**
  * Read an image file and convert to base64
  *
  * @param imagePath - Path to the image file
+ * @param maxBytes - Maximum accepted size for the selected model
  * @returns InputImage with base64 data and mime type
  */
-export async function readImageAsBase64(imagePath: string): Promise<InputImage> {
+export async function readImageAsBase64(
+  imagePath: string,
+  maxBytes: number
+): Promise<InputImage> {
   // Expand home directory
   const expandedPath = imagePath.replace(/^~/, process.env.HOME || "");
   const absolutePath = path.resolve(expandedPath);
@@ -211,14 +188,7 @@ export async function readImageAsBase64(imagePath: string): Promise<InputImage> 
     // Read file
     const buffer = await fs.readFile(absolutePath);
 
-    // Check file size
-    if (buffer.length > LIMITS.maxInputImageSize) {
-      const sizeMB = (buffer.length / (1024 * 1024)).toFixed(2);
-      throw new McpError(
-        ErrorType.IMAGE_TOO_LARGE,
-        `Error: Image at '${imagePath}' is ${sizeMB}MB, which exceeds the 7MB limit. Please use a smaller image.`
-      );
-    }
+    assertWithinSizeLimit(buffer, imagePath, maxBytes);
 
     // Determine MIME type from extension
     const ext = path.extname(absolutePath).toLowerCase();
@@ -258,9 +228,13 @@ export function isUrl(str: string): boolean {
  * Fetch an image from a URL and convert to base64
  *
  * @param imageUrl - URL of the image
+ * @param maxBytes - Maximum accepted size for the selected model
  * @returns InputImage with base64 data and mime type
  */
-export async function fetchImageAsBase64(imageUrl: string): Promise<InputImage> {
+export async function fetchImageAsBase64(
+  imageUrl: string,
+  maxBytes: number
+): Promise<InputImage> {
   try {
     const response = await fetch(imageUrl);
 
@@ -275,14 +249,7 @@ export async function fetchImageAsBase64(imageUrl: string): Promise<InputImage> 
     const arrayBuffer = await response.arrayBuffer();
     const buffer = Buffer.from(arrayBuffer);
 
-    // Check file size
-    if (buffer.length > LIMITS.maxInputImageSize) {
-      const sizeMB = (buffer.length / (1024 * 1024)).toFixed(2);
-      throw new McpError(
-        ErrorType.IMAGE_TOO_LARGE,
-        `Error: Image from '${imageUrl}' is ${sizeMB}MB, which exceeds the 7MB limit. Please use a smaller image.`
-      );
-    }
+    assertWithinSizeLimit(buffer, imageUrl, maxBytes);
 
     const base64Data = buffer.toString("base64");
 
@@ -302,13 +269,16 @@ export async function fetchImageAsBase64(imageUrl: string): Promise<InputImage> 
 }
 
 /**
- * Load an image from a path or URL
+ * Load an image from a path or URL, within the selected model's size limit.
  */
-export async function loadImage(pathOrUrl: string): Promise<InputImage> {
+export async function loadImage(
+  pathOrUrl: string,
+  maxBytes: number
+): Promise<InputImage> {
   if (isUrl(pathOrUrl)) {
-    return fetchImageAsBase64(pathOrUrl);
+    return fetchImageAsBase64(pathOrUrl, maxBytes);
   }
-  return readImageAsBase64(pathOrUrl);
+  return readImageAsBase64(pathOrUrl, maxBytes);
 }
 
 /**

@@ -55,6 +55,7 @@ describe(TOOL, () => {
       temperature: undefined,
       outputFormat: DEFAULTS.outputFormat,
       quality: undefined,
+      transparentBackground: undefined,
     });
 
     const saved = path.join(tmp, "lake.jpg");
@@ -210,6 +211,43 @@ describe(TOOL, () => {
       quality: "high",
       temperature: undefined,
     });
+  });
+
+  it("passes a PNG transparent request through and saves the file with that extension", async () => {
+    generateMock.mockResolvedValue(okResponse());
+
+    const result = await harness.callTool(TOOL, {
+      prompt: "a sticker",
+      output_path: path.join(tmp, "sticker.jpg"),
+      model: "gpt-image-2.5-flare",
+      output_format: "png",
+      transparent_background: true,
+    });
+
+    expect(result.isError).toBeFalsy();
+    expect(generateMock.mock.calls[0][1]).toMatchObject({
+      outputFormat: "png",
+      transparentBackground: true,
+    });
+    // The output path's extension follows the format, not what the caller typed.
+    expect(result.structuredContent).toMatchObject({
+      images: [{ path: path.join(tmp, "sticker.png"), format: "png" }],
+    });
+    expect(await fs.readdir(tmp)).toEqual(["sticker.png"]);
+  });
+
+  it("rejects png on a Gemini model before calling the provider", async () => {
+    const result = await harness.callTool(TOOL, {
+      prompt: "p",
+      output_path: tmp,
+      output_format: "png",
+    });
+
+    expect(result.isError).toBe(true);
+    expect(firstText(result)).toBe(
+      "Error: Model 'gemini-3.1-flash-image' (Nano Banana 2) does not support output_format 'png'. Supported: jpeg. Gemini models produce jpeg only; use gpt-image-2.5-flare or gpt-image-2.5-sunburst for png/webp."
+    );
+    expect(generateMock).not.toHaveBeenCalled();
   });
 
   it("rejects an explicit quality on a Gemini model before calling the provider", async () => {

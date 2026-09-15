@@ -67,7 +67,7 @@ describe("published tool contract", () => {
     const generate = tools.find((t) => t.name === "hokuz_generate_image")!;
     const props = generate.inputSchema.properties as Record<
       string,
-      { enum?: string[]; default?: unknown }
+      { enum?: string[]; default?: unknown; type?: string }
     >;
     expect(props.model.enum).toEqual([
       "gemini-3.1-flash-image",
@@ -80,7 +80,8 @@ describe("published tool contract", () => {
     expect(props.aspect_ratio.default).toBe("1:1");
     expect(props.resolution.default).toBe("1K");
     expect(props.num_images.default).toBe(1);
-    expect(props.output_format.enum).toEqual(["jpeg"]);
+    expect(props.output_format.enum).toEqual(["jpeg", "png", "webp"]);
+    expect(props.output_format.default).toBe("jpeg");
     expect(generate.inputSchema.required).toEqual(["prompt", "output_path"]);
 
     // Provider-specific options: published with their enum but no default, so
@@ -88,13 +89,21 @@ describe("published tool contract", () => {
     expect(props.quality.enum).toEqual(["low", "medium", "high", "xhigh", "max"]);
     expect(props.quality).not.toHaveProperty("default");
     expect(props.temperature).not.toHaveProperty("default");
+    expect(props.transparent_background.type).toBe("boolean");
+    expect(props.transparent_background).not.toHaveProperty("default");
 
     const edit = tools.find((t) => t.name === "hokuz_edit_image")!;
-    const editProps = edit.inputSchema.properties as Record<string, { default?: unknown }>;
+    const editProps = edit.inputSchema.properties as Record<
+      string,
+      { default?: unknown; maxItems?: number }
+    >;
     expect(editProps.aspect_ratio.default).toBe("auto");
-    // Edit's resolution is optional with no default (gotcha 8): "auto" plus an
+    // Edit's resolution is optional with no default (gotcha 7): "auto" plus an
     // explicit resolution is rejected, which a filled-in default would hide.
     expect(editProps.resolution).not.toHaveProperty("default");
+    // The schema bound is the largest any model accepts; the per-model limit
+    // (Gemini 14) is enforced by the registry before any image is loaded.
+    expect(editProps.image_paths.maxItems).toBe(16);
     expect(edit.inputSchema.required).toEqual(["prompt", "image_paths", "output_path"]);
   });
 });

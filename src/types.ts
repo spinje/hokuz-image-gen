@@ -69,6 +69,8 @@ export interface GenerationConfig {
   temperature?: number;
   /** OpenAI only; undefined on models that do not accept it. */
   quality?: Quality;
+  /** OpenAI only; needs an outputFormat with an alpha channel. */
+  transparentBackground?: boolean;
 }
 
 /**

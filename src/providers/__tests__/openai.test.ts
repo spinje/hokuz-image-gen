@@ -110,6 +110,29 @@ describe("generateImage request shape", () => {
     });
   });
 
+  it("asks for a transparent background and the requested format when told to", async () => {
+    generateMock.mockResolvedValue(okResponse({ size: "1024x1024" }));
+
+    const response = await generateImage("a prompt", {
+      ...baseConfig,
+      aspectRatio: "1:1",
+      outputFormat: "png",
+      transparentBackground: true,
+    });
+
+    expect(generateMock.mock.calls[0][0]).toEqual({
+      model: "gpt-image-2.5-flare",
+      prompt: "a prompt",
+      n: 1,
+      size: "1024x1024",
+      quality: "medium",
+      output_format: "png",
+      background: "transparent",
+    });
+    // The saved file's MIME type follows the requested format, not the default.
+    expect(response.images[0].mimeType).toBe("image/png");
+  });
+
   it("applies its own defaults when the config carries no quality or resolution", async () => {
     generateMock.mockResolvedValue(okResponse());
 
@@ -273,23 +296,12 @@ describe("API error mapping", () => {
     );
   });
 
-  it("tells an edit caller which input formats are accepted on an unclassified 4xx", async () => {
-    editMock.mockRejectedValue(apiError(400, { message: "Invalid file" }));
-
-    await expect(
-      editImage("p", [{ data: IMG_A, mimeType: "image/gif" }], baseConfig)
-    ).rejects.toThrowError(
-      expect.objectContaining({
-        type: ErrorType.API_ERROR,
-        message:
-          "Error: OpenAI rejected the request: Invalid file. Adjust the arguments accordingly; input images must be jpeg, png or webp.",
-      })
-    );
-
-    // Generate has no input images, so the hint must not appear there.
+  it("quotes the API's own message on an unclassified 4xx", async () => {
     generateMock.mockRejectedValue(apiError(400, { message: "Invalid value" }));
+
     await expect(generateImage("p", baseConfig)).rejects.toThrowError(
       expect.objectContaining({
+        type: ErrorType.API_ERROR,
         message:
           "Error: OpenAI rejected the request: Invalid value. Adjust the arguments accordingly.",
       })

@@ -96,7 +96,8 @@ function getClient(model: ImageModel): OpenAI {
 /**
  * The request fields both images.generate and images.edit share.
  *
- * `background` is always explicit so the provider never picks for us.
+ * `background` is always explicit so the provider never picks for us; a
+ * transparent one is rejected in validation unless the format has alpha.
  */
 function buildCommonParams(config: GenerationConfig) {
   return {
@@ -105,7 +106,7 @@ function buildCommonParams(config: GenerationConfig) {
     size: openaiSize(config),
     quality: config.quality ?? DEFAULTS.quality,
     output_format: config.outputFormat,
-    background: "opaque" as const,
+    background: config.transparentBackground ? ("transparent" as const) : ("opaque" as const),
   };
 }
 
@@ -183,7 +184,7 @@ export async function generateImage(
       prompt,
     });
   } catch (error) {
-    handleApiError(error, config.model, false);
+    handleApiError(error, config.model);
   }
 
   return parseImagesResponse(response, config);
@@ -220,7 +221,7 @@ export async function editImage(
       image,
     });
   } catch (error) {
-    handleApiError(error, config.model, true);
+    handleApiError(error, config.model);
   }
 
   return parseImagesResponse(response, config);
@@ -238,11 +239,7 @@ interface OpenAiErrorBody {
 /**
  * Map an OpenAI SDK error to an McpError whose message says what to do next.
  */
-function handleApiError(
-  error: unknown,
-  model: ImageModel,
-  hasInputImages: boolean
-): never {
+function handleApiError(error: unknown, model: ImageModel): never {
   // Preserve McpErrors we raised ourselves (e.g. missing key, no image back).
   if (error instanceof McpError) {
     throw error;
@@ -300,12 +297,9 @@ function handleApiError(
   }
 
   if (error.status !== undefined && error.status >= 400 && error.status < 500) {
-    const inputHint = hasInputImages
-      ? "; input images must be jpeg, png or webp"
-      : "";
     throw new McpError(
       ErrorType.API_ERROR,
-      `Error: OpenAI rejected the request: ${apiMessage}. Adjust the arguments accordingly${inputHint}.`,
+      `Error: OpenAI rejected the request: ${apiMessage}. Adjust the arguments accordingly.`,
       error
     );
   }

@@ -42,9 +42,11 @@ export const EditImageInputSchema = z
         `Maximum ${LIMITS.maxInputImages} input images allowed`
       )
       .describe(
-        `Array of local file paths or URLs to source images (1-${LIMITS.maxInputImages} images, 7 MB each). ` +
-          "Order matters: 'first image'/'second image' in the prompt refer to this order. For style transfer, " +
-          "provide the content image first, then the style reference."
+        "Array of local file paths or URLs to source images. Gemini models: up to 14 images, 7 MB " +
+          "each (jpeg/png/webp/gif/heic). OpenAI models: up to 16 images, 50 MB each, jpeg/png/webp " +
+          "only (gif/heic are rejected before the API call). Order matters: 'first image'/'second " +
+          "image' in the prompt refer to this order. For style transfer, provide the content image " +
+          "first, then the style reference."
       ),
 
     output_path: z
@@ -75,7 +77,7 @@ export const EditImageInputSchema = z
           "ten. Unsupported combinations are rejected before the API call. Default: auto"
       ),
 
-    // No .default(): see gotcha 8. With one, an explicit resolution could not
+    // No .default(): see gotcha 7. With one, an explicit resolution could not
     // be told from a filled-in default, and "auto" would silently ignore it.
     resolution: z
       .enum(RESOLUTIONS)
@@ -92,8 +94,9 @@ export const EditImageInputSchema = z
       .enum(OUTPUT_FORMATS)
       .default(DEFAULTS.outputFormat)
       .describe(
-        `Output file format. Options: ${OUTPUT_FORMATS.join(", ")} — every model produces jpeg. ` +
-          `The output_path extension is replaced to match. Default: ${DEFAULTS.outputFormat}`
+        `Output file format. Options: ${OUTPUT_FORMATS.join(", ")}. Gemini models produce jpeg only; ` +
+          "OpenAI models produce all three. The output_path extension is replaced to match. " +
+          `Default: ${DEFAULTS.outputFormat}`
       ),
 
     quality: z
@@ -104,6 +107,14 @@ export const EditImageInputSchema = z
           "$0.006 / $0.013 / $0.05 / $0.09 / $0.21 and latency 10 s to 90 s. Use medium for drafts and most " +
           "work, high for final assets, xhigh/max only when high visibly fails. Gemini models reject this " +
           `option. Default for OpenAI models: ${DEFAULTS.quality}`
+      ),
+
+    transparent_background: z
+      .boolean()
+      .optional()
+      .describe(
+        "OpenAI models only. true renders a transparent background; requires output_format png or " +
+          "webp. Gemini models reject this option."
       ),
 
     num_images: z
@@ -152,7 +163,7 @@ export const EditImageOutputSchema = z.object({
     .array(
       z.object({
         path: z.string().describe("File path where the image was saved"),
-        format: z.string().describe("Image format (jpeg)"),
+        format: z.string().describe("Image format (jpeg, png or webp)"),
         width: z
           .number()
           .optional()

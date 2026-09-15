@@ -13,11 +13,7 @@ import {
   type GenerateImageOutput,
 } from "../schemas/generate.js";
 import { generateImage, validateGenerationConfig } from "../providers/index.js";
-import {
-  resolveOutputPath,
-  saveBase64Image,
-  resolveRequestedOutputFormat,
-} from "../services/file-utils.js";
+import { resolveOutputPath, saveBase64Image } from "../services/file-utils.js";
 import {
   McpError,
   sumUsage,
@@ -32,7 +28,7 @@ import { DEFAULTS } from "../constants.js";
  */
 const TOOL_DESCRIPTION = `Generate images from text prompts. Two providers behind one tool: Google's Nano Banana (Gemini) models and OpenAI's GPT Image 2.5 models. Pick with \`model\`.
 
-Unsupported combinations (model x resolution / aspect ratio / provider-only option) are rejected before any API call with an error naming the supported values. No silent downgrades.
+Unsupported combinations (model x resolution / aspect ratio / output format / provider-only option) are rejected before any API call with an error naming the supported values. No silent downgrades.
 
 Models (approximate time and cost for one 1K image; verify at https://ai.google.dev/gemini-api/docs/pricing and https://developers.openai.com/api/docs/pricing):
 - gemini-3.1-flash-lite-image (Nano Banana 2 Lite): ~5s, ~$0.034, 1K only. Drafts, thumbnails, batches.
@@ -40,7 +36,7 @@ Models (approximate time and cost for one 1K image; verify at https://ai.google.
 - gemini-3-pro-image (Nano Banana Pro): ~17s, ~$0.13 (1K/2K) to ~$0.24 (4K). Photorealism, hero shots, factual/grounded content.
 - gpt-image-2.5-flare (OpenAI): fast; cost set by \`quality\` (medium ~$0.013 at 14s; high ~$0.05 at 18s; max ~$0.21 at 46s). Strong text rendering and prompt adherence.
 - gpt-image-2.5-sunburst (OpenAI): same prices, roughly 1.5-2x slower (high ~30s, max ~85s). Best for text-heavy posters, branding and precise composition; prefer flare for plain generation.
-OpenAI models: 1K or 2K only (about 1 and 4 megapixels; exact size is derived from aspect_ratio and returned), the ten base aspect ratios, \`quality\` ladder. Gemini models: \`temperature\`. Every model outputs jpeg. Higher resolution and quality cost more and take longer. num_images > 1 makes that many separate requests: time and cost scale linearly, and OpenAI tier-1 accounts allow 5 images per minute.
+OpenAI models: 1K or 2K only (about 1 and 4 megapixels; exact size is derived from aspect_ratio and returned), the ten base aspect ratios, jpeg/png/webp output, \`quality\` ladder, optional transparent background. Gemini models: jpeg only, \`temperature\`. Higher resolution and quality cost more and take longer. num_images > 1 makes that many separate requests: time and cost scale linearly, and OpenAI tier-1 accounts allow 5 images per minute.
 
 Args:
   - prompt (string, required): Detailed description of the image
@@ -48,8 +44,9 @@ Args:
   - model (string, optional): see above. Default: "gemini-3.1-flash-image"
   - aspect_ratio (string, optional): Default: "1:1". Extreme ratios (1:4, 4:1, 1:8, 8:1) are flash-only
   - resolution (string, optional): "0.5K", "1K", "2K", "4K" per model. Default: "1K"
-  - output_format (string, optional): "jpeg", the only format produced. Default: "jpeg"
+  - output_format (string, optional): "jpeg" (all models), "png"/"webp" (OpenAI only). Default: "jpeg"
   - quality (string, optional, OpenAI only): "low", "medium", "high", "xhigh", "max". Default: "medium"
+  - transparent_background (boolean, optional, OpenAI only): requires png or webp
   - temperature (number, optional, Gemini only): 0.0-2.0. Default: 1.0
   - num_images (number, optional): 1-4. Default: 1
 
@@ -58,7 +55,8 @@ Returns: { success, images: [{ path, format, width?, height? }], description?, u
 Examples:
   - Landscape: prompt="A serene mountain lake at sunset", aspect_ratio="16:9"
   - Cheap draft on OpenAI: model="gpt-image-2.5-flare", quality="low", output_path="~/images/"
-  - Poster with text: model="gpt-image-2.5-sunburst", quality="high", aspect_ratio="2:3"`;
+  - Poster with text: model="gpt-image-2.5-sunburst", quality="high", aspect_ratio="2:3"
+  - Sticker: model="gpt-image-2.5-flare", transparent_background=true, output_format="png"`;
 
 /**
  * Register the generate_image tool with the MCP server
@@ -86,10 +84,7 @@ export function registerGenerateImageTool(server: McpServer): void {
         const aspectRatio = params.aspect_ratio ?? DEFAULTS.aspectRatio;
         const resolution = params.resolution ?? DEFAULTS.resolution;
         const requestedCount = params.num_images ?? DEFAULTS.numImages;
-        const outputFormat = resolveRequestedOutputFormat(
-          params.output_path,
-          params.output_format
-        );
+        const outputFormat = params.output_format ?? DEFAULTS.outputFormat;
 
         // Provider-specific options carry no schema default and are passed
         // through as given: the provider that owns the option applies its own
@@ -101,6 +96,7 @@ export function registerGenerateImageTool(server: McpServer): void {
           outputFormat,
           temperature: params.temperature,
           quality: params.quality,
+          transparentBackground: params.transparent_background,
         };
 
         // Validate model options before any API call (fail fast, no downgrades)
