@@ -18,7 +18,7 @@ import {
 const EDIT_ASPECT_RATIOS = ["auto", ...ASPECT_RATIOS] as const;
 
 /**
- * Input schema for nanobanana_edit_image tool
+ * Input schema for hokuz_edit_image tool
  */
 export const EditImageInputSchema = z
   .object({
@@ -123,7 +123,7 @@ export const EditImageInputSchema = z
 export type EditImageInput = z.infer<typeof EditImageInputSchema>;
 
 /**
- * Output schema for nanobanana_edit_image tool
+ * Output schema for hokuz_edit_image tool
  */
 export const EditImageOutputSchema = z.object({
   success: z.boolean().describe("Whether the image editing succeeded"),

@@ -1,7 +1,7 @@
 {
-  "name": "nano-banana-mcp-server",
+  "name": "hokuz-image-gen",
   "version": "1.0.0",
-  "description": "MCP server for generating and editing images using the Nano Banana family of Google Gemini image models (Nano Banana 2 / 2 Lite / Pro)",
+  "description": "MCP server for generating and editing images with Google's Gemini (Nano Banana) image models",
   "type": "module",
   "main": "dist/index.js",
   "scripts": {
@@ -20,7 +20,7 @@
   },
   "keywords": [
     "mcp",
-    "nano-banana",
+    "hokuz",
     "gemini",
     "image-generation",
     "mcp-server"
@@ -29,12 +29,12 @@
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/spinje/nano-banana-mcp-server.git"
+    "url": "git+https://github.com/spinje/hokuz-image-gen.git"
   },
   "bugs": {
-    "url": "https://github.com/spinje/nano-banana-mcp-server/issues"
+    "url": "https://github.com/spinje/hokuz-image-gen/issues"
   },
-  "homepage": "https://github.com/spinje/nano-banana-mcp-server#readme",
+  "homepage": "https://github.com/spinje/hokuz-image-gen#readme",
   "dependencies": {
     "@google/genai": "^2.10.0",
     "@modelcontextprotocol/sdk": "^1.30.0",

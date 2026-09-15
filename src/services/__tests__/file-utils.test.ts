@@ -9,7 +9,7 @@ import { inferOutputFormatFromPath, loadImage, resolveOutputPath } from "../file
 let tmp: string;
 
 beforeEach(async () => {
-  tmp = await fs.mkdtemp(path.join(os.tmpdir(), "nanobanana-test-"));
+  tmp = await fs.mkdtemp(path.join(os.tmpdir(), "hokuz-test-"));
 });
 
 afterEach(async () => {

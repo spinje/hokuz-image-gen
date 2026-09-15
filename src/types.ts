@@ -1,5 +1,5 @@
 /**
- * Type definitions for Nano Banana MCP Server
+ * Type definitions for the image server
  */
 
 /**

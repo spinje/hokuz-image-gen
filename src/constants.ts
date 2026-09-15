@@ -1,5 +1,5 @@
 /**
- * Constants for Nano Banana MCP Server
+ * Constants for the image server
  */
 
 /**

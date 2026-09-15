@@ -13,7 +13,7 @@ import {
 } from "../constants.js";
 
 /**
- * Input schema for nanobanana_generate_image tool
+ * Input schema for hokuz_generate_image tool
  */
 export const GenerateImageInputSchema = z
   .object({
@@ -107,7 +107,7 @@ export const GenerateImageInputSchema = z
 export type GenerateImageInput = z.infer<typeof GenerateImageInputSchema>;
 
 /**
- * Output schema for nanobanana_generate_image tool
+ * Output schema for hokuz_generate_image tool
  */
 export const GenerateImageOutputSchema = z.object({
   success: z.boolean().describe("Whether the image generation succeeded"),

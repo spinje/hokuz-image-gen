@@ -21,11 +21,11 @@ describe("published tool contract", () => {
     expect(harness.client.getServerVersion()).toEqual({ name: pkg.name, version: pkg.version });
   });
 
-  it("registers exactly the two nanobanana_ tools with non-destructive, open-world annotations", async () => {
+  it("registers exactly the two hokuz_ tools with non-destructive, open-world annotations", async () => {
     const { tools } = await harness.client.listTools();
     expect(tools.map((t) => t.name).sort()).toEqual([
-      "nanobanana_edit_image",
-      "nanobanana_generate_image",
+      "hokuz_edit_image",
+      "hokuz_generate_image",
     ]);
     for (const tool of tools) {
       expect(tool.description).toBeTruthy();
@@ -52,7 +52,7 @@ describe("published tool contract", () => {
     // defaults or marks defaulted fields required would silently change how
     // models call the tool.
     const { tools } = await harness.client.listTools();
-    const generate = tools.find((t) => t.name === "nanobanana_generate_image")!;
+    const generate = tools.find((t) => t.name === "hokuz_generate_image")!;
     const props = generate.inputSchema.properties as Record<
       string,
       { enum?: string[]; default?: unknown }
@@ -69,7 +69,7 @@ describe("published tool contract", () => {
     expect(props.output_format.enum).toEqual(["jpeg"]);
     expect(generate.inputSchema.required).toEqual(["prompt", "output_path"]);
 
-    const edit = tools.find((t) => t.name === "nanobanana_edit_image")!;
+    const edit = tools.find((t) => t.name === "hokuz_edit_image")!;
     const editProps = edit.inputSchema.properties as Record<string, { default?: unknown }>;
     expect(editProps.aspect_ratio.default).toBe("auto");
     expect(edit.inputSchema.required).toEqual(["prompt", "image_paths", "output_path"]);

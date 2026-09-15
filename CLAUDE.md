@@ -35,7 +35,7 @@ When in doubt, ask: *"What would have to be true for this to work reliably under
 
 ## Project Overview
 
-A local MCP (Model Context Protocol) server that exposes two tools, `nanobanana_generate_image` and `nanobanana_edit_image`, backed by Google's Nano Banana image models (Gemini 3.1 Flash Image, Flash Lite Image, and Gemini 3 Pro Image) through the Gemini **Interactions API**. It runs over stdio, is started by an MCP client such as Claude Code or Claude Desktop, and writes JPEG files to disk. The calling LLM reads the tool descriptions and JSON Schemas we publish; those strings are the product's user interface.
+A local MCP (Model Context Protocol) server that exposes two tools, `hokuz_generate_image` and `hokuz_edit_image`, backed by Google's Nano Banana image models (Gemini 3.1 Flash Image, Flash Lite Image, and Gemini 3 Pro Image) through the Gemini **Interactions API**. It runs over stdio, is started by an MCP client such as Claude Code or Claude Desktop, and writes JPEG files to disk. The calling LLM reads the tool descriptions and JSON Schemas we publish; those strings are the product's user interface.
 
 **Core principle:** the server never silently downgrades. Unsupported model/resolution/aspect-ratio combinations are rejected in-process before any API call, with an error that names the supported values.
 
@@ -78,7 +78,7 @@ A local MCP (Model Context Protocol) server that exposes two tools, `nanobanana_
 └── CLAUDE.md
 ```
 
-**Tool pattern** — each tool is three files with one job each: `schemas/<tool>.ts` (Zod shapes + `.describe()` strings the LLM reads), `tools/<tool>.ts` (the big `TOOL_DESCRIPTION` template string, defaults, orchestration, response formatting), and the shared services. Registration happens in `server.ts`. Tool names carry the `nanobanana_` prefix.
+**Tool pattern** — each tool is three files with one job each: `schemas/<tool>.ts` (Zod shapes + `.describe()` strings the LLM reads), `tools/<tool>.ts` (the big `TOOL_DESCRIPTION` template string, defaults, orchestration, response formatting), and the shared services. Registration happens in `server.ts`. Tool names carry the `hokuz_` prefix.
 
 ## Dev Environment
 
@@ -91,7 +91,7 @@ A local MCP (Model Context Protocol) server that exposes two tools, `nanobanana_
 - `npm test` / `npm run test:watch` — Vitest (~0.5 s, no network)
 - `npm run check` — typecheck + lint + test. **This is the gate. Run it before calling a task done.** CI runs the same steps plus the build on every pull request.
 - `npx @modelcontextprotocol/inspector node dist/index.js` — poke the tools interactively
-- `claude mcp add nano-banana --scope local --transport stdio --env GEMINI_API_KEY="$GEMINI_API_KEY" -- node "$PWD/dist/index.js"` — register with Claude Code, then `/mcp` to confirm
+- `claude mcp add hokuz-image-gen --scope local --transport stdio --env GEMINI_API_KEY="$GEMINI_API_KEY" -- node "$PWD/dist/index.js"` — register with Claude Code, then `/mcp` to confirm
 
 ## Critical Gotchas
 
@@ -157,7 +157,7 @@ When the SDK's schema validation rejects a call, the client receives `{ isError:
 
 **Parameter:** (1) schema field `z.enum(OPTIONS).default(DEFAULTS.x).describe("...")` — the describe string is read by the LLM, name the options and the default; (2) handler `params.x ?? DEFAULTS.x` into `GenerationConfig`; (3) service if the request changes; (4) the Args list in `TOOL_DESCRIPTION`; (5) tests in the same change — the exact request-shape `toEqual` in `gemini-client.test.ts` will fail until updated, and `server.test.ts` asserts schema defaults; (6) README parameter table; (7) `npm run check`.
 
-**Tool:** `src/schemas/newtool.ts` (`.strict()` input schema, output schema, inferred types) → `src/tools/newtool.ts` (`registerNewTool(server)` with a `nanobanana_` name; copy the annotations block and the `catch` → `{ content, structuredContent: { success: false, ... }, isError: true }` pattern from an existing tool) → register in `src/server.ts` and add the banner line in `src/index.ts` → `tools/__tests__/newtool.test.ts` through `connectTestClient()` and the name list in `server.test.ts` → README Tools section → `npm run check`.
+**Tool:** `src/schemas/newtool.ts` (`.strict()` input schema, output schema, inferred types) → `src/tools/newtool.ts` (`registerNewTool(server)` with a `hokuz_` name; copy the annotations block and the `catch` → `{ content, structuredContent: { success: false, ... }, isError: true }` pattern from an existing tool) → register in `src/server.ts` and add the banner line in `src/index.ts` → `tools/__tests__/newtool.test.ts` through `connectTestClient()` and the name list in `server.test.ts` → README Tools section → `npm run check`.
 
 ## Google GenAI SDK Patterns
 

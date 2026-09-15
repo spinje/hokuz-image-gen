@@ -83,9 +83,9 @@ Examples:
  */
 export function registerEditImageTool(server: McpServer): void {
   server.registerTool(
-    "nanobanana_edit_image",
+    "hokuz_edit_image",
     {
-      title: "Edit Image with Nano Banana",
+      title: "Edit Image",
       description: TOOL_DESCRIPTION,
       inputSchema: EditImageInputSchema,
       outputSchema: EditImageOutputSchema,

@@ -1,4 +1,4 @@
-# Nano Banana MCP Server
+# hokuz-image-gen
 
 An MCP (Model Context Protocol) server for generating and editing images using Google's Gemini image models via the [Interactions API](https://ai.google.dev/gemini-api/docs/image-generation). Both tools accept an optional `model` parameter; the default is `gemini-3.1-flash-image` (Nano Banana 2).
 
@@ -7,7 +7,7 @@ An MCP (Model Context Protocol) server for generating and editing images using G
 - [Performance & cost](#performance--cost)
 - [Prerequisites](#prerequisites) · [Installation](#installation) · [Configuration](#configuration)
 - [Usage](#usage)
-- [Tools](#tools) — [`nanobanana_generate_image`](#nanobanana_generate_image) · [`nanobanana_edit_image`](#nanobanana_edit_image)
+- [Tools](#tools) — [`hokuz_generate_image`](#hokuz_generate_image) · [`hokuz_edit_image`](#hokuz_edit_image)
 - [Troubleshooting](#troubleshooting)
 
 ## Features
@@ -54,8 +54,8 @@ Select a model with the optional `model` parameter on either tool. The default i
 
 ```bash
 # Clone the repository
-git clone https://github.com/spinje/nano-banana-mcp-server.git
-cd nano-banana-mcp-server
+git clone https://github.com/spinje/hokuz-image-gen.git
+cd hokuz-image-gen
 
 # Install dependencies
 npm install
@@ -83,16 +83,16 @@ Add the server to Claude Code as a local stdio MCP server:
 ```bash
 export GEMINI_API_KEY="your-api-key-here"
 
-claude mcp add nano-banana \
+claude mcp add hokuz-image-gen \
   --scope local \
   --transport stdio \
   --env GEMINI_API_KEY="$GEMINI_API_KEY" \
-  -- node /absolute/path/to/nano-banana-mcp-server/dist/index.js
+  -- node /absolute/path/to/hokuz-image-gen/dist/index.js
 
 claude mcp list
 ```
 
-`--scope local` stores the MCP server in your private Claude Code configuration for the current project, not in this repository. After starting Claude Code, run `/mcp` to verify that `nano-banana` is connected.
+`--scope local` stores the MCP server in your private Claude Code configuration for the current project, not in this repository. After starting Claude Code, run `/mcp` to verify that `hokuz-image-gen` is connected.
 
 ### Claude Desktop
 
@@ -101,9 +101,9 @@ Add to your Claude Desktop configuration file (`~/Library/Application Support/Cl
 ```json
 {
   "mcpServers": {
-    "nano-banana": {
+    "hokuz-image-gen": {
       "command": "node",
-      "args": ["/absolute/path/to/nano-banana-mcp-server/dist/index.js"],
+      "args": ["/absolute/path/to/hokuz-image-gen/dist/index.js"],
       "env": {
         "GEMINI_API_KEY": "your-api-key-here"
       }
@@ -122,7 +122,7 @@ The server runs via stdio transport. You usually do not need to run this command
 
 ## Tools
 
-### nanobanana_generate_image
+### hokuz_generate_image
 
 Generate images from text prompts.
 
@@ -150,7 +150,7 @@ output_path: ~/images/headshot.jpg
 aspect_ratio: 3:4
 ```
 
-### nanobanana_edit_image
+### hokuz_edit_image
 
 Edit existing images using text instructions.
 
