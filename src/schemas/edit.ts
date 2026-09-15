@@ -43,7 +43,7 @@ export const EditImageInputSchema = z
       )
       .describe(
         "Array of local file paths or URLs to source images. Gemini models: up to 14 images, 7 MB " +
-          "each (jpeg/png/webp/gif/heic). OpenAI models: up to 16 images, 50 MB each, jpeg/png/webp " +
+          "each (jpeg/png/webp/gif/heic/heif). OpenAI models: up to 16 images, 50 MB each, jpeg/png/webp " +
           "only (gif/heic are rejected before the API call). Order matters: 'first image'/'second " +
           "image' in the prompt refer to this order. For style transfer, provide the content image " +
           "first, then the style reference."
@@ -114,7 +114,7 @@ export const EditImageInputSchema = z
       .optional()
       .describe(
         "OpenAI models only. true renders a transparent background; requires output_format png or " +
-          "webp. Gemini models reject this option."
+          "webp. Gemini models reject `true`."
       ),
 
     num_images: z

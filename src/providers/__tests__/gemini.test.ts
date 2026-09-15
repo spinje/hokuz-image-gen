@@ -150,7 +150,7 @@ describe("generateImage request shape", () => {
 });
 
 describe("editImage request shape", () => {
-  it("sends input images in order, then the prompt as the last block", async () => {
+  it("sends input images in order, then the prompt, with the same image options", async () => {
     createMock.mockResolvedValue({ output_image: { data: IMG_A } });
 
     await editImage(
@@ -162,26 +162,21 @@ describe("editImage request shape", () => {
       baseConfig
     );
 
-    const { input } = createMock.mock.calls[0][0];
-    expect(input).toEqual([
-      { type: "image", mime_type: "image/png", data: IMG_A },
-      { type: "image", mime_type: "image/webp", data: IMG_B },
-      { type: "text", text: "make it blue" },
-    ]);
-  });
-
-  it("applies its own defaults too, so edit 'auto' still asks for 1K", async () => {
-    createMock.mockResolvedValue({ output_image: { data: IMG_A } });
-
-    await editImage(
-      "make it blue",
-      [{ data: IMG_A, mimeType: "image/png" }],
-      { ...baseConfig, aspectRatio: undefined, resolution: undefined, temperature: undefined }
-    );
-
-    const request = createMock.mock.calls[0][0];
-    expect(request.response_format.image_size).toBe("1K");
-    expect(request.generation_config).toEqual({ temperature: 1 });
+    expect(createMock.mock.calls[0][0]).toEqual({
+      model: "gemini-3.1-flash-image",
+      input: [
+        { type: "image", mime_type: "image/png", data: IMG_A },
+        { type: "image", mime_type: "image/webp", data: IMG_B },
+        { type: "text", text: "make it blue" },
+      ],
+      response_format: {
+        type: "image",
+        image_size: "1K",
+        mime_type: "image/jpeg",
+        aspect_ratio: "16:9",
+      },
+      generation_config: { temperature: 0.7 },
+    });
   });
 });
 

@@ -3,8 +3,15 @@
  */
 
 import * as fs from "fs/promises";
+import type { Stats } from "fs";
 import * as path from "path";
-import { FILE_EXTENSIONS, type OutputFormat } from "../constants.js";
+import {
+  FILE_EXTENSIONS,
+  IMAGE_MODEL_CAPABILITIES,
+  getUnsupportedInputImageMessage,
+  type ImageModel,
+  type OutputFormat,
+} from "../constants.js";
 import { type InputImage, McpError, ErrorType } from "../types.js";
 
 /**
@@ -142,158 +149,234 @@ export async function saveBase64Image(
   }
 }
 
-/**
- * Reject an input image above the selected model's per-image limit.
- *
- * @param maxBytes - The model's `maxInputImageBytes` from the capability registry
- */
-function assertWithinSizeLimit(
-  buffer: Buffer,
-  source: string,
-  maxBytes: number
-): void {
-  if (buffer.length <= maxBytes) return;
+/** Input MIME type per file extension. */
+const INPUT_MIME_BY_EXTENSION: Record<string, string> = {
+  ".png": "image/png",
+  ".jpg": "image/jpeg",
+  ".jpeg": "image/jpeg",
+  ".webp": "image/webp",
+  ".gif": "image/gif",
+  ".heic": "image/heic",
+  ".heif": "image/heif",
+};
 
-  const sizeMB = (buffer.length / (1024 * 1024)).toFixed(2);
-  throw new McpError(
-    ErrorType.IMAGE_TOO_LARGE,
-    `Error: Image at '${source}' is ${sizeMB}MB, above the ${maxBytes / (1024 * 1024)}MB limit for the selected model. Resize it, or choose a model with a larger input limit.`
-  );
-}
+const MB = 1024 * 1024;
+
+/** How long to wait for a remote image before giving up. */
+const FETCH_TIMEOUT_MS = 30_000;
 
 /**
- * Read an image file and convert to base64
+ * Load one input image for an edit, from a local path or an http(s) URL.
  *
- * @param imagePath - Path to the image file
- * @param maxBytes - Maximum accepted size for the selected model
- * @returns InputImage with base64 data and mime type
+ * Checks run type -> allowlist -> size, so the bytes of an image the model
+ * would reject, or one over its limit, are never read.
  */
-export async function readImageAsBase64(
-  imagePath: string,
-  maxBytes: number
+export async function loadInputImage(
+  pathOrUrl: string,
+  model: ImageModel
 ): Promise<InputImage> {
-  // Expand home directory
-  const expandedPath = imagePath.replace(/^~/, process.env.HOME || "");
-  const absolutePath = path.resolve(expandedPath);
-
-  // Check if file exists
-  if (!(await pathExists(absolutePath))) {
-    throw new McpError(
-      ErrorType.INVALID_IMAGE_PATH,
-      `Error: Image file not found at '${imagePath}'. Ensure the path is correct and the file exists.`
-    );
-  }
-
-  try {
-    // Read file
-    const buffer = await fs.readFile(absolutePath);
-
-    assertWithinSizeLimit(buffer, imagePath, maxBytes);
-
-    // Determine MIME type from extension
-    const ext = path.extname(absolutePath).toLowerCase();
-    const mimeType = getMimeTypeFromExtension(ext);
-
-    // Convert to base64
-    const base64Data = buffer.toString("base64");
-
-    return {
-      data: base64Data,
-      mimeType,
-    };
-  } catch (error) {
-    if (error instanceof McpError) {
-      throw error;
-    }
-    throw new McpError(
-      ErrorType.INVALID_IMAGE_PATH,
-      `Error: Could not read image file at '${imagePath}'. ${error instanceof Error ? error.message : String(error)}`
-    );
-  }
+  return isUrl(pathOrUrl)
+    ? fetchInputImage(pathOrUrl, model)
+    : readInputImage(pathOrUrl, model);
 }
 
-/**
- * Check if a string is a URL
- */
-export function isUrl(str: string): boolean {
+/** True for the schemes we fetch; anything else is treated as a file path. */
+function isUrl(value: string): boolean {
   try {
-    const url = new URL(str);
+    const url = new URL(value);
     return url.protocol === "http:" || url.protocol === "https:";
   } catch {
     return false;
   }
 }
 
-/**
- * Fetch an image from a URL and convert to base64
- *
- * @param imageUrl - URL of the image
- * @param maxBytes - Maximum accepted size for the selected model
- * @returns InputImage with base64 data and mime type
- */
-export async function fetchImageAsBase64(
-  imageUrl: string,
-  maxBytes: number
+async function readInputImage(
+  imagePath: string,
+  model: ImageModel
 ): Promise<InputImage> {
+  const absolutePath = path.resolve(
+    imagePath.replace(/^~/, process.env.HOME || "")
+  );
+
+  const extension = path.extname(absolutePath).toLowerCase();
+  const mimeType = INPUT_MIME_BY_EXTENSION[extension];
+  if (!mimeType) {
+    throw unknownTypeError(
+      imagePath,
+      model,
+      `from its extension '${extension || "(none)"}'`
+    );
+  }
+  assertModelAcceptsType(imagePath, mimeType, model);
+
+  let stats: Stats;
   try {
-    const response = await fetch(imageUrl);
-
-    if (!response.ok) {
-      throw new McpError(
-        ErrorType.INVALID_IMAGE_PATH,
-        `Error: Could not fetch image from '${imageUrl}'. Server returned status ${response.status}.`
-      );
-    }
-
-    const contentType = response.headers.get("content-type") || "image/png";
-    const arrayBuffer = await response.arrayBuffer();
-    const buffer = Buffer.from(arrayBuffer);
-
-    assertWithinSizeLimit(buffer, imageUrl, maxBytes);
-
-    const base64Data = buffer.toString("base64");
-
-    return {
-      data: base64Data,
-      mimeType: contentType,
-    };
-  } catch (error) {
-    if (error instanceof McpError) {
-      throw error;
-    }
+    stats = await fs.stat(absolutePath);
+  } catch {
     throw new McpError(
       ErrorType.INVALID_IMAGE_PATH,
-      `Error: Could not fetch image from '${imageUrl}'. ${error instanceof Error ? error.message : String(error)}`
+      `Error: Image file not found at '${imagePath}'. Ensure the path is correct and the file exists.`
+    );
+  }
+  assertWithinSizeLimit(stats.size, imagePath, model);
+
+  try {
+    const buffer = await fs.readFile(absolutePath);
+    return { data: buffer.toString("base64"), mimeType };
+  } catch (error) {
+    throw new McpError(
+      ErrorType.INVALID_IMAGE_PATH,
+      `Error: Could not read image file at '${imagePath}'. ${error instanceof Error ? error.message : String(error)}. Check the file's permissions.`
     );
   }
 }
 
-/**
- * Load an image from a path or URL, within the selected model's size limit.
- */
-export async function loadImage(
-  pathOrUrl: string,
-  maxBytes: number
+async function fetchInputImage(
+  imageUrl: string,
+  model: ImageModel
 ): Promise<InputImage> {
-  if (isUrl(pathOrUrl)) {
-    return fetchImageAsBase64(pathOrUrl, maxBytes);
+  let response: Response;
+  try {
+    response = await fetch(imageUrl, {
+      signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
+    });
+  } catch (error) {
+    const reason =
+      error instanceof Error && error.name === "TimeoutError"
+        ? `it did not respond within ${FETCH_TIMEOUT_MS / 1000} seconds`
+        : error instanceof Error
+          ? error.message
+          : String(error);
+    throw new McpError(
+      ErrorType.INVALID_IMAGE_PATH,
+      `Error: Could not fetch image from '${imageUrl}': ${reason}. Check the URL, or download the image and pass a local path.`
+    );
   }
-  return readImageAsBase64(pathOrUrl, maxBytes);
+
+  if (!response.ok) {
+    throw new McpError(
+      ErrorType.INVALID_IMAGE_PATH,
+      `Error: Could not fetch image from '${imageUrl}'. Server returned status ${response.status}. Check the URL, or download the image and pass a local path.`
+    );
+  }
+
+  // "image/jpeg; charset=utf-8" and "IMAGE/JPEG" are the same type as far as
+  // the allowlist is concerned.
+  const mimeType = response.headers
+    .get("content-type")
+    ?.split(";")[0]
+    .trim()
+    .toLowerCase();
+  if (!mimeType) {
+    throw unknownTypeError(
+      imageUrl,
+      model,
+      "because the server did not report a content-type"
+    );
+  }
+  assertModelAcceptsType(imageUrl, mimeType, model);
+
+  const declaredLength = Number(response.headers.get("content-length"));
+  if (declaredLength > 0) {
+    assertWithinSizeLimit(declaredLength, imageUrl, model);
+  }
+
+  const buffer = await readBodyWithinLimit(response, imageUrl, model);
+  return { data: buffer.toString("base64"), mimeType };
 }
 
 /**
- * Get MIME type from file extension
+ * Read the body chunk by chunk and stop at the model's limit: a server that
+ * omits or under-reports content-length must not be able to make us buffer an
+ * unbounded body.
  */
-function getMimeTypeFromExtension(ext: string): string {
-  const mimeMap: Record<string, string> = {
-    ".png": "image/png",
-    ".jpg": "image/jpeg",
-    ".jpeg": "image/jpeg",
-    ".webp": "image/webp",
-    ".gif": "image/gif",
-    ".heic": "image/heic",
-    ".heif": "image/heif",
-  };
+async function readBodyWithinLimit(
+  response: Response,
+  source: string,
+  model: ImageModel
+): Promise<Buffer> {
+  if (!response.body) {
+    throw new McpError(
+      ErrorType.INVALID_IMAGE_PATH,
+      `Error: The response from '${source}' carried no image data. Check the URL, or download the image and pass a local path.`
+    );
+  }
 
-  return mimeMap[ext] || "image/png";
+  const limit = IMAGE_MODEL_CAPABILITIES[model].maxInputImageBytes;
+  const reader = response.body.getReader();
+  const chunks: Buffer[] = [];
+  let received = 0;
+
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+
+    received += value.length;
+    if (received > limit) {
+      await reader.cancel();
+      assertWithinSizeLimit(received, source, model);
+    }
+    chunks.push(Buffer.from(value));
+  }
+
+  return Buffer.concat(chunks);
+}
+
+/**
+ * The image type could not be established from metadata. Guessing here would
+ * hide exactly the files the allowlist exists to catch.
+ */
+function unknownTypeError(
+  source: string,
+  model: ImageModel,
+  clause: string
+): McpError {
+  const caps = IMAGE_MODEL_CAPABILITIES[model];
+  const supported = caps.inputMimeTypes
+    .map((mime) => mime.replace("image/", ""))
+    .join(", ");
+
+  return new McpError(
+    ErrorType.INVALID_IMAGE_PATH,
+    `Error: Cannot determine the image type of '${source}' ${clause}. Supported input formats for '${model}' (${caps.label}): ${supported}. Rename or convert the image.`
+  );
+}
+
+function assertModelAcceptsType(
+  source: string,
+  mimeType: string,
+  model: ImageModel
+): void {
+  const unsupported = getUnsupportedInputImageMessage({
+    model,
+    mimeType,
+    path: source,
+  });
+  if (unsupported) {
+    throw new McpError(ErrorType.INVALID_IMAGE_PATH, unsupported);
+  }
+}
+
+function assertWithinSizeLimit(
+  bytes: number,
+  source: string,
+  model: ImageModel
+): void {
+  const caps = IMAGE_MODEL_CAPABILITIES[model];
+  if (bytes <= caps.maxInputImageBytes) return;
+
+  const largestLimit = Math.max(
+    ...Object.values(IMAGE_MODEL_CAPABILITIES).map(
+      (candidate) => candidate.maxInputImageBytes
+    )
+  );
+  const alternative =
+    caps.maxInputImageBytes < largestLimit
+      ? `, or use an OpenAI model (${largestLimit / MB}MB limit)`
+      : "";
+
+  throw new McpError(
+    ErrorType.IMAGE_TOO_LARGE,
+    `Error: Image at '${source}' is ${(bytes / MB).toFixed(2)}MB, above the ${caps.maxInputImageBytes / MB}MB limit for '${model}' (${caps.label}). Resize it${alternative}.`
+  );
 }

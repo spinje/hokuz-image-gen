@@ -143,24 +143,36 @@ describe(TOOL, () => {
     expect(editMock).not.toHaveBeenCalled();
   });
 
-  it("rejects an input image over the selected model's size limit", async () => {
+  it("applies the selected model's own byte limit to an input image", async () => {
+    // 7 MB + 1 byte: over the Gemini limit, far inside the OpenAI one. This is
+    // the only test that observes maxInputImageBytes reaching the loader.
     const big = path.join(tmp, "big.png");
     await fs.writeFile(big, Buffer.alloc(7 * 1024 * 1024 + 1));
 
-    const result = await harness.callTool(TOOL, {
+    const rejected = await harness.callTool(TOOL, {
       prompt: "p",
       image_paths: [big],
       output_path: tmp,
     });
 
-    expect(result.isError).toBe(true);
-    expect(firstText(result)).toBe(
-      `Error: Image at '${big}' is 7.00MB, above the 7MB limit for the selected model. Resize it, or choose a model with a larger input limit.`
+    expect(rejected.isError).toBe(true);
+    expect(firstText(rejected)).toBe(
+      `Error: Image at '${big}' is 7.00MB, above the 7MB limit for 'gemini-3.1-flash-image' (Nano Banana 2). Resize it, or use an OpenAI model (50MB limit).`
     );
     expect(editMock).not.toHaveBeenCalled();
+
+    const accepted = await harness.callTool(TOOL, {
+      prompt: "p",
+      image_paths: [big],
+      output_path: tmp,
+      model: "gpt-image-2.5-flare",
+    });
+
+    expect(accepted.isError).toBeFalsy();
+    expect(editMock).toHaveBeenCalledTimes(1);
   });
 
-  it("rejects an input type the model does not accept, once loaded and before the API call", async () => {
+  it("rejects an input type the model does not accept before any API call", async () => {
     const gif = path.join(tmp, "loop.gif");
     await fs.writeFile(gif, "gif-image");
 

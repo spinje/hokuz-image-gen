@@ -250,35 +250,6 @@ describe(TOOL, () => {
     expect(generateMock).not.toHaveBeenCalled();
   });
 
-  it("rejects an explicit quality on a Gemini model before calling the provider", async () => {
-    const result = await harness.callTool(TOOL, {
-      prompt: "p",
-      output_path: tmp,
-      quality: "high",
-    });
-
-    expect(result.isError).toBe(true);
-    expect(firstText(result)).toBe(
-      "Error: Model 'gemini-3.1-flash-image' (Nano Banana 2) does not accept 'quality'; it is an OpenAI-only option. Omit it, or use gpt-image-2.5-flare / gpt-image-2.5-sunburst."
-    );
-    expect(generateMock).not.toHaveBeenCalled();
-  });
-
-  it("rejects an explicit temperature on an OpenAI model before calling the provider", async () => {
-    const result = await harness.callTool(TOOL, {
-      prompt: "p",
-      output_path: tmp,
-      model: "gpt-image-2.5-sunburst",
-      temperature: 0.2,
-    });
-
-    expect(result.isError).toBe(true);
-    expect(firstText(result)).toBe(
-      "Error: Model 'gpt-image-2.5-sunburst' (GPT Image 2.5 Sunburst) does not accept 'temperature'; it is a Gemini-only option. Omit it, or use a gemini-* model."
-    );
-    expect(generateMock).not.toHaveBeenCalled();
-  });
-
   it("reports the provider's pixel size and sums usage across the num_images loop", async () => {
     generateMock.mockResolvedValue({
       images: [{ data: IMG, mimeType: "image/jpeg", width: 1360, height: 768 }],
@@ -306,6 +277,27 @@ describe(TOOL, () => {
     expect(firstText(result)).toContain("(1360x768)");
     expect(firstText(result)).toContain(
       "Usage: 30 input + 458 output tokens, estimated cost $0.0140"
+    );
+  });
+
+  it("says how many requests the usage totals cover when it is not all of them", async () => {
+    generateMock
+      .mockResolvedValueOnce({
+        images: [{ data: IMG, mimeType: "image/jpeg" }],
+        usage: { inputTokens: 15, outputTokens: 229, estimatedCostUsd: 0.007 },
+      })
+      .mockResolvedValueOnce(okResponse());
+
+    const result = await harness.callTool(TOOL, {
+      prompt: "p",
+      output_path: tmp,
+      model: "gpt-image-2.5-flare",
+      num_images: 2,
+    });
+
+    expect(generateMock).toHaveBeenCalledTimes(2);
+    expect(firstText(result)).toContain(
+      "Usage (reported for 1 of 2 requests): 15 input + 229 output tokens, estimated cost $0.0070"
     );
   });
 

@@ -107,6 +107,7 @@ export function registerGenerateImageTool(server: McpServer): void {
         const collected: GeneratedImage[] = [];
         const descriptions: string[] = [];
         const usages: UsageReport[] = [];
+        let successfulRequests = 0;
         let failureReason: string | undefined;
         for (
           let attempt = 0;
@@ -116,6 +117,7 @@ export function registerGenerateImageTool(server: McpServer): void {
           try {
             const response = await generateImage(params.prompt, config);
             collected.push(...response.images);
+            successfulRequests++;
             if (response.description) descriptions.push(response.description);
             if (response.usage) usages.push(response.usage);
           } catch (err) {
@@ -182,7 +184,13 @@ export function registerGenerateImageTool(server: McpServer): void {
           .join("\n  ");
         let textContent = `Successfully generated ${outputImages.length} image(s):\n  ${paths}`;
         if (usage) {
-          textContent += `\n\nUsage: ${usage.inputTokens} input + ${usage.outputTokens} output tokens, estimated cost $${usage.estimatedCostUsd.toFixed(4)}`;
+          // Say so when the totals cover only some of the requests, rather
+          // than letting them read as the cost of the whole call.
+          const scope =
+            usages.length < successfulRequests
+              ? ` (reported for ${usages.length} of ${successfulRequests} requests)`
+              : "";
+          textContent += `\n\nUsage${scope}: ${usage.inputTokens} input + ${usage.outputTokens} output tokens, estimated cost $${usage.estimatedCostUsd.toFixed(4)}`;
         }
         if (warning) {
           textContent += `\n\nWarning: ${warning}`;

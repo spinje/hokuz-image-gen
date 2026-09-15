@@ -140,6 +140,23 @@ describe("getUnsupportedModelOptionMessage", () => {
     ).toBe(
       "Error: Model 'gemini-3.1-flash-image' (Nano Banana 2) accepts at most 14 input images; 15 were given. Remove images, or use an OpenAI model (up to 16)."
     );
+    // The limit itself is accepted on both, one below the message above.
+    expect(
+      getUnsupportedModelOptionMessage({
+        model: "gemini-3.1-flash-image",
+        resolution: "1K",
+        aspectRatio: "1:1",
+        inputImageCount: 14,
+      })
+    ).toBeNull();
+    expect(
+      getUnsupportedModelOptionMessage({
+        model: "gpt-image-2.5-flare",
+        resolution: "1K",
+        aspectRatio: "1:1",
+        inputImageCount: 16,
+      })
+    ).toBeNull();
     // 15 is within the OpenAI limit; 17 is beyond every model, so there is no
     // other model to point at.
     expect(

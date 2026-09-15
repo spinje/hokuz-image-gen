@@ -151,6 +151,26 @@ describe("generateImage request shape", () => {
 });
 
 describe("editImage request shape", () => {
+  it("sends the size derived from the config alongside the uploaded image", async () => {
+    editMock.mockResolvedValue(okResponse());
+
+    await editImage("make it blue", [{ data: IMG_A, mimeType: "image/png" }], baseConfig);
+
+    const { image, ...request } = editMock.mock.calls[0][0];
+    expect(request).toEqual({
+      model: "gpt-image-2.5-flare",
+      prompt: "make it blue",
+      n: 1,
+      size: "1360x768",
+      quality: "medium",
+      output_format: "jpeg",
+      background: "opaque",
+    });
+    expect((image as File[]).map((f) => [f.name, f.type])).toEqual([
+      ["image-1.png", "image/png"],
+    ]);
+  });
+
   it("uploads the input images in order with an explicit MIME type", async () => {
     editMock.mockResolvedValue(okResponse());
 
@@ -243,6 +263,22 @@ describe("response parsing", () => {
 
     expect(response.images).toHaveLength(1);
     expect(response.usage).toBeUndefined();
+  });
+
+  it("refuses an image in a format other than the one requested", async () => {
+    generateMock.mockResolvedValue(okResponse({ output_format: "png" }));
+
+    await expect(generateImage("p", baseConfig)).rejects.toThrowError(
+      expect.objectContaining({
+        type: ErrorType.API_ERROR,
+        message:
+          "Error: OpenAI returned png instead of the requested jpeg; nothing was saved. Retry, or request png explicitly.",
+      })
+    );
+
+    // The format it was asked for comes back as an image, not an error.
+    generateMock.mockResolvedValue(okResponse({ output_format: "jpeg" }));
+    expect((await generateImage("p", baseConfig)).images).toHaveLength(1);
   });
 
   it("raises API_ERROR when the response carries no image", async () => {
@@ -357,6 +393,8 @@ describe("API key resolution", () => {
 
     await generateImage("p", baseConfig);
 
-    expect(ctorMock).toHaveBeenCalledWith({ apiKey: "test-key" });
+    // logLevel is pinned so an ambient OPENAI_LOG cannot log to stdout, which
+    // carries the MCP protocol.
+    expect(ctorMock).toHaveBeenCalledWith({ apiKey: "test-key", logLevel: "warn" });
   });
 });

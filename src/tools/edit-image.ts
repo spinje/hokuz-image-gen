@@ -17,10 +17,9 @@ import { editImage, validateGenerationConfig } from "../providers/index.js";
 import {
   resolveOutputPath,
   saveBase64Image,
-  loadImage,
+  loadInputImage,
 } from "../services/file-utils.js";
 import {
-  ErrorType,
   McpError,
   sumUsage,
   type InputImage,
@@ -28,11 +27,7 @@ import {
   type GenerationConfig,
   type UsageReport,
 } from "../types.js";
-import {
-  DEFAULTS,
-  IMAGE_MODEL_CAPABILITIES,
-  getUnsupportedInputImageMessage,
-} from "../constants.js";
+import { DEFAULTS } from "../constants.js";
 
 /**
  * Tool description for LLM discoverability
@@ -121,21 +116,11 @@ export function registerEditImageTool(server: McpServer): void {
           inputImageCount: params.image_paths.length,
         });
 
-        // Load all input images, each within the model's size limit and of a
-        // type it accepts. The MIME type is only known once the image is read.
-        const caps = IMAGE_MODEL_CAPABILITIES[model];
+        // Load the input images in order; the loader checks each one's type
+        // and size against the model before reading it.
         const inputImages: InputImage[] = [];
         for (const imagePath of params.image_paths) {
-          const image = await loadImage(imagePath, caps.maxInputImageBytes);
-          const unsupported = getUnsupportedInputImageMessage({
-            model,
-            mimeType: image.mimeType,
-            path: imagePath,
-          });
-          if (unsupported) {
-            throw new McpError(ErrorType.INVALID_IMAGE_PATH, unsupported);
-          }
-          inputImages.push(image);
+          inputImages.push(await loadInputImage(imagePath, model));
         }
 
         // num_images is implemented via repeated independent requests, each
@@ -143,6 +128,7 @@ export function registerEditImageTool(server: McpServer): void {
         const collected: GeneratedImage[] = [];
         const descriptions: string[] = [];
         const usages: UsageReport[] = [];
+        let successfulRequests = 0;
         let failureReason: string | undefined;
         for (
           let attempt = 0;
@@ -152,6 +138,7 @@ export function registerEditImageTool(server: McpServer): void {
           try {
             const response = await editImage(params.prompt, inputImages, config);
             collected.push(...response.images);
+            successfulRequests++;
             if (response.description) descriptions.push(response.description);
             if (response.usage) usages.push(response.usage);
           } catch (err) {
@@ -216,7 +203,13 @@ export function registerEditImageTool(server: McpServer): void {
           .join("\n  ");
         let textContent = `Successfully edited ${params.image_paths.length} image(s) and generated ${outputImages.length} result(s):\n  ${paths}`;
         if (usage) {
-          textContent += `\n\nUsage: ${usage.inputTokens} input + ${usage.outputTokens} output tokens, estimated cost $${usage.estimatedCostUsd.toFixed(4)}`;
+          // Say so when the totals cover only some of the requests, rather
+          // than letting them read as the cost of the whole call.
+          const scope =
+            usages.length < successfulRequests
+              ? ` (reported for ${usages.length} of ${successfulRequests} requests)`
+              : "";
+          textContent += `\n\nUsage${scope}: ${usage.inputTokens} input + ${usage.outputTokens} output tokens, estimated cost $${usage.estimatedCostUsd.toFixed(4)}`;
         }
         if (warning) {
           textContent += `\n\nWarning: ${warning}`;

@@ -33,7 +33,7 @@ Follow `.claude/agents/REVIEW-PROTOCOL.md` (read it first) for scope, severity, 
 2. **`npx @modelcontextprotocol/inspector --cli node dist/index.js --method tools/call ...`** when a one-shot call is enough.
 3. **`node -e` against `dist/providers/gemini.js` or `dist/providers/openai.js`** for provider-level promises (request shape accepted by the API, parse of a real response).
 
-Verify the file, not just the response: `file <path>` should say JPEG; `stat -f %z <path>` should be non-trivial; the response's `path` must equal where the file actually is.
+Verify the file, not just the response: `file <path>` should report the requested output_format (JPEG, PNG or WebP); `stat -f %z <path>` should be non-trivial; the response's `path` must equal where the file actually is.
 
 ## Method
 
@@ -45,7 +45,7 @@ Attack first the claims whose failure gives the caller a wrong image or a wrong 
 
 ### 3. Design the strongest legal attack per claim
 A careless, literal caller — not an attacker (that is `review-input-safety`'s). The standing arsenal:
-- **The real model ID.** Does `gemini-3.1-flash-lite-image` still resolve? (One cheap call proves all three IDs' family is alive; do not burn a call per model unless the change is about models.)
+- **The real model ID.** Does `gemini-3.1-flash-lite-image` still resolve? (One cheap call per provider proves that family is alive — five IDs in two families; do not burn a call per model unless the change is about models.)
 - **The directory path and the file path.** `output_path: <tmpdir>/` and `<tmpdir>/x.png` — is the file where the response says, and is it `.jpg`?
 - **The edit with a real input.** Feed a small real JPEG (generate one first, reuse it) — does edit return an image, and does `aspect_ratio: "auto"` produce a sane result?
 - **The rejected combination.** Lite + `2K`, Flare + `4K`, Flare + `temperature`, or a Gemini model + `quality` must fail BEFORE any call (no cost) with the documented message — confirm zero API calls by timing or by an obviously invalid key.

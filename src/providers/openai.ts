@@ -88,7 +88,9 @@ let clientInstance: OpenAI | null = null;
  */
 function getClient(model: ImageModel): OpenAI {
   if (!clientInstance) {
-    clientInstance = new OpenAI({ apiKey: getApiKey(model) });
+    // logLevel pins the SDK's logging: an ambient OPENAI_LOG=debug would
+    // otherwise write to stdout, which is the MCP protocol channel.
+    clientInstance = new OpenAI({ apiKey: getApiKey(model), logLevel: "warn" });
   }
   return clientInstance;
 }
@@ -146,6 +148,15 @@ export function parseImagesResponse(
   response: ImagesResponse,
   config: GenerationConfig
 ): ImageResponse {
+  // A format we did not ask for would be saved under the requested extension
+  // and misreported in `images[].format`, so refuse it instead.
+  if (response.output_format && response.output_format !== config.outputFormat) {
+    throw new McpError(
+      ErrorType.API_ERROR,
+      `Error: OpenAI returned ${response.output_format} instead of the requested ${config.outputFormat}; nothing was saved. Retry, or request ${response.output_format} explicitly.`
+    );
+  }
+
   const mimeType = MIME_TYPES[config.outputFormat];
   const { width, height } = parseSize(response.size);
 

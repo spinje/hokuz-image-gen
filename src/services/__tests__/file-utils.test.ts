@@ -2,15 +2,48 @@ import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import * as fs from "fs/promises";
 import * as os from "os";
 import * as path from "path";
+import { FILE_EXTENSIONS, OUTPUT_FORMATS } from "../../constants.js";
 import { ErrorType } from "../../types.js";
-import { loadImage, resolveOutputPath } from "../file-utils.js";
 
-/** Stands in for a model's `maxInputImageBytes`, which the caller passes in. */
-const MAX_BYTES = 1024 * 1024;
+// The loader must reject a file on its metadata alone; `readFile` staying
+// uncalled is how the tests below observe that.
+const { readFileSpy } = vi.hoisted(() => ({ readFileSpy: vi.fn() }));
+
+vi.mock("fs/promises", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("fs/promises")>();
+  readFileSpy.mockImplementation(actual.readFile);
+  return { ...actual, readFile: readFileSpy };
+});
+
+const { loadInputImage, resolveOutputPath } = await import("../file-utils.js");
+
+const GEMINI = "gemini-3.1-flash-image" as const;
+const OPENAI = "gpt-image-2.5-flare" as const;
+/** gemini-3.1-flash-image's `maxInputImageBytes`. */
+const GEMINI_LIMIT = 7 * 1024 * 1024;
+const GEMINI_FORMATS = "jpeg, png, webp, gif, heic, heif";
+
+/** Serve a canned response to the next fetch and hand back the spy. */
+function stubFetch(response: Response) {
+  const fetchMock = vi.fn().mockResolvedValue(response);
+  vi.stubGlobal("fetch", fetchMock);
+  return fetchMock;
+}
+
+/** A body that arrives in chunks, with no content-length. */
+function chunkedBody(chunks: Buffer[]): ReadableStream<Uint8Array> {
+  return new ReadableStream({
+    start(controller) {
+      for (const chunk of chunks) controller.enqueue(chunk);
+      controller.close();
+    },
+  });
+}
 
 let tmp: string;
 
 beforeEach(async () => {
+  readFileSpy.mockClear();
   tmp = await fs.mkdtemp(path.join(os.tmpdir(), "hokuz-test-"));
 });
 
@@ -37,9 +70,9 @@ describe("resolveOutputPath", () => {
     expect((await fs.stat(dir)).isDirectory()).toBe(true);
   });
 
-  it("replaces a foreign extension with the output format's extension", async () => {
-    const resolved = await resolveOutputPath(path.join(tmp, "foo.png"), "jpeg");
-    expect(resolved).toBe(path.join(tmp, "foo.jpg"));
+  it.each(OUTPUT_FORMATS)("replaces a foreign extension with the %s extension", async (format) => {
+    const resolved = await resolveOutputPath(path.join(tmp, "foo.txt"), format);
+    expect(resolved).toBe(path.join(tmp, `foo${FILE_EXTENSIONS[format]}`));
   });
 
   it("appends the extension when the file path has none", async () => {
@@ -77,67 +110,173 @@ describe("resolveOutputPath", () => {
   });
 });
 
-describe("loadImage", () => {
-  it("enforces the limit it was given, not a fixed one, and names it", async () => {
+describe("loadInputImage", () => {
+  it("rejects a file whose extension names no image type, without reading it", async () => {
+    // Neither path exists: a "not found" here would mean the type check ran
+    // after the disk was touched.
+    const named = path.join(tmp, "notes.txt");
+    await expect(loadInputImage(named, GEMINI)).rejects.toThrowError(
+      expect.objectContaining({
+        type: ErrorType.INVALID_IMAGE_PATH,
+        message: `Error: Cannot determine the image type of '${named}' from its extension '.txt'. Supported input formats for 'gemini-3.1-flash-image' (Nano Banana 2): ${GEMINI_FORMATS}. Rename or convert the image.`,
+      })
+    );
+
+    const bare = path.join(tmp, "screenshot");
+    await expect(loadInputImage(bare, GEMINI)).rejects.toThrowError(
+      expect.objectContaining({
+        message: expect.stringContaining("from its extension '(none)'"),
+      })
+    );
+    expect(readFileSpy).not.toHaveBeenCalled();
+  });
+
+  it("rejects a type the model does not accept before reading the bytes", async () => {
+    const gif = path.join(tmp, "loop.gif");
+    await fs.writeFile(gif, "gif-bytes");
+
+    await expect(loadInputImage(gif, OPENAI)).rejects.toThrowError(
+      expect.objectContaining({
+        type: ErrorType.INVALID_IMAGE_PATH,
+        message: expect.stringContaining("does not accept image/gif input"),
+      })
+    );
+    expect(readFileSpy).not.toHaveBeenCalled();
+
+    // A Gemini model takes the same file, so the rejection was the allowlist.
+    expect(await loadInputImage(gif, GEMINI)).toEqual({
+      data: Buffer.from("gif-bytes").toString("base64"),
+      mimeType: "image/gif",
+    });
+    expect(readFileSpy).toHaveBeenCalledTimes(1);
+  });
+
+  it("rejects a local file over the model's limit without reading it", async () => {
     const big = path.join(tmp, "big.png");
-    await fs.writeFile(big, Buffer.alloc(MAX_BYTES + 1));
+    await fs.writeFile(big, Buffer.alloc(GEMINI_LIMIT + 1));
 
-    await expect(loadImage(big, MAX_BYTES)).rejects.toThrowError(
+    await expect(loadInputImage(big, GEMINI)).rejects.toThrowError(
       expect.objectContaining({
         type: ErrorType.IMAGE_TOO_LARGE,
-        message: expect.stringContaining("is 1.00MB, above the 1MB limit for the selected model"),
+        message: `Error: Image at '${big}' is 7.00MB, above the 7MB limit for 'gemini-3.1-flash-image' (Nano Banana 2). Resize it, or use an OpenAI model (50MB limit).`,
       })
     );
+    expect(readFileSpy).not.toHaveBeenCalled();
 
-    // The same file is within reach of a model with a larger limit.
-    const image = await loadImage(big, 2 * MAX_BYTES);
-    expect(Buffer.from(image.data, "base64")).toHaveLength(MAX_BYTES + 1);
+    // The same file is well within an OpenAI model's 50MB limit.
+    const image = await loadInputImage(big, OPENAI);
+    expect(Buffer.from(image.data, "base64")).toHaveLength(GEMINI_LIMIT + 1);
   });
 
-  it("accepts a local image exactly at the limit", async () => {
-    const edge = path.join(tmp, "edge.png");
-    await fs.writeFile(edge, Buffer.alloc(MAX_BYTES));
-    const image = await loadImage(edge, MAX_BYTES);
-    expect(image.mimeType).toBe("image/png");
-    expect(Buffer.from(image.data, "base64")).toHaveLength(MAX_BYTES);
-  });
-
-  it("enforces the same limit on a fetched image", async () => {
-    vi.stubGlobal(
-      "fetch",
-      vi.fn().mockResolvedValue(
-        new Response(Buffer.alloc(MAX_BYTES + 1), {
-          status: 200,
-          headers: { "content-type": "image/png" },
-        })
-      )
-    );
-
-    await expect(loadImage("https://example.com/big.png", MAX_BYTES)).rejects.toThrowError(
+  it("reports a missing file as a path error once the type is known", async () => {
+    await expect(loadInputImage(path.join(tmp, "missing.png"), GEMINI)).rejects.toThrowError(
       expect.objectContaining({
-        type: ErrorType.IMAGE_TOO_LARGE,
-        message: expect.stringContaining("above the 1MB limit for the selected model"),
+        type: ErrorType.INVALID_IMAGE_PATH,
+        message: expect.stringContaining("Image file not found"),
       })
     );
   });
 
-  it("fetches http(s) URLs and takes the MIME type from the response header", async () => {
-    const bytes = Buffer.from("remote-bytes");
-    const fetchMock = vi.fn().mockResolvedValue(
-      new Response(bytes, { status: 200, headers: { "content-type": "image/webp" } })
+  it("expands a leading ~ to HOME", async () => {
+    vi.stubEnv("HOME", tmp);
+    await fs.writeFile(path.join(tmp, "home.png"), "home-bytes");
+
+    expect(await loadInputImage("~/home.png", GEMINI)).toEqual({
+      data: Buffer.from("home-bytes").toString("base64"),
+      mimeType: "image/png",
+    });
+  });
+
+  it.each(["image/jpeg; charset=utf-8", "IMAGE/JPEG"])(
+    "reads a fetched content-type of '%s' as image/jpeg",
+    async (header) => {
+      const bytes = Buffer.from("remote-bytes");
+      const fetchMock = stubFetch(
+        new Response(bytes, { status: 200, headers: { "content-type": header } })
+      );
+
+      const image = await loadInputImage("https://example.com/pic.jpg", GEMINI);
+
+      expect(image).toEqual({ data: bytes.toString("base64"), mimeType: "image/jpeg" });
+      // Without a timeout a hung server would hang the tool call.
+      expect(fetchMock).toHaveBeenCalledWith("https://example.com/pic.jpg", {
+        signal: expect.any(AbortSignal),
+      });
+    }
+  );
+
+  it("rejects a fetched image whose response reports no content-type", async () => {
+    stubFetch(new Response(Buffer.from("remote-bytes"), { status: 200 }));
+
+    await expect(loadInputImage("https://example.com/pic", GEMINI)).rejects.toThrowError(
+      expect.objectContaining({
+        type: ErrorType.INVALID_IMAGE_PATH,
+        message: `Error: Cannot determine the image type of 'https://example.com/pic' because the server did not report a content-type. Supported input formats for 'gemini-3.1-flash-image' (Nano Banana 2): ${GEMINI_FORMATS}. Rename or convert the image.`,
+      })
     );
-    vi.stubGlobal("fetch", fetchMock);
+  });
 
-    const image = await loadImage("https://example.com/pic.webp", MAX_BYTES);
+  it("rejects an oversize content-length before reading the body", async () => {
+    // Reading this body fails with its own error, so seeing IMAGE_TOO_LARGE is
+    // the proof that nothing read it.
+    const poisoned = new ReadableStream({
+      start(controller) {
+        controller.error(new Error("the body must not be read"));
+      },
+    });
+    stubFetch(
+      new Response(poisoned, {
+        status: 200,
+        headers: {
+          "content-type": "image/png",
+          "content-length": String(GEMINI_LIMIT + 1),
+        },
+      })
+    );
 
-    expect(fetchMock).toHaveBeenCalledWith("https://example.com/pic.webp");
-    expect(image).toEqual({ data: bytes.toString("base64"), mimeType: "image/webp" });
+    await expect(loadInputImage("https://example.com/big.png", GEMINI)).rejects.toThrowError(
+      expect.objectContaining({
+        type: ErrorType.IMAGE_TOO_LARGE,
+        message: expect.stringContaining("above the 7MB limit for 'gemini-3.1-flash-image'"),
+      })
+    );
+  });
+
+  it("stops a body that passes the limit even when nothing declared its size", async () => {
+    const megabyte = Buffer.alloc(1024 * 1024);
+    stubFetch(
+      new Response(chunkedBody(Array.from({ length: 8 }, () => megabyte)), {
+        status: 200,
+        headers: { "content-type": "image/png" },
+      })
+    );
+
+    await expect(loadInputImage("https://example.com/lying.png", GEMINI)).rejects.toThrowError(
+      expect.objectContaining({
+        type: ErrorType.IMAGE_TOO_LARGE,
+        message: expect.stringContaining("above the 7MB limit"),
+      })
+    );
+  });
+
+  it("returns a chunked body that stays within the limit", async () => {
+    const chunks = [Buffer.from("first-"), Buffer.from("second")];
+    stubFetch(
+      new Response(chunkedBody(chunks), {
+        status: 200,
+        headers: { "content-type": "image/png" },
+      })
+    );
+
+    const image = await loadInputImage("https://example.com/ok.png", GEMINI);
+
+    expect(Buffer.from(image.data, "base64").toString()).toBe("first-second");
   });
 
   it("reports a non-OK HTTP response as INVALID_IMAGE_PATH with the status code", async () => {
-    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response("nope", { status: 404 })));
+    stubFetch(new Response("nope", { status: 404 }));
 
-    await expect(loadImage("https://example.com/missing.png", MAX_BYTES)).rejects.toThrowError(
+    await expect(loadInputImage("https://example.com/missing.png", GEMINI)).rejects.toThrowError(
       expect.objectContaining({
         type: ErrorType.INVALID_IMAGE_PATH,
         message: expect.stringContaining("status 404"),
@@ -149,7 +288,7 @@ describe("loadImage", () => {
     const fetchMock = vi.fn();
     vi.stubGlobal("fetch", fetchMock);
 
-    await expect(loadImage("file:///etc/hosts", MAX_BYTES)).rejects.toThrowError(
+    await expect(loadInputImage("file:///etc/hosts", GEMINI)).rejects.toThrowError(
       expect.objectContaining({ type: ErrorType.INVALID_IMAGE_PATH })
     );
     expect(fetchMock).not.toHaveBeenCalled();

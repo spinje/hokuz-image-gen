@@ -341,8 +341,14 @@ You've made too many requests. Wait a few minutes before trying again. OpenAI ti
 ### "Image file not found"
 Verify the image path is correct. Use absolute paths or paths relative to home (`~/`).
 
-### "Image at … is …MB, above the …MB limit for the selected model"
-Each input image must fit the selected model's limit: 7 MB on Gemini models, 50 MB on OpenAI models. Resize the image, or choose a model with a larger limit.
+### "Image at … is …MB, above the …MB limit for '…'"
+Each input image must fit the selected model's limit: 7 MB on Gemini models, 50 MB on OpenAI models. The size is checked before the file is read (and, for a URL, before the body is downloaded). Resize the image, or use an OpenAI model.
+
+### "Cannot determine the image type of …"
+Local inputs are typed by their file extension, URLs by the response's `content-type` header. When neither says what the file is, the request stops rather than guessing — a guess would hide exactly the files the format check exists to catch. Rename the file to its real extension (`.jpg`, `.png`, `.webp`, `.gif`, `.heic`, `.heif`), or, for a URL that serves no `content-type`, download the image and pass a local path.
+
+### "Could not fetch image from …"
+The server could not read the URL: a non-OK status, a connection failure, or no response within 30 seconds. Check the URL, or download the image and pass a local path.
 
 ## License
 

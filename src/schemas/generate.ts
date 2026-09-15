@@ -90,7 +90,7 @@ export const GenerateImageInputSchema = z
       .optional()
       .describe(
         "OpenAI models only. true renders a transparent background; requires output_format png or " +
-          "webp. Gemini models reject this option."
+          "webp. Gemini models reject `true`."
       ),
 
     num_images: z
