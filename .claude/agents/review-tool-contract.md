@@ -27,7 +27,7 @@ Follow `.claude/agents/REVIEW-PROTOCOL.md` (read it first). Lens-specifics on to
 | Surface | Where | Generated or hand-maintained |
 |---|---|---|
 | Zod input schema + `.describe()` | `src/schemas/generate.ts`, `src/schemas/edit.ts` | hand |
-| Published JSON Schema (enums, `default`, `required`) | derived by the MCP SDK from the Zod schema | generated — but `.default()` decides `required`; dropping it makes the field required |
+| Published JSON Schema (enums, `default`, `required`) | derived by the MCP SDK from the Zod schema | generated — but `.default()` decides `required`; dropping it makes the field required unless it is `.optional()` (gotcha 8) |
 | Handler defaults (`params.x ?? DEFAULTS.x`) | `src/tools/generate-image.ts`, `src/tools/edit-image.ts` | hand |
 | `TOOL_DESCRIPTION` template (Args list, model guidance with speed/cost) | top of each tool file | hand |
 | Output Zod schema vs what the handler actually returns | `src/schemas/*.ts` vs the `output` object in each handler | hand, both sides |
@@ -47,7 +47,7 @@ Follow `.claude/agents/REVIEW-PROTOCOL.md` (read it first). Lens-specifics on to
 For every parameter the diff touches: same option list in the Zod enum, the `.describe()` text, the `TOOL_DESCRIPTION` Args line, and the README row? Same default in `.default()`, `DEFAULTS`, the handler's `??`, and the prose? A default that exists in one place and not another is a finding — the SDK applies `.default()`, so the handler's fallback is only defence in depth, but the DESCRIPTION is what the LLM reads.
 
 ### 2. Published Shape
-Does the change alter what `listTools` returns — a new field, a changed `required` list, a changed enum? If so, is that intended, and is the contract test updated? A field that lost `.default()` becomes required and every existing caller that omits it now gets an `isError` result.
+Does the change alter what `listTools` returns — a new field, a changed `required` list, a changed enum? If so, is that intended, and is the contract test updated? A field that lost `.default()` becomes required — unless it is `.optional()` (gotcha 8) — and every existing caller that omits it now gets an `isError` result.
 
 ### 3. Output Schema Truthfulness
 Does the output Zod schema describe what the handler actually returns, no more and no less? Optional fields that are never populated, and populated fields missing from the schema, are both findings (the SDK validates `structuredContent` on success — a missing field fails the call).
