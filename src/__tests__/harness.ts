@@ -23,7 +23,7 @@ export async function connectTestClient(): Promise<{
   const server = createServer();
   await server.connect(serverTransport);
 
-  const client = new Client({ name: "nanobanana-test-client", version: "0.0.0" });
+  const client = new Client({ name: "hokuz-test-client", version: "0.0.0" });
   await client.connect(clientTransport);
 
   return {

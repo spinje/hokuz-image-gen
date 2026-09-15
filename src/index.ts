@@ -1,13 +1,11 @@
 #!/usr/bin/env node
 /**
- * Nano Banana MCP Server
- *
  * An MCP server for generating and editing images using the Nano Banana
  * family of Google Gemini image models (Nano Banana 2 / 2 Lite / Pro).
  *
  * Tools:
- * - nanobanana_generate_image: Generate images from text prompts
- * - nanobanana_edit_image: Edit existing images using text instructions
+ * - hokuz_generate_image: Generate images from text prompts
+ * - hokuz_edit_image: Edit existing images using text instructions
  *
  * Environment Variables:
  * - GEMINI_API_KEY (preferred) or GOOGLE_API_KEY: Your Google AI Studio API key
@@ -48,8 +46,8 @@ async function main(): Promise<void> {
   // Log to stderr (stdout is reserved for MCP protocol)
   console.error(`${SERVER_NAME} v${SERVER_VERSION} running via stdio`);
   console.error("Tools available:");
-  console.error("  - nanobanana_generate_image: Generate images from text prompts");
-  console.error("  - nanobanana_edit_image: Edit images using text instructions");
+  console.error("  - hokuz_generate_image: Generate images from text prompts");
+  console.error("  - hokuz_edit_image: Edit images using text instructions");
 }
 
 // Run the server

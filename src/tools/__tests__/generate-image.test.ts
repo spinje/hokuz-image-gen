@@ -14,7 +14,7 @@ vi.mock("../../services/gemini-client.js", async (importOriginal) => {
 
 const { connectTestClient, firstText } = await import("../../__tests__/harness.js");
 
-const TOOL = "nanobanana_generate_image";
+const TOOL = "hokuz_generate_image";
 const IMG = Buffer.from("fake-jpeg-bytes").toString("base64");
 const okResponse = (description?: string) => ({
   images: [{ data: IMG, mimeType: "image/jpeg" }],
@@ -26,7 +26,7 @@ let harness: Awaited<ReturnType<typeof connectTestClient>>;
 
 beforeEach(async () => {
   generateMock.mockReset();
-  tmp = await fs.mkdtemp(path.join(os.tmpdir(), "nanobanana-gen-"));
+  tmp = await fs.mkdtemp(path.join(os.tmpdir(), "hokuz-gen-"));
   harness = await connectTestClient();
 });
 

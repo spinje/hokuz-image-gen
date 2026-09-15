@@ -78,9 +78,9 @@ Examples:
  */
 export function registerGenerateImageTool(server: McpServer): void {
   server.registerTool(
-    "nanobanana_generate_image",
+    "hokuz_generate_image",
     {
-      title: "Generate Image with Nano Banana",
+      title: "Generate Image",
       description: TOOL_DESCRIPTION,
       inputSchema: GenerateImageInputSchema,
       outputSchema: GenerateImageOutputSchema,

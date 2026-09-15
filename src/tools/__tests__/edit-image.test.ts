@@ -13,7 +13,7 @@ vi.mock("../../services/gemini-client.js", async (importOriginal) => {
 
 const { connectTestClient, firstText } = await import("../../__tests__/harness.js");
 
-const TOOL = "nanobanana_edit_image";
+const TOOL = "hokuz_edit_image";
 const OUT = Buffer.from("edited-bytes").toString("base64");
 
 let tmp: string;
@@ -24,7 +24,7 @@ let second: string;
 beforeEach(async () => {
   editMock.mockReset();
   editMock.mockResolvedValue({ images: [{ data: OUT, mimeType: "image/jpeg" }] });
-  tmp = await fs.mkdtemp(path.join(os.tmpdir(), "nanobanana-edit-"));
+  tmp = await fs.mkdtemp(path.join(os.tmpdir(), "hokuz-edit-"));
   first = path.join(tmp, "first.png");
   second = path.join(tmp, "second.webp");
   await fs.writeFile(first, "first-image");
