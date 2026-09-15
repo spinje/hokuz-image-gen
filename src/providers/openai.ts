@@ -10,6 +10,7 @@
 import OpenAI, { APIError, toFile } from "openai";
 import type { ImagesResponse } from "openai/resources/images";
 import {
+  DEFAULTS,
   ENV_VARS,
   MIME_TYPES,
   OPENAI_PRICE_PER_MILLION_TOKENS,
@@ -47,10 +48,18 @@ export function openaiSize(config: GenerationConfig): string {
   if (!config.aspectRatio) return "auto";
 
   const [w, h] = config.aspectRatio.split(":").map(Number);
-  const area = RESOLUTION_PIXEL_AREA[config.resolution];
+  const area = RESOLUTION_PIXEL_AREA[config.resolution ?? DEFAULTS.resolution];
   const to16 = (value: number) => Math.round(value / 16) * 16;
 
   return `${to16(Math.sqrt((area * w) / h))}x${to16(Math.sqrt((area * h) / w))}`;
+}
+
+/** Human-readable provider name, for the startup banner. */
+export const label = "OpenAI (GPT Image 2.5)";
+
+/** Whether this provider can be used at all; never throws. */
+export function hasApiKey(): boolean {
+  return Boolean(process.env[ENV_VARS.openaiApiKey]);
 }
 
 /**
@@ -94,7 +103,7 @@ function buildCommonParams(config: GenerationConfig) {
     model: config.model,
     n: 1,
     size: openaiSize(config),
-    quality: config.quality,
+    quality: config.quality ?? DEFAULTS.quality,
     output_format: config.outputFormat,
     background: "opaque" as const,
   };
@@ -105,7 +114,8 @@ function buildCommonParams(config: GenerationConfig) {
  * so this is arithmetic over the hand-maintained price table, not a quote.
  */
 function toUsageReport(usage: ImagesResponse["usage"]): UsageReport | undefined {
-  if (!usage) return undefined;
+  // No breakdown means no cost estimate; the image itself is still returned.
+  if (!usage?.input_tokens_details) return undefined;
 
   const { text_tokens, image_tokens } = usage.input_tokens_details;
   const estimatedCostUsd =
@@ -164,15 +174,19 @@ export async function generateImage(
 ): Promise<ImageResponse> {
   const client = getClient(config.model);
 
+  // Only the SDK call is mapped by handleApiError; parsing raises its own
+  // McpErrors and must not be relabelled as a request failure.
+  let response: ImagesResponse;
   try {
-    const response = await client.images.generate({
+    response = await client.images.generate({
       ...buildCommonParams(config),
       prompt,
     });
-    return parseImagesResponse(response, config);
   } catch (error) {
-    return handleApiError(error, config.model, false);
+    handleApiError(error, config.model, false);
   }
+
+  return parseImagesResponse(response, config);
 }
 
 /**
@@ -188,26 +202,28 @@ export async function editImage(
 ): Promise<ImageResponse> {
   const client = getClient(config.model);
 
-  try {
-    const image = await Promise.all(
-      inputImages.map((input, index) =>
-        toFile(
-          Buffer.from(input.data, "base64"),
-          `image-${index + 1}.${input.mimeType.split("/")[1] ?? "png"}`,
-          { type: input.mimeType }
-        )
+  const image = await Promise.all(
+    inputImages.map((input, index) =>
+      toFile(
+        Buffer.from(input.data, "base64"),
+        `image-${index + 1}.${input.mimeType.split("/")[1] ?? "png"}`,
+        { type: input.mimeType }
       )
-    );
+    )
+  );
 
-    const response = await client.images.edit({
+  let response: ImagesResponse;
+  try {
+    response = await client.images.edit({
       ...buildCommonParams(config),
       prompt,
       image,
     });
-    return parseImagesResponse(response, config);
   } catch (error) {
-    return handleApiError(error, config.model, true);
+    handleApiError(error, config.model, true);
   }
+
+  return parseImagesResponse(response, config);
 }
 
 /** The error body fields we read beyond what APIError exposes directly. */
@@ -236,7 +252,7 @@ function handleApiError(
     const message = error instanceof Error ? error.message : String(error);
     throw new McpError(
       ErrorType.API_ERROR,
-      `Error: OpenAI request failed (network): ${message}. Retry; if it persists, try the other provider.`,
+      `Error: OpenAI request failed: ${message}. Retry; if it persists, try the other provider.`,
       error
     );
   }

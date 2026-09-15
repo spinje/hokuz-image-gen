@@ -46,11 +46,13 @@ describe(TOOL, () => {
 
     expect(result.isError).toBeFalsy();
     expect(generateMock).toHaveBeenCalledTimes(1);
+    // temperature and quality have no schema default: the provider that owns
+    // the option applies its own, so the config carries neither.
     expect(generateMock).toHaveBeenCalledWith("a lake", {
       model: DEFAULTS.model,
       aspectRatio: DEFAULTS.aspectRatio,
       resolution: DEFAULTS.resolution,
-      temperature: DEFAULTS.temperature,
+      temperature: undefined,
       outputFormat: DEFAULTS.outputFormat,
       quality: undefined,
     });
@@ -190,13 +192,14 @@ describe(TOOL, () => {
     expect(generateMock).not.toHaveBeenCalled();
   });
 
-  it("applies each provider's own optional defaults and omits the other's", async () => {
+  it("passes a provider-specific option through untouched, defaulting neither", async () => {
     generateMock.mockResolvedValue(okResponse());
 
     await harness.callTool(TOOL, {
       prompt: "p",
       output_path: tmp,
       model: "gpt-image-2.5-flare",
+      quality: "high",
     });
 
     expect(generateMock.mock.calls[0][1]).toEqual({
@@ -204,7 +207,7 @@ describe(TOOL, () => {
       aspectRatio: DEFAULTS.aspectRatio,
       resolution: DEFAULTS.resolution,
       outputFormat: DEFAULTS.outputFormat,
-      quality: DEFAULTS.quality,
+      quality: "high",
       temperature: undefined,
     });
   });

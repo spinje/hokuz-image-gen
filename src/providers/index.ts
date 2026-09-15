@@ -6,7 +6,6 @@
  */
 
 import {
-  ENV_VARS,
   IMAGE_MODEL_CAPABILITIES,
   getUnsupportedModelOptionMessage,
   type ImageModel,
@@ -38,8 +37,32 @@ export function validateGenerationConfig(config: GenerationConfig): void {
   }
 }
 
-function providerFor(model: ImageModel) {
-  return IMAGE_MODEL_CAPABILITIES[model].provider === "openai" ? openai : gemini;
+/**
+ * What every provider module exports. Adding a provider is a `Provider` union
+ * member plus one entry in the table below.
+ */
+export interface ProviderModule {
+  /** Human-readable name, for the startup banner. */
+  label: string;
+  /** Whether this provider's API key is set; never throws. */
+  hasApiKey(): boolean;
+  generateImage(prompt: string, config: GenerationConfig): Promise<ImageResponse>;
+  editImage(
+    prompt: string,
+    inputImages: InputImage[],
+    config: GenerationConfig
+  ): Promise<ImageResponse>;
+}
+
+const PROVIDERS: Record<Provider, ProviderModule> = { google: gemini, openai };
+
+function providerFor(model: ImageModel): ProviderModule {
+  return PROVIDERS[IMAGE_MODEL_CAPABILITIES[model].provider];
+}
+
+/** Human-readable name of a provider. */
+export function providerLabel(provider: Provider): string {
+  return PROVIDERS[provider].label;
 }
 
 /**
@@ -70,12 +93,6 @@ export async function editImage(
  * start with none, and names the enabled ones in its startup banner.
  */
 export function enabledProviders(): Provider[] {
-  const enabled: Provider[] = [];
-  if (process.env[ENV_VARS.geminiApiKey] || process.env[ENV_VARS.googleApiKey]) {
-    enabled.push("google");
-  }
-  if (process.env[ENV_VARS.openaiApiKey]) {
-    enabled.push("openai");
-  }
-  return enabled;
+  const providers = Object.keys(PROVIDERS) as Provider[];
+  return providers.filter((provider) => PROVIDERS[provider].hasApiKey());
 }

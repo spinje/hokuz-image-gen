@@ -133,6 +133,20 @@ describe("generateImage request shape", () => {
     const { response_format } = createMock.mock.calls[0][0];
     expect(response_format).not.toHaveProperty("aspect_ratio");
   });
+
+  it("applies its own defaults when the config carries no resolution or temperature", async () => {
+    createMock.mockResolvedValue({ output_image: { data: IMG_A } });
+
+    await generateImage("a prompt", {
+      ...baseConfig,
+      resolution: undefined,
+      temperature: undefined,
+    });
+
+    const request = createMock.mock.calls[0][0];
+    expect(request.response_format.image_size).toBe("1K");
+    expect(request.generation_config).toEqual({ temperature: 1 });
+  });
 });
 
 describe("editImage request shape", () => {
@@ -154,6 +168,20 @@ describe("editImage request shape", () => {
       { type: "image", mime_type: "image/webp", data: IMG_B },
       { type: "text", text: "make it blue" },
     ]);
+  });
+
+  it("applies its own defaults too, so edit 'auto' still asks for 1K", async () => {
+    createMock.mockResolvedValue({ output_image: { data: IMG_A } });
+
+    await editImage(
+      "make it blue",
+      [{ data: IMG_A, mimeType: "image/png" }],
+      { ...baseConfig, aspectRatio: undefined, resolution: undefined, temperature: undefined }
+    );
+
+    const request = createMock.mock.calls[0][0];
+    expect(request.response_format.image_size).toBe("1K");
+    expect(request.generation_config).toEqual({ temperature: 1 });
   });
 });
 

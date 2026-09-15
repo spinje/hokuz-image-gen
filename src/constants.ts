@@ -69,17 +69,6 @@ export const RESOLUTIONS = ["0.5K", "1K", "2K", "4K"] as const;
 export type Resolution = (typeof RESOLUTIONS)[number];
 
 /**
- * Maps a public resolution token to the Gemini API `image_size` value.
- * The Interactions API uses "512" rather than "0.5K".
- */
-export const IMAGE_SIZE_API_VALUES: Record<Resolution, string> = {
-  "0.5K": "512",
-  "1K": "1K",
-  "2K": "2K",
-  "4K": "4K",
-} as const;
-
-/**
  * OpenAI quality ladder. Cost and latency rise steeply across it; the schema
  * `.describe()` string carries the numbers a caller needs to choose.
  *
@@ -109,9 +98,9 @@ export const DEFAULTS = {
   resolution: "1K" as Resolution,
   outputFormat: "jpeg" as OutputFormat,
   numImages: 1,
-  /** Applied by the handler for models that accept temperature (Gemini). */
+  /** Applied by the Gemini provider when the config carries no temperature. */
   temperature: 1.0,
-  /** Applied by the handler for models that accept quality (OpenAI). */
+  /** Applied by the OpenAI provider when the config carries no quality. */
   quality: "medium" as Quality,
 } as const;
 
@@ -260,7 +249,8 @@ export const IMAGE_MODEL_CAPABILITIES: Record<ImageModel, ImageModelCapabilities
  */
 export function getUnsupportedModelOptionMessage(args: {
   model: ImageModel;
-  resolution: Resolution;
+  /** Undefined means "not asked for"; the provider applies its own default. */
+  resolution?: Resolution;
   aspectRatio?: AspectRatio;
   quality?: Quality;
   temperature?: number;
@@ -268,7 +258,7 @@ export function getUnsupportedModelOptionMessage(args: {
   const caps = IMAGE_MODEL_CAPABILITIES[args.model];
   const who = `Model '${args.model}' (${caps.label})`;
 
-  if (!caps.resolutions.includes(args.resolution)) {
+  if (args.resolution !== undefined && !caps.resolutions.includes(args.resolution)) {
     return `Error: ${who} does not support resolution '${args.resolution}'. Supported resolutions: ${caps.resolutions.join(", ")}. Choose one of those, or a model that supports '${args.resolution}'.`;
   }
 
@@ -276,8 +266,21 @@ export function getUnsupportedModelOptionMessage(args: {
     return `Error: ${who} does not support aspect ratio '${args.aspectRatio}'. Supported aspect ratios: ${caps.aspectRatios.join(", ")}. Choose one of those, or a model that supports '${args.aspectRatio}'.`;
   }
 
-  if (args.quality !== undefined && caps.qualities.length === 0) {
-    return `Error: ${who} does not accept 'quality'; it is an OpenAI-only option. Omit it, or use gpt-image-2.5-flare / gpt-image-2.5-sunburst.`;
+  // OpenAI derives the pixel size from the aspect ratio; without one it sends
+  // size: "auto" and the resolution could not be applied, so say so instead.
+  if (
+    caps.provider === "openai" &&
+    args.aspectRatio === undefined &&
+    args.resolution !== undefined
+  ) {
+    return `Error: ${who} cannot apply resolution '${args.resolution}' when aspect_ratio is 'auto' because the provider chooses the output size. Set an aspect_ratio to control the size, or omit resolution.`;
+  }
+
+  if (args.quality !== undefined && !caps.qualities.includes(args.quality)) {
+    if (caps.qualities.length === 0) {
+      return `Error: ${who} does not accept 'quality'; it is an OpenAI-only option. Omit it, or use gpt-image-2.5-flare / gpt-image-2.5-sunburst.`;
+    }
+    return `Error: ${who} does not support quality '${args.quality}'. Supported qualities: ${caps.qualities.join(", ")}.`;
   }
 
   if (args.temperature !== undefined && !caps.supportsTemperature) {

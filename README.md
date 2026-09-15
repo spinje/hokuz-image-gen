@@ -191,8 +191,8 @@ Edit existing images using text instructions.
 | `image_paths` | string[] | Yes | - | Array of image paths or URLs (1-14 images, 7 MB each), in prompt order ("first image" / "second image") |
 | `output_path` | string | Yes | - | File path to save result (directory or full path). Any extension is normalized to `.jpg` |
 | `model` | string | No | `"gemini-3.1-flash-image"` | Model ID: `gemini-3.1-flash-image`, `gemini-3.1-flash-lite-image`, `gemini-3-pro-image`, `gpt-image-2.5-flare`, `gpt-image-2.5-sunburst` |
-| `aspect_ratio` | string | No | `"auto"` | `auto` (preserve original) or any generate ratio. On OpenAI models `auto` lets the provider choose the size, and `resolution` is not applied. Rejected if unsupported by the chosen model |
-| `resolution` | string | No | `"1K"` | `0.5K`, `1K`, `2K`, `4K`. Rejected if unsupported by the chosen model (Lite is `1K` only; Pro is `1K`/`2K`/`4K`; OpenAI models are `1K`/`2K`, where `1K` ≈ 1 megapixel and `2K` ≈ 4, derived from `aspect_ratio`) |
+| `aspect_ratio` | string | No | `"auto"` | `auto` (preserve original) or any generate ratio. On OpenAI models `auto` lets the provider choose the output size, so set a ratio to control it. Rejected if unsupported by the chosen model |
+| `resolution` | string | No | `1K` (applied by the provider) | `0.5K`, `1K`, `2K`, `4K`. Rejected if unsupported by the chosen model (Lite is `1K` only; Pro is `1K`/`2K`/`4K`; OpenAI models are `1K`/`2K`, where `1K` ≈ 1 megapixel and `2K` ≈ 4, derived from `aspect_ratio`). No schema default here: on an OpenAI model it needs an explicit `aspect_ratio`, and `auto` plus a resolution is rejected |
 | `output_format` | string | No | `"jpeg"` | Only `jpeg` is supported (every model outputs JPEG) |
 | `quality` | string | No | `"medium"` (OpenAI models) | **OpenAI models only.** `low`, `medium`, `high`, `xhigh`, `max` — see the [cost table](#performance--cost). Rejected on Gemini models |
 | `num_images` | number | No | `1` | Number of variations (1-4). Produced via repeated requests |
@@ -301,6 +301,9 @@ The requested option is not valid for the chosen model, and the request is rejec
 
 ### "Model … does not accept 'quality'" / "does not accept 'temperature'"
 `quality` is OpenAI-only and `temperature` is Gemini-only. Omit the option, or switch to a model of the other provider. Neither has a schema default, so an option only reaches the request when you send it.
+
+### "Model … cannot apply resolution … when aspect_ratio is 'auto'"
+On OpenAI models the pixel size is derived from `aspect_ratio`, and `auto` (the `hokuz_edit_image` default) hands the choice to the provider, so a `resolution` could not be honoured. Set an `aspect_ratio` to control the size, or omit `resolution`. Gemini models apply `resolution` whatever the ratio.
 
 ### "OpenAI denied access (403)"
 GPT Image models may require organisation verification in the [OpenAI dashboard](https://platform.openai.com/settings/organization/general). Until that clears, use a Gemini model.

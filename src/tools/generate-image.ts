@@ -20,11 +20,12 @@ import {
 } from "../services/file-utils.js";
 import {
   McpError,
+  sumUsage,
   type GeneratedImage,
   type GenerationConfig,
   type UsageReport,
 } from "../types.js";
-import { DEFAULTS, IMAGE_MODEL_CAPABILITIES } from "../constants.js";
+import { DEFAULTS } from "../constants.js";
 
 /**
  * Tool description for LLM discoverability
@@ -90,24 +91,16 @@ export function registerGenerateImageTool(server: McpServer): void {
           params.output_format
         );
 
-        // Provider-specific options carry no schema default, so an explicit
-        // value reaches validation on a model that rejects it. The default is
-        // applied here, only for models that accept the option.
-        const caps = IMAGE_MODEL_CAPABILITIES[model];
-        const temperature =
-          params.temperature ??
-          (caps.supportsTemperature ? DEFAULTS.temperature : undefined);
-        const quality =
-          params.quality ??
-          (caps.qualities.length > 0 ? DEFAULTS.quality : undefined);
-
+        // Provider-specific options carry no schema default and are passed
+        // through as given: the provider that owns the option applies its own
+        // default, so an option the caller did not ask for stays undefined.
         const config: GenerationConfig = {
           model,
           aspectRatio,
           resolution,
           outputFormat,
-          temperature,
-          quality,
+          temperature: params.temperature,
+          quality: params.quality,
         };
 
         // Validate model options before any API call (fail fast, no downgrades)
@@ -117,7 +110,7 @@ export function registerGenerateImageTool(server: McpServer): void {
         // asking for one image. Stop once we have enough.
         const collected: GeneratedImage[] = [];
         const descriptions: string[] = [];
-        let usage: UsageReport | undefined;
+        const usages: UsageReport[] = [];
         let failureReason: string | undefined;
         for (
           let attempt = 0;
@@ -128,14 +121,7 @@ export function registerGenerateImageTool(server: McpServer): void {
             const response = await generateImage(params.prompt, config);
             collected.push(...response.images);
             if (response.description) descriptions.push(response.description);
-            if (response.usage) {
-              usage = {
-                inputTokens: (usage?.inputTokens ?? 0) + response.usage.inputTokens,
-                outputTokens: (usage?.outputTokens ?? 0) + response.usage.outputTokens,
-                estimatedCostUsd:
-                  (usage?.estimatedCostUsd ?? 0) + response.usage.estimatedCostUsd,
-              };
-            }
+            if (response.usage) usages.push(response.usage);
           } catch (err) {
             // If we have no images yet, surface the error. Otherwise keep what
             // we got and warn that fewer than requested were produced.
@@ -145,6 +131,7 @@ export function registerGenerateImageTool(server: McpServer): void {
           }
         }
 
+        const usage = sumUsage(usages);
         const imagesToSave = collected.slice(0, requestedCount);
 
         // Process the generated images - save to files

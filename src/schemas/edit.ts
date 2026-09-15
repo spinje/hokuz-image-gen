@@ -70,19 +70,22 @@ export const EditImageInputSchema = z
       .default("auto")
       .describe(
         `Aspect ratio. Options: auto, ${ASPECT_RATIOS.join(", ")}. 'auto' keeps the input's ratio (on OpenAI ` +
-          "models the provider then chooses the size and resolution is not applied). The extreme ratios " +
+          "models the provider then chooses the output size, so an explicit resolution is rejected). The extreme ratios " +
           "(1:4, 4:1, 1:8, 8:1) are supported only by gemini-3.1-flash-image; OpenAI models accept the other " +
           "ten. Unsupported combinations are rejected before the API call. Default: auto"
       ),
 
+    // No .default(): see gotcha 8. With one, an explicit resolution could not
+    // be told from a filled-in default, and "auto" would silently ignore it.
     resolution: z
       .enum(RESOLUTIONS)
-      .default(DEFAULTS.resolution)
+      .optional()
       .describe(
-        `Output resolution. Options: ${RESOLUTIONS.join(", ")}. Gemini: Lite is 1K only, Pro is 1K/2K/4K. ` +
-          "OpenAI models: 1K (~1 megapixel) or 2K (~4 megapixels) only; exact pixel size is derived from " +
-          "aspect_ratio and returned in the result. Unsupported model/resolution combinations are rejected " +
-          `before the API call. Default: ${DEFAULTS.resolution}`
+        `Output resolution. Options: ${RESOLUTIONS.join(", ")} per model (Gemini: Lite is 1K only, ` +
+          "Pro is 1K/2K/4K; OpenAI models: 1K or 2K, about 1 and 4 megapixels). Default: " +
+          `${DEFAULTS.resolution}. On OpenAI models with aspect_ratio 'auto' the provider chooses the ` +
+          "output size, so set an aspect_ratio to control the size; combining 'auto' with an explicit " +
+          "resolution is rejected. Unsupported combinations are rejected before the API call."
       ),
 
     output_format: z

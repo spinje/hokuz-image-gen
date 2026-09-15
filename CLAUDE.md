@@ -138,9 +138,15 @@ Anything written to stdout corrupts the JSON-RPC stream. Log with `console.error
 
 When the SDK's schema validation rejects a call, the client receives `{ isError: true, content: [{ text: "Input validation error: ..." }] }`, not a JSON-RPC error. Tests and clients should check `isError`, not expect a rejection.
 
-### 8. Provider-specific options are `.optional()` with **no** schema default
+### 8. Options a handler must not default are `.optional()` with **no** schema default
 
-`quality` (OpenAI) and `temperature` (Gemini) exist for one provider only. They are published `.optional()` with no `.default()`, which is the opposite of gotcha 1's rule for every shared option — deliberately. The handler applies the provider's default itself (`params.x ?? (caps.<axis> ? DEFAULTS.x : undefined)`), so an option only reaches `GenerationConfig` when the caller asked for it or the model accepts it. Without this the handler could not tell "the LLM asked for temperature 0.2 on an OpenAI model" from "the SDK filled the default in", and would have to ignore the request silently. Give such an option a `.default()` and every call to the other provider's models starts failing validation.
+`quality` (OpenAI), `temperature` (Gemini) and edit's `resolution` are published `.optional()` with no `.default()`, which is the opposite of gotcha 1's rule for every shared option — deliberately. The handler passes them through exactly as given and **the provider that owns the option applies its default** (`config.x ?? DEFAULTS.x` in `providers/gemini.ts` / `providers/openai.ts`), so an option reaches the request as a default only where that default is valid. Without this the handler could not tell "the LLM asked for temperature 0.2 on an OpenAI model" from "the SDK filled the default in", and would have to ignore the request silently. The three cases:
+
+- `temperature` on an OpenAI model → rejected, naming the Gemini alternative. Gemini applies `DEFAULTS.temperature` when the config carries none.
+- `quality` on a Gemini model → rejected, naming the OpenAI models. OpenAI applies `DEFAULTS.quality` when the config carries none.
+- edit `resolution` with `aspect_ratio: "auto"` on an OpenAI model → rejected, because the provider derives the pixel size from the ratio and `size: "auto"` would drop the resolution. Generate keeps its `.default("1K")`: it always has a ratio.
+
+Give such an option a `.default()` and every call it cannot apply to starts either failing validation or being silently ignored.
 
 ## Testing
 
@@ -167,13 +173,13 @@ When the SDK's schema validation rejects a call, the client receives `{ isError:
 
 **Parameter:** (1) schema field `z.enum(OPTIONS).default(DEFAULTS.x).describe("...")` — the describe string is read by the LLM, name the options and the default; (2) handler `params.x ?? DEFAULTS.x` into `GenerationConfig`; (3) the provider modules if the request changes; (4) the Args list in **both** `TOOL_DESCRIPTION`s; (5) tests in the same change — the exact request-shape `toEqual` in `providers/__tests__/gemini.test.ts` and `openai.test.ts` will fail until updated, and `server.test.ts` asserts schema defaults; (6) both README parameter tables; (7) `npm run check`.
 
-A parameter only one provider accepts follows gotcha 8 instead: `.optional()` with no `.default()`, a registry axis that says which models take it, a `getUnsupportedModelOptionMessage` branch naming the alternative, and the handler applying the provider's default.
+A parameter only one provider accepts follows gotcha 8 instead: `.optional()` with no `.default()`, a registry axis that says which models take it, a `getUnsupportedModelOptionMessage` branch naming the alternative, and the provider module applying its own default.
 
 **Tool:** `src/schemas/newtool.ts` (`.strict()` input schema, output schema, inferred types) → `src/tools/newtool.ts` (`registerNewTool(server)` with a `hokuz_` name; copy the annotations block and the `catch` → `{ content, structuredContent: { success: false, ... }, isError: true }` pattern from an existing tool) → register in `src/server.ts` and add the banner line in `src/index.ts` → `tools/__tests__/newtool.test.ts` through `connectTestClient()` and the name list in `server.test.ts` → README Tools section → `npm run check`.
 
 ## Provider Modules
 
-`providers/index.ts` is the only entry point tools use. It runs `validateGenerationConfig(config)` (which throws `INVALID_MODEL_OPTION` from `getUnsupportedModelOptionMessage`) and then calls `generateImage` / `editImage` on the module named by `IMAGE_MODEL_CAPABILITIES[config.model].provider`. Both modules export the same two functions with the same signatures and neither validates: adding a third provider is a module plus one registry value, not an interface. `enabledProviders()` lives here too and is what `index.ts` boots on.
+`providers/index.ts` is the only entry point tools use. It runs `validateGenerationConfig(config)` (which throws `INVALID_MODEL_OPTION` from `getUnsupportedModelOptionMessage`) and then calls `generateImage` / `editImage` on the module named by `IMAGE_MODEL_CAPABILITIES[config.model].provider`. One table, `const PROVIDERS: Record<Provider, ProviderModule>`, is the whole dispatch: every module exports `label`, `hasApiKey()`, `generateImage` and `editImage`, and neither validates. `providerLabel(p)` (the startup banner) and `enabledProviders()` (which `index.ts` boots on) are lookups over the same table, so adding a provider is a `Provider` union member plus one table entry. Each module also applies its own defaults for the options it owns (gotcha 8).
 
 ### Gemini (`providers/gemini.ts`)
 
@@ -189,9 +195,9 @@ One singleton `OpenAI` client from `OPENAI_API_KEY`. Both calls send `{ model, p
 
 **Size derivation** (`openaiSize`, exported): OpenAI takes a free-form `WIDTHxHEIGHT`, not a resolution token, so the size is `sqrt(area * w / h) x sqrt(area * h / w)` with each edge rounded to a multiple of 16, where `area` is 1024² for `1K` and 2048² for `2K` (the same "area" reading of the tokens Gemini uses, which is why it does not reproduce OpenAI's 1536x1024 presets). No aspect ratio (edit `auto`) sends `size: "auto"` and the provider picks. The API's own rules — both edges ÷16, aspect within 1:3..3:1, edge ≤ 3840, 655,360..8,294,400 pixels — are swept in the test.
 
-**Response parsing** (`parseImagesResponse`, exported): `data[].b64_json` → images, `size` → `width`/`height` (absent when the response says `auto`), `usage` → `{ inputTokens, outputTokens, estimatedCostUsd }` where the cost is `(text_tokens·5 + image_tokens·8 + output_tokens·30) / 1e6` from `OPENAI_PRICE_PER_MILLION_TOKENS`. No image → `API_ERROR`.
+**Response parsing** (`parseImagesResponse`, exported, and called **outside** the try/catch so its errors are never relabelled as request failures): `data[].b64_json` → images, `size` → `width`/`height` (absent only when the size cannot be parsed; a `size: "auto"` request comes back with the real `WxH`), `usage` → `{ inputTokens, outputTokens, estimatedCostUsd }` where the cost is `(text_tokens·5 + image_tokens·8 + output_tokens·30) / 1e6` from `OPENAI_PRICE_PER_MILLION_TOKENS`. A `usage` without `input_tokens_details` yields no report rather than dropping the image. No image → `API_ERROR`.
 
-**Error mapping** (`handleApiError`): `McpError` pass-through, then `instanceof APIError` with `code === "moderation_blocked"` → `CONTENT_BLOCKED` (message carries the stage and categories), then `status` 401 → `MISSING_API_KEY`, 403/404 → `API_ERROR`, 429 → `API_RATE_LIMIT`, other 4xx → `API_ERROR` (an edit also names the accepted input formats), else a retryable `API_ERROR`. A non-`APIError` is reported as `(network)`.
+**Error mapping** (`handleApiError`): `McpError` pass-through, then `instanceof APIError` with `code === "moderation_blocked"` → `CONTENT_BLOCKED` (message carries the stage and categories), then `status` 401 → `MISSING_API_KEY`, 403/404 → `API_ERROR`, 429 → `API_RATE_LIMIT`, other 4xx → `API_ERROR` (an edit also names the accepted input formats), else a retryable `API_ERROR` (status or `network`). A non-`APIError` — only the SDK call is wrapped — is a retryable `API_ERROR` that quotes the message and claims nothing about its cause.
 
 ## File Utility Patterns
 
@@ -225,9 +231,9 @@ All failures become `McpError(type, message, details?)` with an actionable messa
 ### Adding or updating a model
 
 1. Add the exact ID to `IMAGE_MODELS` and an entry to `IMAGE_MODEL_CAPABILITIES`.
-2. New resolution/aspect tokens go in `RESOLUTIONS` / `ASPECT_RATIOS` (and `IMAGE_SIZE_API_VALUES` for a resolution).
+2. New resolution/aspect tokens go in `RESOLUTIONS` / `ASPECT_RATIOS` (a new resolution also needs its Gemini `image_size` token in `IMAGE_SIZE_API_VALUES` in `providers/gemini.ts`, and its pixel area in `RESOLUTION_PIXEL_AREA` in `providers/openai.ts`).
 3. Smoke-test the ID against that provider's API; IDs are not guaranteed stable.
-4. If the model belongs to a new provider, add it to `Provider`, write `providers/<name>.ts` exporting `generateImage` / `editImage`, extend `providerFor` and `enabledProviders`, and add the key to `ENV_VARS`.
+4. If the model belongs to a new provider, add it to `Provider`, write `providers/<name>.ts` exporting `label`, `hasApiKey`, `generateImage` and `editImage`, add it to the `PROVIDERS` table in `providers/index.ts`, and add the key to `ENV_VARS`.
 5. Update the model enum assertion in `server.test.ts`, the model paragraphs in both `TOOL_DESCRIPTION`s and both schemas' `model.describe()`, and the README model and cost tables. Speed/cost figures are hand-maintained in those four places.
 
 ## Claude's Operating Guidelines

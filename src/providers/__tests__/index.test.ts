@@ -8,11 +8,15 @@ const { geminiGenerate, geminiEdit, openaiGenerate, openaiEdit } = vi.hoisted(()
   openaiEdit: vi.fn(),
 }));
 
-vi.mock("../gemini.js", () => ({
+// Only the two request functions are replaced: the real `label` and
+// `hasApiKey` stay, so the provider table and enabledProviders are exercised.
+vi.mock("../gemini.js", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../gemini.js")>()),
   generateImage: geminiGenerate,
   editImage: geminiEdit,
 }));
-vi.mock("../openai.js", () => ({
+vi.mock("../openai.js", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../openai.js")>()),
   generateImage: openaiGenerate,
   editImage: openaiEdit,
 }));
@@ -79,31 +83,6 @@ describe("validation before dispatch", () => {
     expect(geminiGenerate).not.toHaveBeenCalled();
   });
 
-  it("rejects 'quality' on a Gemini model and names the OpenAI alternative", async () => {
-    await expect(
-      editImage("p", [], { ...geminiConfig, quality: "high" })
-    ).rejects.toThrowError(
-      expect.objectContaining({
-        type: ErrorType.INVALID_MODEL_OPTION,
-        message:
-          "Error: Model 'gemini-3.1-flash-image' (Nano Banana 2) does not accept 'quality'; it is an OpenAI-only option. Omit it, or use gpt-image-2.5-flare / gpt-image-2.5-sunburst.",
-      })
-    );
-    expect(geminiEdit).not.toHaveBeenCalled();
-  });
-
-  it("rejects 'temperature' on an OpenAI model and names the Gemini alternative", async () => {
-    await expect(
-      generateImage("p", { ...openaiConfig, temperature: 0.2 })
-    ).rejects.toThrowError(
-      expect.objectContaining({
-        type: ErrorType.INVALID_MODEL_OPTION,
-        message:
-          "Error: Model 'gpt-image-2.5-flare' (GPT Image 2.5 Flare) does not accept 'temperature'; it is a Gemini-only option. Omit it, or use a gemini-* model.",
-      })
-    );
-    expect(openaiGenerate).not.toHaveBeenCalled();
-  });
 });
 
 describe("enabledProviders", () => {

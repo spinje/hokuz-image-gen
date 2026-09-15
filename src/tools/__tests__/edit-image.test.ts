@@ -3,6 +3,7 @@ import * as fs from "fs/promises";
 import * as os from "os";
 import * as path from "path";
 import { DEFAULTS } from "../../constants.js";
+import { ErrorType, McpError } from "../../types.js";
 
 const { editMock } = vi.hoisted(() => ({ editMock: vi.fn() }));
 
@@ -46,12 +47,14 @@ describe(TOOL, () => {
     });
 
     expect(result.isError).toBeFalsy();
+    // resolution, temperature and quality have no schema default here: each
+    // reaches the service only when the caller asked for it.
     const config = editMock.mock.calls[0][2];
     expect(config).toEqual({
       model: DEFAULTS.model,
       aspectRatio: undefined,
-      resolution: DEFAULTS.resolution,
-      temperature: DEFAULTS.temperature,
+      resolution: undefined,
+      temperature: undefined,
       outputFormat: DEFAULTS.outputFormat,
       quality: undefined,
     });
@@ -121,37 +124,50 @@ describe(TOOL, () => {
     expect(editMock).not.toHaveBeenCalled();
   });
 
-  it("applies each provider's own optional defaults and omits the other's", async () => {
-    await harness.callTool(TOOL, {
+  it("rejects an explicit resolution on an OpenAI model with the default 'auto' ratio", async () => {
+    // With a schema default on resolution the handler could not tell this from
+    // "the caller said nothing", and the 2K would be silently ignored.
+    const result = await harness.callTool(TOOL, {
       prompt: "p",
       image_paths: [first],
       output_path: tmp,
       model: "gpt-image-2.5-flare",
-    });
-
-    expect(editMock.mock.calls[0][2]).toEqual({
-      model: "gpt-image-2.5-flare",
-      aspectRatio: undefined,
-      resolution: DEFAULTS.resolution,
-      outputFormat: DEFAULTS.outputFormat,
-      quality: DEFAULTS.quality,
-      temperature: undefined,
-    });
-  });
-
-  it("rejects an explicit temperature on an OpenAI model before loading any image", async () => {
-    const result = await harness.callTool(TOOL, {
-      prompt: "p",
-      image_paths: [path.join(tmp, "does-not-exist.png")],
-      output_path: tmp,
-      model: "gpt-image-2.5-flare",
-      temperature: 0.2,
+      resolution: "2K",
     });
 
     expect(result.isError).toBe(true);
     expect(firstText(result)).toBe(
-      "Error: Model 'gpt-image-2.5-flare' (GPT Image 2.5 Flare) does not accept 'temperature'; it is a Gemini-only option. Omit it, or use a gemini-* model."
+      "Error: Model 'gpt-image-2.5-flare' (GPT Image 2.5 Flare) cannot apply resolution '2K' when aspect_ratio is 'auto' because the provider chooses the output size. Set an aspect_ratio to control the size, or omit resolution."
     );
     expect(editMock).not.toHaveBeenCalled();
+  });
+
+  it("sums usage across the num_images loop and warns when a later request fails", async () => {
+    editMock
+      .mockResolvedValueOnce({
+        images: [{ data: OUT, mimeType: "image/jpeg" }],
+        usage: { inputTokens: 1039, outputTokens: 229, estimatedCostUsd: 0.0151 },
+      })
+      .mockRejectedValueOnce(
+        new McpError(ErrorType.API_RATE_LIMIT, "Error: Rate limit exceeded.")
+      );
+
+    const result = await harness.callTool(TOOL, {
+      prompt: "p",
+      image_paths: [first],
+      output_path: tmp,
+      num_images: 2,
+    });
+
+    expect(result.isError).toBeFalsy();
+    expect(editMock).toHaveBeenCalledTimes(2);
+    expect(result.structuredContent).toMatchObject({
+      usage: { input_tokens: 1039, output_tokens: 229, estimated_cost_usd: 0.0151 },
+      warning:
+        "Requested 2 image(s) but only 1 were produced. The failed request reported: Error: Rate limit exceeded.",
+    });
+    expect(firstText(result)).toContain(
+      "Warning: Requested 2 image(s) but only 1 were produced. The failed request reported: Error: Rate limit exceeded."
+    );
   });
 });

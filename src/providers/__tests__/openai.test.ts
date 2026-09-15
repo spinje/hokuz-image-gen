@@ -1,7 +1,9 @@
 import { describe, it, expect, beforeEach, vi } from "vitest";
-import { APIError } from "openai";
-import { BASE_ASPECT_RATIOS } from "../../constants.js";
-import { ErrorType, McpError, type GenerationConfig } from "../../types.js";
+import { APIConnectionError, APIError } from "openai";
+import { IMAGE_MODEL_CAPABILITIES } from "../../constants.js";
+import { ErrorType, type GenerationConfig } from "../../types.js";
+
+const FLARE = IMAGE_MODEL_CAPABILITIES["gpt-image-2.5-flare"];
 
 const { generateMock, editMock, ctorMock } = vi.hoisted(() => ({
   generateMock: vi.fn(),
@@ -71,8 +73,8 @@ describe("openaiSize", () => {
   });
 
   it("keeps every supported ratio x resolution inside the API's size rules", () => {
-    for (const aspectRatio of BASE_ASPECT_RATIOS) {
-      for (const resolution of ["1K", "2K"] as const) {
+    for (const aspectRatio of FLARE.aspectRatios) {
+      for (const resolution of FLARE.resolutions) {
         const size = openaiSize({ ...baseConfig, aspectRatio, resolution });
         const [width, height] = size.split("x").map(Number);
         expect({ aspectRatio, resolution, mod: [width % 16, height % 16] }).toEqual({
@@ -105,6 +107,22 @@ describe("generateImage request shape", () => {
       quality: "medium",
       output_format: "jpeg",
       background: "opaque",
+    });
+  });
+
+  it("applies its own defaults when the config carries no quality or resolution", async () => {
+    generateMock.mockResolvedValue(okResponse());
+
+    await generateImage("a prompt", {
+      ...baseConfig,
+      aspectRatio: "1:1",
+      resolution: undefined,
+      quality: undefined,
+    });
+
+    expect(generateMock.mock.calls[0][0]).toMatchObject({
+      size: "1024x1024",
+      quality: "medium",
     });
   });
 });
@@ -167,7 +185,23 @@ describe("response parsing", () => {
     expect(response.usage?.estimatedCostUsd).toBeCloseTo(0.015137, 9);
   });
 
-  it("leaves width and height unset when the provider chose the size", async () => {
+  it("reports the size the provider chose for an edit sent with size 'auto'", async () => {
+    // The live API echoes the real WxH it picked, not the literal "auto".
+    editMock.mockResolvedValue(okResponse({ size: "1668x943" }));
+
+    const [image] = (
+      await editImage("p", [{ data: IMG_A, mimeType: "image/png" }], {
+        ...baseConfig,
+        aspectRatio: undefined,
+        resolution: undefined,
+      })
+    ).images;
+
+    expect(image.width).toBe(1668);
+    expect(image.height).toBe(943);
+  });
+
+  it("leaves width and height unset when the response size cannot be parsed", async () => {
     generateMock.mockResolvedValue(okResponse({ size: "auto" }));
 
     const [image] = (await generateImage("p", baseConfig)).images;
@@ -175,6 +209,17 @@ describe("response parsing", () => {
     expect(image.data).toBe(IMG_A);
     expect(image.width).toBeUndefined();
     expect(image.height).toBeUndefined();
+  });
+
+  it("returns the billed image with usage unknown when the breakdown is missing", async () => {
+    generateMock.mockResolvedValue(
+      okResponse({ usage: { input_tokens: 1039, output_tokens: 229, total_tokens: 1268 } })
+    );
+
+    const response = await generateImage("p", baseConfig);
+
+    expect(response.images).toHaveLength(1);
+    expect(response.usage).toBeUndefined();
   });
 
   it("raises API_ERROR when the response carries no image", async () => {
@@ -252,7 +297,7 @@ describe("API error mapping", () => {
   });
 
   it("maps a connection failure with no status to a retryable API_ERROR", async () => {
-    generateMock.mockRejectedValue(new Error("socket hang up"));
+    generateMock.mockRejectedValue(new APIConnectionError({ message: "socket hang up" }));
 
     await expect(generateImage("p", baseConfig)).rejects.toThrowError(
       expect.objectContaining({
@@ -261,17 +306,14 @@ describe("API error mapping", () => {
           "Error: OpenAI request failed (network): socket hang up. Retry; if it persists, try the other provider.",
       })
     );
-  });
 
-  it("re-throws McpErrors raised inside the request path with their original message", async () => {
-    // parseImagesResponse throws API_ERROR when no image came back. Without the
-    // instanceof guard the heuristics below would rewrap it and lose the text.
-    generateMock.mockResolvedValue(okResponse({ data: undefined }));
-
-    await expect(generateImage("p", baseConfig)).rejects.toSatisfy(
-      (e: unknown) =>
-        e instanceof McpError &&
-        e.message === "Error: OpenAI returned no image for this request. Retry, or rephrase the prompt."
+    // Anything that is not an SDK error at all says only what it knows.
+    generateMock.mockRejectedValue(new Error("boom"));
+    await expect(generateImage("p", baseConfig)).rejects.toThrowError(
+      expect.objectContaining({
+        message:
+          "Error: OpenAI request failed: boom. Retry; if it persists, try the other provider.",
+      })
     );
   });
 });
@@ -292,5 +334,17 @@ describe("API key resolution", () => {
     expect(generateMock).not.toHaveBeenCalled();
 
     vi.stubEnv("OPENAI_API_KEY", "test-key");
+  });
+
+  it("builds the client with OPENAI_API_KEY when it is set", async () => {
+    vi.resetModules();
+    ctorMock.mockReset();
+    vi.stubEnv("OPENAI_API_KEY", "test-key");
+    const { generateImage } = await import("../openai.js");
+    generateMock.mockResolvedValue(okResponse());
+
+    await generateImage("p", baseConfig);
+
+    expect(ctorMock).toHaveBeenCalledWith({ apiKey: "test-key" });
   });
 });

@@ -92,6 +92,9 @@ describe("published tool contract", () => {
     const edit = tools.find((t) => t.name === "hokuz_edit_image")!;
     const editProps = edit.inputSchema.properties as Record<string, { default?: unknown }>;
     expect(editProps.aspect_ratio.default).toBe("auto");
+    // Edit's resolution is optional with no default (gotcha 8): "auto" plus an
+    // explicit resolution is rejected, which a filled-in default would hide.
+    expect(editProps.resolution).not.toHaveProperty("default");
     expect(edit.inputSchema.required).toEqual(["prompt", "image_paths", "output_path"]);
   });
 });

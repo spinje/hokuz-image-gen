@@ -19,15 +19,9 @@
  */
 
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
-import { enabledProviders } from "./providers/index.js";
+import { enabledProviders, providerLabel } from "./providers/index.js";
 import { createServer, SERVER_NAME, SERVER_VERSION } from "./server.js";
 import { ENV_VARS } from "./constants.js";
-
-/** Human-readable name for each provider, for the startup banner. */
-const PROVIDER_LABELS = {
-  google: "Google Gemini (Nano Banana)",
-  openai: "OpenAI (GPT Image 2.5)",
-} as const;
 
 /**
  * Main entry point - runs the server with stdio transport
@@ -53,7 +47,7 @@ async function main(): Promise<void> {
   // Log to stderr (stdout is reserved for MCP protocol)
   console.error(`${SERVER_NAME} v${SERVER_VERSION} running via stdio`);
   console.error(
-    `Providers enabled: ${providers.map((p) => PROVIDER_LABELS[p]).join(", ")}`
+    `Providers enabled: ${providers.map(providerLabel).join(", ")}`
   );
   console.error("Tools available:");
   console.error("  - hokuz_generate_image: Generate images from text prompts");

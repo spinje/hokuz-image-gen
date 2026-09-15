@@ -22,12 +22,13 @@ import {
 } from "../services/file-utils.js";
 import {
   McpError,
+  sumUsage,
   type InputImage,
   type GeneratedImage,
   type GenerationConfig,
   type UsageReport,
 } from "../types.js";
-import { DEFAULTS, IMAGE_MODEL_CAPABILITIES } from "../constants.js";
+import { DEFAULTS } from "../constants.js";
 
 /**
  * Tool description for LLM discoverability
@@ -50,8 +51,8 @@ Args:
   - image_paths (string[], required): 1-14 local file paths or URLs, 7 MB each, in prompt order ("first image"/"second image")
   - output_path (string, required): File path or directory (timestamped name) to save to. Extension is replaced to match output_format
   - model (string, optional): see above. Default: "gemini-3.1-flash-image"
-  - aspect_ratio (string, optional): "auto" (default) keeps the input's ratio; on OpenAI models "auto" lets the provider choose the size and resolution is not applied
-  - resolution (string, optional): "0.5K", "1K", "2K", "4K" per model. Default: "1K"
+  - aspect_ratio (string, optional): "auto" (default) keeps the input's ratio; on OpenAI models "auto" lets the provider choose the output size, so set a ratio to control it
+  - resolution (string, optional): "0.5K", "1K", "2K", "4K" per model. Default: "1K". On OpenAI models it needs an explicit aspect_ratio: "auto" plus a resolution is rejected
   - output_format (string, optional): "jpeg", the only format produced. Default: "jpeg"
   - quality (string, optional, OpenAI only): "low", "medium", "high", "xhigh", "max". Default: "medium"
   - temperature (number, optional, Gemini only): 0.0-2.0. Default: 1.0
@@ -92,31 +93,24 @@ export function registerEditImageTool(server: McpServer): void {
         // "auto" -> omit aspect ratio so the model preserves the native ratio.
         const aspectRatio =
           aspectRatioParam === "auto" ? undefined : aspectRatioParam;
-        const resolution = params.resolution ?? DEFAULTS.resolution;
         const requestedCount = params.num_images ?? DEFAULTS.numImages;
         const outputFormat = resolveRequestedOutputFormat(
           params.output_path,
           params.output_format
         );
 
-        // Provider-specific options carry no schema default, so an explicit
-        // value reaches validation on a model that rejects it. The default is
-        // applied here, only for models that accept the option.
-        const caps = IMAGE_MODEL_CAPABILITIES[model];
-        const temperature =
-          params.temperature ??
-          (caps.supportsTemperature ? DEFAULTS.temperature : undefined);
-        const quality =
-          params.quality ??
-          (caps.qualities.length > 0 ? DEFAULTS.quality : undefined);
-
+        // Provider-specific options carry no schema default and are passed
+        // through as given: the provider that owns the option applies its own
+        // default, so an option the caller did not ask for stays undefined.
         const config: GenerationConfig = {
           model,
           aspectRatio,
-          resolution,
+          // No schema default: "auto" plus an explicit resolution is rejected,
+          // which the handler could not tell from a filled-in default.
+          resolution: params.resolution,
           outputFormat,
-          temperature,
-          quality,
+          temperature: params.temperature,
+          quality: params.quality,
         };
 
         // Validate model options before loading images / any API call (fail fast)
@@ -133,7 +127,7 @@ export function registerEditImageTool(server: McpServer): void {
         // asking for one image. Stop once we have enough.
         const collected: GeneratedImage[] = [];
         const descriptions: string[] = [];
-        let usage: UsageReport | undefined;
+        const usages: UsageReport[] = [];
         let failureReason: string | undefined;
         for (
           let attempt = 0;
@@ -144,14 +138,7 @@ export function registerEditImageTool(server: McpServer): void {
             const response = await editImage(params.prompt, inputImages, config);
             collected.push(...response.images);
             if (response.description) descriptions.push(response.description);
-            if (response.usage) {
-              usage = {
-                inputTokens: (usage?.inputTokens ?? 0) + response.usage.inputTokens,
-                outputTokens: (usage?.outputTokens ?? 0) + response.usage.outputTokens,
-                estimatedCostUsd:
-                  (usage?.estimatedCostUsd ?? 0) + response.usage.estimatedCostUsd,
-              };
-            }
+            if (response.usage) usages.push(response.usage);
           } catch (err) {
             if (collected.length === 0) throw err;
             failureReason = err instanceof Error ? err.message : String(err);
@@ -159,6 +146,7 @@ export function registerEditImageTool(server: McpServer): void {
           }
         }
 
+        const usage = sumUsage(usages);
         const imagesToSave = collected.slice(0, requestedCount);
 
         // Process the generated images - save to files

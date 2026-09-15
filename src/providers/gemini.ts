@@ -7,9 +7,10 @@
 
 import { GoogleGenAI } from "@google/genai";
 import {
+  DEFAULTS,
   ENV_VARS,
   MIME_TYPES,
-  IMAGE_SIZE_API_VALUES,
+  type Resolution,
 } from "../constants.js";
 import {
   type GenerationConfig,
@@ -21,12 +22,37 @@ import {
 } from "../types.js";
 
 /**
- * Get the API key from environment variables.
+ * Maps a public resolution token to the Interactions API `image_size` value,
+ * which uses "512" rather than "0.5K".
+ */
+const IMAGE_SIZE_API_VALUES: Record<Resolution, string> = {
+  "0.5K": "512",
+  "1K": "1K",
+  "2K": "2K",
+  "4K": "4K",
+};
+
+/** Human-readable provider name, for the startup banner. */
+export const label = "Google Gemini (Nano Banana)";
+
+/**
+ * Read the API key from the environment.
  * GEMINI_API_KEY is preferred; GOOGLE_API_KEY is accepted for compatibility.
  */
+function resolveApiKey(): string | undefined {
+  return process.env[ENV_VARS.geminiApiKey] || process.env[ENV_VARS.googleApiKey];
+}
+
+/** Whether this provider can be used at all; never throws. */
+export function hasApiKey(): boolean {
+  return Boolean(resolveApiKey());
+}
+
+/**
+ * Get the API key, or explain which variable to set.
+ */
 function getApiKey(): string {
-  const apiKey =
-    process.env[ENV_VARS.geminiApiKey] || process.env[ENV_VARS.googleApiKey];
+  const apiKey = resolveApiKey();
 
   if (!apiKey) {
     throw new McpError(
@@ -61,11 +87,12 @@ function getClient(): GoogleGenAI {
  *   rejects any other value (verified live: "image/png" returns a 400).
  * - `aspect_ratio` is only included when defined (edit "auto" omits it so the
  *   model preserves the input image's native ratio).
+ * - a config without a resolution gets this provider's default.
  */
 function buildResponseFormat(config: GenerationConfig) {
   return {
     type: "image" as const,
-    image_size: IMAGE_SIZE_API_VALUES[config.resolution],
+    image_size: IMAGE_SIZE_API_VALUES[config.resolution ?? DEFAULTS.resolution],
     mime_type: MIME_TYPES[config.outputFormat] as "image/jpeg",
     ...(config.aspectRatio ? { aspect_ratio: config.aspectRatio } : {}),
   };
@@ -156,7 +183,7 @@ export async function generateImage(
       model: config.model,
       input: prompt,
       response_format: buildResponseFormat(config),
-      generation_config: { temperature: config.temperature },
+      generation_config: { temperature: config.temperature ?? DEFAULTS.temperature },
     });
 
     return parseInteraction(interaction as InteractionLike);
@@ -191,7 +218,7 @@ export async function editImage(
       model: config.model,
       input,
       response_format: buildResponseFormat(config),
-      generation_config: { temperature: config.temperature },
+      generation_config: { temperature: config.temperature ?? DEFAULTS.temperature },
     });
 
     return parseInteraction(interaction as InteractionLike);
