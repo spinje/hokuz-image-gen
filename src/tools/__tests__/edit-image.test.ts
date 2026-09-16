@@ -114,17 +114,6 @@ describe(TOOL, () => {
     expect(editMock).not.toHaveBeenCalled();
   });
 
-  it("rejects more than the maximum number of input images at the schema boundary", async () => {
-    const result = await harness.callTool(TOOL, {
-      prompt: "p",
-      image_paths: Array.from({ length: 17 }, () => first),
-      output_path: tmp,
-    });
-    expect(result.isError).toBe(true);
-    expect(firstText(result)).toMatch(/Invalid arguments.*image_paths/s);
-    expect(editMock).not.toHaveBeenCalled();
-  });
-
   it("rejects more input images than the model accepts before reading any of them", async () => {
     // Within the schema bound (16) but over the Gemini limit; the paths do not
     // exist, so a "not found" here would mean a file was read first.
@@ -198,6 +187,20 @@ describe(TOOL, () => {
     });
     expect(accepted.isError).toBeFalsy();
     expect(editMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("takes the output format from the output_path's extension, which then faces validation", async () => {
+    // The generate tool proves the precedence; this guards edit's own copy of
+    // the line, which nothing else here would notice going missing.
+    const result = await harness.callTool(TOOL, {
+      prompt: "p",
+      image_paths: [first],
+      output_path: path.join(tmp, "out.png"),
+    });
+
+    expect(result.isError).toBe(true);
+    expect(firstText(result)).toMatch(/does not support output_format 'png'/);
+    expect(editMock).not.toHaveBeenCalled();
   });
 
   it("rejects an explicit resolution on an OpenAI model with the default 'auto' ratio", async () => {

@@ -213,7 +213,7 @@ describe(TOOL, () => {
     });
   });
 
-  it("passes a PNG transparent request through and saves the file with that extension", async () => {
+  it("lets an explicit output_format win over the output_path's extension", async () => {
     generateMock.mockResolvedValue(okResponse());
 
     const result = await harness.callTool(TOOL, {
@@ -229,11 +229,43 @@ describe(TOOL, () => {
       outputFormat: "png",
       transparentBackground: true,
     });
-    // The output path's extension follows the format, not what the caller typed.
+    // The saved extension follows the format, not the '.jpg' the caller typed.
     expect(result.structuredContent).toMatchObject({
       images: [{ path: path.join(tmp, "sticker.png"), format: "png" }],
     });
     expect(await fs.readdir(tmp)).toEqual(["sticker.png"]);
+  });
+
+  it("takes the output format from the output_path's extension when none is given", async () => {
+    generateMock.mockResolvedValue(okResponse());
+
+    const result = await harness.callTool(TOOL, {
+      prompt: "a sticker",
+      output_path: path.join(tmp, "logo.png"),
+      model: "gpt-image-2.5-flare",
+      transparent_background: true,
+    });
+
+    expect(result.isError).toBeFalsy();
+    expect(generateMock.mock.calls[0][1]).toMatchObject({ outputFormat: "png" });
+    expect(result.structuredContent).toMatchObject({
+      images: [{ path: path.join(tmp, "logo.png"), format: "png" }],
+    });
+    expect(await fs.readdir(tmp)).toEqual(["logo.png"]);
+  });
+
+  it("rejects a .png output_path on a Gemini model instead of saving a JPEG", async () => {
+    // The inferred format goes through the same validation as an explicit one,
+    // which is the whole point of inferring it.
+    const result = await harness.callTool(TOOL, {
+      prompt: "p",
+      output_path: path.join(tmp, "x.png"),
+    });
+
+    expect(result.isError).toBe(true);
+    expect(firstText(result)).toMatch(/does not support output_format 'png'/);
+    expect(generateMock).not.toHaveBeenCalled();
+    expect(await fs.readdir(tmp)).toEqual([]);
   });
 
   it("rejects png on a Gemini model before calling the provider", async () => {

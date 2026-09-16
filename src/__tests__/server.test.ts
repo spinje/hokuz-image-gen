@@ -1,5 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { createRequire } from "module";
+import { IMAGE_MODELS, QUALITIES } from "../constants.js";
 import { connectTestClient } from "./harness.js";
 
 let harness: Awaited<ReturnType<typeof connectTestClient>>;
@@ -58,6 +59,30 @@ describe("published tool contract", () => {
     }
   });
 
+  it("names every model and every quality level in both descriptions the LLM reads", async () => {
+    // The tool description, the model describe string, the README and this file
+    // are hand-maintained and drift apart silently. This is the mechanical half
+    // of keeping them in sync: a model or quality added to the registry without
+    // a word about it in the text the caller reads fails here.
+    const { tools } = await harness.client.listTools();
+    expect(tools).toHaveLength(2);
+
+    for (const tool of tools) {
+      const modelDescription = (
+        tool.inputSchema.properties as Record<string, { description?: string }>
+      ).model.description;
+
+      for (const model of IMAGE_MODELS) {
+        expect(tool.description).toContain(model);
+        expect(modelDescription).toContain(model);
+      }
+      for (const quality of QUALITIES) {
+        // Word boundaries: "low" is a substring of "follow", "high" of "xhigh".
+        expect(tool.description).toMatch(new RegExp(`\\b${quality}\\b`));
+      }
+    }
+  });
+
   it("publishes optional params with enums and defaults, and only prompt/output_path as required", async () => {
     // The calling LLM sees this JSON Schema, not the Zod source. A regression
     // in Zod -> JSON Schema conversion (e.g. after a Zod major bump) that drops
@@ -81,7 +106,9 @@ describe("published tool contract", () => {
     expect(props.resolution.default).toBe("1K");
     expect(props.num_images.default).toBe(1);
     expect(props.output_format.enum).toEqual(["jpeg", "png", "webp"]);
-    expect(props.output_format.default).toBe("jpeg");
+    // No default: without one the handler can tell an explicit format from a
+    // filled-in default and fall back to the output_path's extension.
+    expect(props.output_format).not.toHaveProperty("default");
     expect(generate.inputSchema.required).toEqual(["prompt", "output_path"]);
 
     // Provider-specific options: published with their enum but no default, so

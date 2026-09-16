@@ -15,7 +15,9 @@ vi.mock("fs/promises", async (importOriginal) => {
   return { ...actual, readFile: readFileSpy };
 });
 
-const { loadInputImage, resolveOutputPath } = await import("../file-utils.js");
+const { inferOutputFormatFromPath, loadInputImage, resolveOutputPath } = await import(
+  "../file-utils.js"
+);
 
 const GEMINI = "gemini-3.1-flash-image" as const;
 const OPENAI = "gpt-image-2.5-flare" as const;
@@ -107,6 +109,60 @@ describe("resolveOutputPath", () => {
     vi.stubEnv("HOME", tmp);
     const resolved = await resolveOutputPath("~/pics/foo.jpg", "jpeg");
     expect(resolved).toBe(path.join(tmp, "pics", "foo.jpg"));
+  });
+
+  it("never overwrites an existing file: -2, then -3", async () => {
+    const base = path.join(tmp, "foo.jpg");
+    await fs.writeFile(base, "already here");
+    expect(await resolveOutputPath(base, "jpeg")).toBe(path.join(tmp, "foo-2.jpg"));
+
+    await fs.writeFile(path.join(tmp, "foo-2.jpg"), "also here");
+    expect(await resolveOutputPath(base, "jpeg")).toBe(path.join(tmp, "foo-3.jpg"));
+
+    // The bytes of the file that was already there are untouched.
+    expect(await fs.readFile(base, "utf8")).toBe("already here");
+  });
+
+  it("continues past an existing file for every image of a num_images call", async () => {
+    const base = path.join(tmp, "foo.jpg");
+    await fs.writeFile(base, "already here");
+
+    const first = await resolveOutputPath(base, "jpeg", 0);
+    expect(first).toBe(path.join(tmp, "foo-2.jpg"));
+    await fs.writeFile(first, "image 1");
+
+    expect(await resolveOutputPath(base, "jpeg", 1)).toBe(path.join(tmp, "foo-3.jpg"));
+  });
+
+  it("skips a taken name in directory mode, so two images of the same millisecond cannot collide", async () => {
+    // The timestamp is the filename, so freezing the clock is what makes the
+    // second call ask for the name the first one took.
+    vi.useFakeTimers();
+    try {
+      const first = await resolveOutputPath(tmp, "jpeg");
+      await fs.writeFile(first, "image 1");
+
+      const second = await resolveOutputPath(tmp, "jpeg");
+      expect(path.basename(second)).toBe(
+        path.basename(first).replace(/\.jpg$/, "-2.jpg")
+      );
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+});
+
+describe("inferOutputFormatFromPath", () => {
+  it.each([
+    ["pic.jpg", "jpeg"],
+    ["pic.jpeg", "jpeg"],
+    ["pic.png", "png"],
+    ["pic.webp", "webp"],
+    ["PIC.PNG", "png"],
+    ["notes.txt", undefined],
+    ["images/", undefined],
+  ])("reads '%s' as %s", (name, format) => {
+    expect(inferOutputFormatFromPath(path.join(tmp, name))).toBe(format);
   });
 });
 

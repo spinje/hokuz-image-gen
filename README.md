@@ -158,11 +158,11 @@ Generate images from text prompts.
 | Parameter | Type | Required | Default | Description |
 |-----------|------|----------|---------|-------------|
 | `prompt` | string | Yes | - | Text description of the image to generate |
-| `output_path` | string | Yes | - | File path to save the image (directory or full path). Any extension is normalized to match `output_format` |
+| `output_path` | string | Yes | - | File path to save the image (directory or full path). Its extension selects `output_format` when that is omitted, and the saved file's extension always matches the format. An existing file is never overwritten: `-2`, `-3`, … is appended |
 | `model` | string | No | `"gemini-3.1-flash-image"` | Model ID: `gemini-3.1-flash-image`, `gemini-3.1-flash-lite-image`, `gemini-3-pro-image`, `gpt-image-2.5-flare`, `gpt-image-2.5-sunburst` |
 | `aspect_ratio` | string | No | `"1:1"` | `1:1`, `2:3`, `3:2`, `3:4`, `4:3`, `4:5`, `5:4`, `9:16`, `16:9`, `21:9`; plus `1:4`, `4:1`, `1:8`, `8:1` (flash only). OpenAI models accept the ten base ratios. Rejected if unsupported by the chosen model |
 | `resolution` | string | No | `"1K"` | `0.5K`, `1K`, `2K`, `4K`. Rejected if unsupported by the chosen model (Lite is `1K` only; Pro is `1K`/`2K`/`4K`; OpenAI models are `1K`/`2K`, where `1K` ≈ 1 megapixel and `2K` ≈ 4, derived from `aspect_ratio`) |
-| `output_format` | string | No | `"jpeg"` | `jpeg` (all models), `png` or `webp` (OpenAI models only). The `output_path` extension is replaced to match |
+| `output_format` | string | No | the `output_path` extension, else `jpeg` | `jpeg` (all models), `png` or `webp` (OpenAI models only). When omitted, a `.jpg`/`.jpeg`/`.png`/`.webp` extension on `output_path` selects the format; the saved file's extension always matches the format |
 | `quality` | string | No | `"medium"` (OpenAI models) | **OpenAI models only.** `low`, `medium`, `high`, `xhigh`, `max` — see the [cost table](#performance--cost). Rejected on Gemini models |
 | `transparent_background` | boolean | No | - | **OpenAI models only.** `true` renders a transparent background; requires `output_format` `png` or `webp` (JPEG has no alpha channel). Rejected on Gemini models |
 | `num_images` | number | No | `1` | Number of images (1-4). Produced via repeated requests |
@@ -191,11 +191,11 @@ Edit existing images using text instructions.
 |-----------|------|----------|---------|-------------|
 | `prompt` | string | Yes | - | Editing instruction |
 | `image_paths` | string[] | Yes | - | Array of image paths or URLs, in prompt order ("first image" / "second image"). Gemini models: up to 14 images, 7 MB each, jpeg/png/webp/gif/heic/heif. OpenAI models: up to 16 images, 50 MB each, jpeg/png/webp only. The count is checked before any image is read; the type as each one is loaded, still before any API call |
-| `output_path` | string | Yes | - | File path to save result (directory or full path). Any extension is normalized to match `output_format` |
+| `output_path` | string | Yes | - | File path to save result (directory or full path). Its extension selects `output_format` when that is omitted, and the saved file's extension always matches the format. An existing file is never overwritten: `-2`, `-3`, … is appended |
 | `model` | string | No | `"gemini-3.1-flash-image"` | Model ID: `gemini-3.1-flash-image`, `gemini-3.1-flash-lite-image`, `gemini-3-pro-image`, `gpt-image-2.5-flare`, `gpt-image-2.5-sunburst` |
 | `aspect_ratio` | string | No | `"auto"` | `auto` (preserve original) or any generate ratio. On OpenAI models `auto` lets the provider choose the output size, so set a ratio to control it. Rejected if unsupported by the chosen model |
 | `resolution` | string | No | `1K` (applied by the provider) | `0.5K`, `1K`, `2K`, `4K`. Rejected if unsupported by the chosen model (Lite is `1K` only; Pro is `1K`/`2K`/`4K`; OpenAI models are `1K`/`2K`, where `1K` ≈ 1 megapixel and `2K` ≈ 4, derived from `aspect_ratio`). No schema default here: on an OpenAI model it needs an explicit `aspect_ratio`, and `auto` plus a resolution is rejected |
-| `output_format` | string | No | `"jpeg"` | `jpeg` (all models), `png` or `webp` (OpenAI models only). The `output_path` extension is replaced to match |
+| `output_format` | string | No | the `output_path` extension, else `jpeg` | `jpeg` (all models), `png` or `webp` (OpenAI models only). When omitted, a `.jpg`/`.jpeg`/`.png`/`.webp` extension on `output_path` selects the format; the saved file's extension always matches the format |
 | `quality` | string | No | `"medium"` (OpenAI models) | **OpenAI models only.** `low`, `medium`, `high`, `xhigh`, `max` — see the [cost table](#performance--cost). Rejected on Gemini models |
 | `transparent_background` | boolean | No | - | **OpenAI models only.** `true` renders a transparent background; requires `output_format` `png` or `webp` (JPEG has no alpha channel). Rejected on Gemini models |
 | `num_images` | number | No | `1` | Number of variations (1-4). Produced via repeated requests |
@@ -258,6 +258,8 @@ npm run typecheck    # tsc --noEmit
 npm run lint         # ESLint (zero warnings allowed)
 npm test             # Vitest (no network; ~0.5 s)
 npm run check        # typecheck + lint + test — the gate CI runs on every pull request
+
+npm run build && npm run smoke   # paid live check against both providers (~10 cents)
 ```
 
 ## Project Structure
@@ -285,6 +287,7 @@ npm run check        # typecheck + lint + test — the gate CI runs on every pul
 │   │   ├── edit-image.ts     # Edit tool
 │   │   └── __tests__/
 │   └── __tests__/            # Server contract tests + in-memory MCP harness
+├── scripts/smoke.mjs         # npm run smoke: paid live check of the built server
 ├── .github/workflows/ci.yml  # PR gate: build, typecheck, lint, test
 ├── dist/                     # Compiled output (generated)
 ├── eslint.config.js
@@ -306,7 +309,7 @@ The server started with the other provider's key. Either set the named variable,
 The requested option is not valid for the chosen model, and the request is rejected before any API call. Check the [Models](#models) table — for example, Lite is `1K` only, Pro does not support the extreme aspect ratios, only Flash supports `0.5K` and `1:4`/`4:1`/`1:8`/`8:1`, and OpenAI models accept `1K`/`2K` and the ten base ratios. Either switch models or pick a supported value.
 
 ### "Model … does not support output_format 'png'"
-Gemini models produce JPEG only. Use `gpt-image-2.5-flare` or `gpt-image-2.5-sunburst` for `png`/`webp`, or leave `output_format` at `jpeg`.
+Gemini models produce JPEG only. Use `gpt-image-2.5-flare` or `gpt-image-2.5-sunburst` for `png`/`webp`, or ask for `jpeg`. An `output_path` ending in `.png` or `.webp` asks for that format just as `output_format` does, so `~/images/logo.png` on a Gemini model is rejected rather than saved as a JPEG.
 
 ### "transparent_background requires output_format 'png' or 'webp'"
 JPEG has no alpha channel, and the OpenAI API rejects that combination outright. Set `output_format` to `png` or `webp`, or drop `transparent_background`.

@@ -73,6 +73,24 @@ async function ensureDirectory(dirPath: string): Promise<void> {
   }
 }
 
+/** Output format per output-path extension, case-insensitive. */
+const OUTPUT_FORMAT_BY_EXTENSION: Record<string, OutputFormat> = {
+  ".jpg": "jpeg",
+  ".jpeg": "jpeg",
+  ".png": "png",
+  ".webp": "webp",
+};
+
+/**
+ * The output format an `output_path` asks for by its extension, or undefined
+ * when its extension names none we produce (a directory path included).
+ */
+export function inferOutputFormatFromPath(
+  outputPath: string
+): OutputFormat | undefined {
+  return OUTPUT_FORMAT_BY_EXTENSION[path.extname(outputPath).toLowerCase()];
+}
+
 /**
  * Resolve the output path for saving an image
  *
@@ -98,9 +116,12 @@ export async function resolveOutputPath(
   const endsWithSeparator = /[\\/]$/.test(outputPath);
   if (endsWithSeparator || (await isDirectory(absolutePath))) {
     await ensureDirectory(absolutePath);
-    // Generate filename in the directory
-    const filename = `${generateTimestampFilename()}${index > 0 ? `-${index + 1}` : ""}${extension}`;
-    return path.join(absolutePath, filename);
+    return nextFreeName(
+      absolutePath,
+      generateTimestampFilename(),
+      extension,
+      index
+    );
   }
 
   // Check if parent directory exists
@@ -116,9 +137,29 @@ export async function resolveOutputPath(
   const baseName = ext
     ? path.basename(absolutePath, ext)
     : path.basename(absolutePath);
-  const suffix = index > 0 ? `-${index + 1}` : "";
 
-  return path.join(parentDir, `${baseName}${suffix}${extension}`);
+  return nextFreeName(parentDir, baseName, extension, index);
+}
+
+/**
+ * The first name in `dir` that is not taken: `base.ext`, then `base-2.ext`,
+ * `base-3.ext`, and so on. `index` (0-based) is where the search starts, so
+ * the images of one num_images call keep their order, and an existing file
+ * pushes every later one along rather than being overwritten.
+ */
+async function nextFreeName(
+  dir: string,
+  baseName: string,
+  extension: string,
+  index: number
+): Promise<string> {
+  for (let n = index; ; n++) {
+    const candidate = path.join(
+      dir,
+      `${baseName}${n > 0 ? `-${n + 1}` : ""}${extension}`
+    );
+    if (!(await pathExists(candidate))) return candidate;
+  }
 }
 
 /**

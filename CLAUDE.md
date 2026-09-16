@@ -76,6 +76,7 @@ A local MCP (Model Context Protocol) server that exposes two tools, `hokuz_gener
 │   ├── agents/                 # review-* lenses + REVIEW-PROTOCOL.md (see Review Battery)
 │   ├── skills/deep-review/     # /deep-review orchestrator: dispatch lenses, evaluate, action plan
 │   └── commands/test-reflect.md # self-audit of tests you just wrote
+├── scripts/smoke.mjs           # npm run smoke: paid live check of the built server
 ├── .github/workflows/ci.yml    # PR gate: build, typecheck, lint, test
 ├── eslint.config.js, vitest.config.ts, tsconfig.json, tsconfig.test.json
 ├── README.md                   # User docs incl. hand-maintained model speed/cost tables
@@ -93,6 +94,7 @@ A local MCP (Model Context Protocol) server that exposes two tools, `hokuz_gener
 - `npm run typecheck` — `tsc -p tsconfig.test.json` (src **and** tests, no emit)
 - `npm run lint` — ESLint, `--max-warnings=0`
 - `npm test` / `npm run test:watch` — Vitest (~0.5 s, no network)
+- `npm run smoke` — the paid live check against both providers; needs `npm run build` first (see Testing)
 - `npm run check` — typecheck + lint + test. **This is the gate. Run it before calling a task done.** CI runs the same steps plus the build on every pull request.
 - `npx @modelcontextprotocol/inspector node dist/index.js` — poke the tools interactively
 - `claude mcp add hokuz-image-gen --scope local --transport stdio --env GEMINI_API_KEY="$GEMINI_API_KEY" -- node "$PWD/dist/index.js"` — register with Claude Code, then `/mcp` to confirm
@@ -136,12 +138,13 @@ When the SDK's schema validation rejects a call, the client receives `{ isError:
 
 ### 7. Options a handler must not default are `.optional()` with **no** schema default
 
-`quality` (OpenAI), `temperature` (Gemini) and edit's `resolution` are published `.optional()` with no `.default()`, which is the opposite of gotcha 1's rule for every shared option — deliberately. `transparent_background` (OpenAI) follows the same rule. The handler passes them through exactly as given and **the provider that owns the option applies its default** (`config.x ?? DEFAULTS.x` in `providers/gemini.ts` / `providers/openai.ts`), so an option reaches the request as a default only where that default is valid. Without this the handler could not tell "the LLM asked for temperature 0.2 on an OpenAI model" from "the SDK filled the default in", and would have to ignore the request silently. The cases:
+`quality` (OpenAI), `temperature` (Gemini), `output_format` and edit's `resolution` are published `.optional()` with no `.default()`, which is the opposite of gotcha 1's rule for every shared option — deliberately. `transparent_background` (OpenAI) follows the same rule. The handler passes them through exactly as given and **the provider that owns the option applies its default** (`config.x ?? DEFAULTS.x` in `providers/gemini.ts` / `providers/openai.ts`), so an option reaches the request as a default only where that default is valid. Without this the handler could not tell "the LLM asked for temperature 0.2 on an OpenAI model" from "the SDK filled the default in", and would have to ignore the request silently. The cases:
 
 - `temperature` on an OpenAI model → rejected, naming the Gemini alternative. Gemini applies `DEFAULTS.temperature` when the config carries none.
 - `quality` on a Gemini model → rejected, naming the OpenAI models. OpenAI applies `DEFAULTS.quality` when the config carries none.
 - edit `resolution` with `aspect_ratio: "auto"` on an OpenAI model → rejected, because the provider derives the pixel size from the ratio and `size: "auto"` would drop the resolution. Generate keeps its `.default("1K")`: it always has a ratio.
 - `transparent_background: true` on a Gemini model → rejected, naming the OpenAI models; `false` is what every model already does, so it passes. No default: OpenAI's `background` is `"opaque"` unless the caller asked otherwise.
+- `output_format` omitted → the handler falls back to the extension of `output_path` (`inferOutputFormatFromPath`), then to `DEFAULTS.outputFormat`. A schema default would hide the extension, so `logo.png` on a Gemini model would be saved as `logo.jpg` instead of rejected.
 
 Give such an option a `.default()` and every call it cannot apply to starts either failing validation or being silently ignored.
 
@@ -154,7 +157,7 @@ Give such an option a `.default()` and every call it cannot apply to starts eith
 - `providers/__tests__/openai.test.ts` — exact `images.generate` and `images.edit` request shapes, size derivation (spot checks plus an invariant sweep over every ratio x resolution), edit files in order with an explicit MIME type, parse of dimensions and the cost arithmetic, refusal of a format we did not request, error mapping by status and by `code`, missing-key path and the client's `logLevel`.
 - `providers/__tests__/index.test.ts` — dispatch to the provider the registry names, and validation before dispatch.
 - `tools/__tests__/*.test.ts` — defaults reach the provider (including the per-provider `quality`/`temperature` rule), validation before image loading and before any API call, the per-model input count/size/type rejections, `num_images` loop with summed `usage` and the partial-failure `warning`, files written (with the format's extension), schema-boundary rejections.
-- `__tests__/server.test.ts` — tool names, annotations, JSON Schema enums/defaults/`required`, output schema shape, package.json version. `__tests__/constants.test.ts` — validation messages and the "defaults are valid for every model" invariant.
+- `__tests__/server.test.ts` — tool names, annotations, JSON Schema enums/defaults/`required`, output schema shape, package.json version, and the drift guard: every `IMAGE_MODELS` ID and every `QUALITIES` value is named in both `TOOL_DESCRIPTION`s, and every ID in both `model` describe strings. `__tests__/constants.test.ts` — validation messages and the "defaults are valid for every model" invariant.
 
 **How tool tests work:** `connectTestClient()` in `src/__tests__/harness.ts` builds the real server via `createServer()` and connects an SDK `Client` over `InMemoryTransport`. Only `providers/index.js`'s `generateImage` / `editImage` are mocked (`vi.mock` with `importOriginal`, so `validateGenerationConfig` stays real). This exercises the SDK's input and output schema validation exactly as a production client would.
 
@@ -164,11 +167,11 @@ Give such an option a `.default()` and every call it cannot apply to starts eith
 
 **Before a test counts as done, mutate the code it guards and read the failure count.** A test that stays green when its behaviour breaks is deleted, not kept. Restore mutations from a saved copy, never with `git checkout -- <file>` on a dirty tree.
 
-**Manual verification** after changes that touch the API path: `npm run build`, register with an MCP client, run one real generation and one real edit **per provider that changed**, and try one invalid combination (Lite + 2K, or Flare + `temperature`) to see the pre-flight error.
+**Manual verification** after changes that touch the API path: `npm run build && npm run smoke` (about 10 cents, needs both keys; it skips a provider whose key is absent and says so). `scripts/smoke.mjs` drives the built server over stdio and asserts a generate and an edit per provider, a transparent PNG on disk, and the pre-flight rejections that must cost nothing.
 
 ## Adding a Parameter or a Tool
 
-**Parameter:** (1) schema field `z.enum(OPTIONS).default(DEFAULTS.x).describe("...")` — the describe string is read by the LLM, name the options and the default; (2) handler `params.x ?? DEFAULTS.x` into `GenerationConfig`; (3) the provider modules if the request changes; (4) the Args list in **both** `TOOL_DESCRIPTION`s; (5) tests in the same change — the exact request-shape `toEqual` in `providers/__tests__/gemini.test.ts` and `openai.test.ts` will fail until updated, and `server.test.ts` asserts schema defaults; (6) both README parameter tables; (7) `npm run check`.
+**Parameter:** (1) schema field `z.enum(OPTIONS).default(DEFAULTS.x).describe("...")` — the describe string is read by the LLM, name the options and the default; (2) handler `params.x ?? DEFAULTS.x` into `GenerationConfig`; (3) the provider modules if the request changes; (4) **both** `TOOL_DESCRIPTION`s, but only if the parameter carries a rule the JSON Schema cannot express — the descriptions no longer list the arguments, and re-stating the schema there is what this pass removed; (5) tests in the same change — the exact request-shape `toEqual` in `providers/__tests__/gemini.test.ts` and `openai.test.ts` will fail until updated, and `server.test.ts` asserts schema defaults; (6) both README parameter tables; (7) `npm run check`.
 
 A parameter only one provider accepts follows gotcha 7 instead: `.optional()` with no `.default()`, a registry axis that says which models take it, a `getUnsupportedModelOptionMessage` branch naming the alternative, and the provider module applying its own default.
 
@@ -198,6 +201,8 @@ One singleton `OpenAI` client from `OPENAI_API_KEY`. Both calls send `{ model, p
 
 ## File Utility Patterns
 
+`inferOutputFormatFromPath(outputPath)` reads `.jpg`/`.jpeg`/`.png`/`.webp` (case-insensitive) and returns undefined for anything else. The format a handler uses is `params.output_format ?? inferOutputFormatFromPath(params.output_path) ?? DEFAULTS.outputFormat`, and the saved file always carries that format's extension.
+
 `resolveOutputPath(outputPath, format, index)`:
 
 ```
@@ -206,7 +211,9 @@ One singleton `OpenAI` client from `OPENAI_API_KEY`. Both calls send `{ model, p
 "~/images/foo.png"                     → file mode: extension replaced → foo.jpg (jpeg)
 "~/images/foo"                         → file mode: extension appended → foo.jpg (jpeg)
 A TRAILING SEPARATOR always means directory, even if it does not exist yet.
-index ≥ 1 appends -2, -3, … in both modes (this is the same-millisecond collision guard).
+index ≥ 1 appends -2, -3, … in both modes, and so does an existing file: the
+resolved name is the first one not on disk, so a saved image never overwrites
+one (which is what `destructiveHint: false` claims).
 ```
 
 `loadInputImage(pathOrUrl, model)` is the only way an edit input enters the process. It checks **type → allowlist → size → read** and stops at the first failure, so the bytes of an image the model would reject are never read:

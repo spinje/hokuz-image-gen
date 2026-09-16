@@ -40,11 +40,11 @@ export const GenerateImageInputSchema = z
       .enum(IMAGE_MODELS)
       .default(DEFAULTS.model)
       .describe(
-        "Image model. Google (Gemini API): 'gemini-3.1-flash-image' (Nano Banana 2, balanced default, 0.5K-4K, " +
-          "extreme aspect ratios), 'gemini-3.1-flash-lite-image' (Nano Banana 2 Lite, cheapest/fastest, 1K only), " +
-          "'gemini-3-pro-image' (Nano Banana Pro, highest quality, 1K-4K). OpenAI: 'gpt-image-2.5-flare' (fast, " +
-          "everyday generation), 'gpt-image-2.5-sunburst' (slower, best editing precision); both 1K/2K, quality " +
-          `ladder via 'quality'. Default: ${DEFAULTS.model}`
+        `Options: ${IMAGE_MODELS.join(", ")}. Gemini models: gemini-3.1-flash-lite-image (cheapest ` +
+          "Gemini, 1K only), gemini-3.1-flash-image (default, 0.5K-4K, extreme ratios), " +
+          "gemini-3-pro-image (highest quality). OpenAI: gpt-image-2.5-flare (fast), " +
+          "gpt-image-2.5-sunburst (editing precision, text). See the tool description for cost and " +
+          `when to use which. Default: ${DEFAULTS.model}`
       ),
 
     aspect_ratio: z
@@ -52,8 +52,8 @@ export const GenerateImageInputSchema = z
       .default(DEFAULTS.aspectRatio)
       .describe(
         `Aspect ratio. Options: ${ASPECT_RATIOS.join(", ")}. The extreme ratios (1:4, 4:1, 1:8, 8:1) are ` +
-          "supported only by gemini-3.1-flash-image; OpenAI models accept the other ten. Unsupported " +
-          `combinations are rejected before the API call. Default: ${DEFAULTS.aspectRatio}`
+          "supported only by gemini-3.1-flash-image; OpenAI models accept the other ten. " +
+          `Default: ${DEFAULTS.aspectRatio}`
       ),
 
     resolution: z
@@ -62,17 +62,19 @@ export const GenerateImageInputSchema = z
       .describe(
         `Output resolution. Options: ${RESOLUTIONS.join(", ")}. Gemini: Lite is 1K only, Pro is 1K/2K/4K. ` +
           "OpenAI models: 1K (~1 megapixel) or 2K (~4 megapixels) only; exact pixel size is derived from " +
-          "aspect_ratio and returned in the result. Unsupported model/resolution combinations are rejected " +
-          `before the API call. Default: ${DEFAULTS.resolution}`
+          `aspect_ratio and returned in the result. Default: ${DEFAULTS.resolution}`
       ),
 
+    // No .default(): see gotcha 7. With one, the handler could not tell an
+    // explicit format from a filled-in default, and could not fall back to the
+    // output_path's extension.
     output_format: z
       .enum(OUTPUT_FORMATS)
-      .default(DEFAULTS.outputFormat)
+      .optional()
       .describe(
-        `Output file format. Options: ${OUTPUT_FORMATS.join(", ")}. Gemini models produce jpeg only; ` +
-          "OpenAI models produce all three. The output_path extension is replaced to match. " +
-          `Default: ${DEFAULTS.outputFormat}`
+        "Output file format. jpeg is produced by every model; png and webp by OpenAI models only. " +
+          "Default: the extension of output_path (.jpg/.jpeg/.png/.webp) when it has one, otherwise " +
+          "jpeg. The saved file's extension always matches the format."
       ),
 
     quality: z
@@ -80,7 +82,7 @@ export const GenerateImageInputSchema = z
       .optional()
       .describe(
         `OpenAI models only. Options: ${QUALITIES.join(", ")}. Cost per 1K image scales roughly ` +
-          "$0.006 / $0.013 / $0.05 / $0.09 / $0.21 and latency 10 s to 90 s. Use medium for drafts and most " +
+          "$0.006 / $0.013 / $0.05 / $0.09 / $0.21 and latency ~10-46 s (flare) or ~16-85 s (sunburst). Use low for throwaway drafts, medium for most " +
           "work, high for final assets, xhigh/max only when high visibly fails. Gemini models reject this " +
           `option. Default for OpenAI models: ${DEFAULTS.quality}`
       ),
@@ -89,8 +91,8 @@ export const GenerateImageInputSchema = z
       .boolean()
       .optional()
       .describe(
-        "OpenAI models only. true renders a transparent background; requires output_format png or " +
-          "webp. Gemini models reject `true`."
+        "OpenAI models only; requires output_format png or webp (or a .png/.webp output_path). " +
+          "false is accepted on every model."
       ),
 
     num_images: z
@@ -138,8 +140,8 @@ export const GenerateImageOutputSchema = z.object({
   images: z
     .array(
       z.object({
-        path: z.string().describe("File path where the image was saved"),
-        format: z.string().describe("Image format (jpeg, png or webp)"),
+        path: z.string().describe("File path where the image was saved; authoritative, and different from output_path when a -2, -3 suffix was needed"),
+        format: z.enum(OUTPUT_FORMATS).describe("Image format"),
         width: z
           .number()
           .optional()
