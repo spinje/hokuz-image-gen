@@ -30,7 +30,7 @@ ${MODEL_GUIDE}
 Rules the schema cannot express:
 - output_path: a trailing slash or an existing directory means a timestamped file inside it; otherwise it is the file to write. Parent directories are created. An existing file is never overwritten: -2, -3, ... is appended. When output_format is omitted the path's extension (.jpg/.png/.webp) selects it, else jpeg; the saved extension always matches the format. A .png/.webp path therefore needs an OpenAI model; with a Gemini model use .jpg or a directory. The returned path is authoritative and differs from output_path when a suffix was needed.
 - quality and transparent_background are OpenAI-only; temperature is Gemini-only. An explicit value on the other provider is rejected, not ignored. Omit them and the provider applies its default (medium / 1.0). transparent_background: false is accepted everywhere.
-- num_images makes that many separate requests, one after another, so time and cost scale linearly; if a later request fails you get the images so far plus a \`warning\` naming the reason. OpenAI tier-1 accounts allow 5 images per minute.
+- num_images makes that many separate requests, one after another, so time and cost scale linearly and the whole call blocks until the last one returns (4 sunburst images at max quality is several minutes). If a later request fails you get the images so far, still as a success, plus a \`warning\` naming the reason; re-request only the shortfall. OpenAI tier-1 accounts allow 5 images per minute.
 
 Examples:
 - Draft: model="gpt-image-2.5-flare", quality="low", output_path="~/drafts/"

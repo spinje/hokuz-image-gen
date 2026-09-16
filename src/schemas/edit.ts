@@ -46,7 +46,7 @@ export const EditImageInputSchema = z
           "each (jpeg/png/webp/gif/heic/heif). OpenAI models: up to 16 images, 50 MB each, jpeg/png/webp " +
           "only (gif/heic are rejected before the API call). Order matters: 'first image'/'second " +
           "image' in the prompt refer to this order. For style transfer, provide the content image " +
-          "first, then the style reference."
+          "first, then the style reference. '~' is expanded; a URL must be publicly reachable."
       ),
 
     output_path: z
@@ -54,9 +54,11 @@ export const EditImageInputSchema = z
       .min(1, "Output path is required")
       .describe(
         "Where to save the edited image. A trailing slash, or a path that is already a directory, " +
-          "means a timestamped file inside it; anything else is the file to write, and its extension " +
-          "is replaced to match the output format. An existing file is never overwritten (-2, -3 is " +
-          "appended), so use the path returned in the result."
+          "means a timestamped file inside it; anything else is the file to write. When output_format " +
+          "is omitted this path's extension chooses the format, so a .png or .webp path needs an " +
+          "OpenAI model; when output_format is set, the extension is replaced to match it. An existing " +
+          "file is never overwritten (-2, -3 is appended, which is also how num_images names its " +
+          "files), so use the path returned in the result. '~' is expanded."
       ),
 
     model: z
@@ -85,10 +87,11 @@ export const EditImageInputSchema = z
       .enum(RESOLUTIONS)
       .optional()
       .describe(
-        `Output resolution: ${RESOLUTIONS.join(", ")} per model (Lite 1K only; Pro 1K/2K/4K; OpenAI ` +
-          "1K/2K). Gemini models re-render the edit at this resolution, 1K when omitted, so set 2K " +
-          "or 4K to keep a large input's detail. OpenAI models reject it unless you also set an " +
-          "aspect_ratio, because with 'auto' the provider chooses the size itself."
+        `Output resolution: ${RESOLUTIONS.join(", ")} per model (Flash 0.5K-4K; Lite 1K only; Pro ` +
+          "1K/2K/4K; OpenAI 1K/2K). Gemini models re-render the edit at this resolution, 1K when " +
+          "omitted, so set 2K or 4K to keep a large input's detail. OpenAI models reject it while " +
+          "aspect_ratio is 'auto' (the default), because the provider then chooses the size itself; " +
+          "with an explicit aspect_ratio they accept it and apply 1K when omitted."
       ),
 
     // No .default(): see gotcha 7. With one, the handler could not tell an
