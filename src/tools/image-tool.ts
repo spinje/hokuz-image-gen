@@ -31,7 +31,11 @@ export interface ImageToolRun {
   outputFormat: OutputFormat;
   outputPath: string;
   requestedCount: number;
-  /** One provider request. The pipeline calls it up to requestedCount times. */
+  /**
+   * One provider request. The pipeline calls it up to requestedCount times and
+   * relies on it to throw when it produced no image: a resolved response with
+   * empty `images` would count as a successful, billed request.
+   */
   produce: () => Promise<ImageResponse>;
   /** First line of the text reply, e.g. "Successfully generated 2 image(s):". */
   summary: (savedCount: number) => string;
@@ -59,8 +63,6 @@ export async function runImageTool({
   produce,
   summary,
 }: ImageToolRun): Promise<CallToolResult> {
-  // num_images is implemented via repeated independent requests, each
-  // asking for one image. Stop once we have enough.
   const collected: GeneratedImage[] = [];
   const descriptions: string[] = [];
   const usages: UsageReport[] = [];

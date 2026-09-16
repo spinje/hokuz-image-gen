@@ -125,8 +125,8 @@ describe("image tool pipeline", () => {
 
   it("wraps a non-McpError in the tool's own 'Unexpected error' message", async () => {
     // Every provider failure is an McpError whose message passes through as
-    // is; this is the one branch that composes a message, and the activity
-    // word in it is per handler.
+    // is; this is the one branch that composes a message. Edit's activity
+    // word is pinned in edit-image.test.ts.
     generateMock.mockRejectedValue(new Error("boom"));
 
     const result = await harness.callTool(TOOL, { prompt: "p", output_path: tmp });

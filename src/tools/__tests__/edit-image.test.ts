@@ -202,6 +202,32 @@ describe(TOOL, () => {
     expect(editMock).not.toHaveBeenCalled();
   });
 
+  it("hands its own count, summary line and activity word to the shared pipeline", async () => {
+    // The pipeline is tested through generate; these three inputs are the only
+    // things edit contributes to the reply, and nothing else here observes them.
+    const result = await harness.callTool(TOOL, {
+      prompt: "p",
+      image_paths: [first, second],
+      output_path: tmp,
+      num_images: 2,
+    });
+
+    expect(editMock).toHaveBeenCalledTimes(2);
+    expect(firstText(result)).toContain(
+      "Successfully edited 2 image(s) and generated 2 result(s):"
+    );
+
+    editMock.mockRejectedValue(new Error("boom"));
+    const failed = await harness.callTool(TOOL, {
+      prompt: "p",
+      image_paths: [first],
+      output_path: tmp,
+    });
+
+    expect(failed.isError).toBe(true);
+    expect(firstText(failed)).toBe("Error: Unexpected error during image editing. boom");
+  });
+
   it("rejects an explicit resolution on an OpenAI model with the default 'auto' ratio", async () => {
     // With a schema default on resolution the handler could not tell this from
     // "the caller said nothing", and the 2K would be silently ignored.
