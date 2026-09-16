@@ -19,11 +19,11 @@ export const ImageToolOutputSchema = z.object({
         width: z
           .number()
           .optional()
-          .describe("Image width in pixels, when the provider reports it"),
+          .describe("Image width in pixels"),
         height: z
           .number()
           .optional()
-          .describe("Image height in pixels, when the provider reports it"),
+          .describe("Image height in pixels"),
       })
     )
     .describe("The images written to disk, in order"),
@@ -39,7 +39,7 @@ export const ImageToolOutputSchema = z.object({
     })
     .optional()
     .describe(
-      "Token usage summed over the requests made, with a cost estimated from those counts (OpenAI models only)"
+      "Token usage summed over the requests made, with an estimated cost: from the token counts on OpenAI models, from Google's per-image price for the resolution on Gemini models (input and text tokens, a fraction of a cent, are not included)"
     ),
   warning: z
     .string()

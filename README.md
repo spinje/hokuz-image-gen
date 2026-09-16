@@ -19,7 +19,7 @@ An MCP (Model Context Protocol) server for generating and editing images using G
 - **Multi-Image Composition**: Combine up to 14 images (Gemini) or 16 (OpenAI) into new compositions
 - **High Resolution**: Up to 4K output (model-dependent)
 - **PNG, WebP and transparent backgrounds**: OpenAI models produce `jpeg`, `png` or `webp`, with an optional transparent background (png/webp only)
-- **Cost reporting**: OpenAI results include the token counts used and a cost estimated from them
+- **Cost reporting**: every result reports the pixel size of each image and an estimated cost — Google's per-image price on Gemini models, the measured token counts on OpenAI models
 - **Model-aware validation**: Unsupported combinations of model, resolution, aspect ratio and provider-only option are rejected before any API call — no silent downgrades
 
 ## Models
@@ -34,7 +34,7 @@ Select a model with the optional `model` parameter on either tool. The default i
 | `gpt-image-2.5-flare` | OpenAI | GPT Image 2.5 Flare | Text rendering, prompt adherence | `1K`, `2K` | No | ~14 s (medium) | set by `quality` |
 | `gpt-image-2.5-sunburst` | OpenAI | GPT Image 2.5 Sunburst | Text-heavy posters, branding, faithful edits | `1K`, `2K` | No | ~18 s (medium) | set by `quality` |
 
-OpenAI models take `quality` and `transparent_background` instead of `temperature`, and their pixel size is derived from `aspect_ratio` + `resolution` (`1K` ≈ 1 megapixel, `2K` ≈ 4) and reported back as `width`/`height`. Gemini models take `temperature` and reject the OpenAI-only options; the reverse also holds. Input images: Gemini takes up to 14 at 7 MB each (jpeg/png/webp/gif/heic/heif), OpenAI up to 16 at 50 MB each (jpeg/png/webp only).
+OpenAI models take `quality` and `transparent_background` instead of `temperature`, and their pixel size is derived from `aspect_ratio` + `resolution` (`1K` ≈ 1 megapixel, `2K` ≈ 4). Both providers report each image's pixel size back as `width`/`height`. Gemini models take `temperature` and reject the OpenAI-only options; the reverse also holds. Input images: Gemini takes up to 14 at 7 MB each (jpeg/png/webp/gif/heic/heif), OpenAI up to 16 at 50 MB each (jpeg/png/webp only).
 
 ## Performance & cost
 
@@ -49,6 +49,8 @@ OpenAI models take `quality` and `transparent_background` instead of `temperatur
 | `2K`       | _n/a_              | ~$0.101               | ~$0.134         |
 | `4K`       | _n/a_              | ~$0.151               | ~$0.240         |
 
+These are the prices the server estimates a Gemini result's cost with (`GEMINI_PRICE_PER_IMAGE_USD` in `src/constants.ts`), charged per image for the requested resolution.
+
 **GPT Image 2.5 cost by quality** (1K, estimated; Flare and Sunburst bill identically):
 
 | `quality` | Cost²/image | Flare speed¹ | Sunburst speed¹ |
@@ -59,7 +61,7 @@ OpenAI models take `quality` and `transparent_background` instead of `temperatur
 | `xhigh`   | ~$0.09      | ~27 s        | ~47 s           |
 | `max`     | ~$0.21      | ~46 s        | ~85 s           |
 
-`2K` roughly doubles the output-token cost of the same quality. `output_format` does not change the price, but a PNG file is roughly 16x the size of the same image as JPEG on disk. Reference images on an edit cost about $0.01 each (~1000 input tokens per 1K image), versus a fraction of a cent on Gemini — for compositions with 4+ reference images prefer `gemini-3.1-flash-image`. OpenAI prices are token-based ($5 / $8 / $30 per million text-input / image-input / image-output tokens, **verify on the [OpenAI pricing page](https://developers.openai.com/api/docs/pricing)**); every OpenAI result reports the measured token counts and the cost estimated from them.
+`2K` roughly doubles the output-token cost of the same quality. `output_format` does not change the price, but a PNG file is roughly 16x the size of the same image as JPEG on disk. Reference images on an edit cost about $0.01 each (~1000 input tokens per 1K image), versus a fraction of a cent on Gemini — for compositions with 4+ reference images prefer `gemini-3.1-flash-image`. OpenAI prices are token-based ($5 / $8 / $30 per million text-input / image-input / image-output tokens, **verify on the [OpenAI pricing page](https://developers.openai.com/api/docs/pricing)**). Every result reports an estimated cost: from the measured token counts on OpenAI models, from Google's per-image price for the requested resolution on Gemini models (input and text tokens, a fraction of a cent, are not included).
 
 **Rule of thumb:** default to **Flash** for everyday work; drop to **Lite** for drafts, thumbnails, and high-volume batches where speed and cost matter most; reach for **Pro** for hero shots, photorealism, and cinematic lighting where the extra time and cost are justified. Reach for **Flare** or **Sunburst** when the image carries text or must match a precise composition, and raise `quality` only as far as the result needs.
 
@@ -179,7 +181,7 @@ output_path: ~/images/headshot.jpg
 aspect_ratio: 3:4
 ```
 
-**Returns** (both tools): `{ success, images: [{ path, format, width?, height? }], description?, usage?, warning?, error? }`. `width`/`height` are set only by providers that report the pixel size (OpenAI). `usage` — `{ input_tokens, output_tokens, estimated_cost_usd }`, summed over the requests made — is present for OpenAI results only, and its cost is estimated from the token counts, not billed. `warning` is set when fewer images than requested were produced and carries the failing request's error.
+**Returns** (both tools): `{ success, images: [{ path, format, width?, height? }], description?, usage?, warning?, error? }`. `width`/`height` are each image's pixel size, reported for both providers. `usage` — `{ input_tokens, output_tokens, estimated_cost_usd }`, summed over the requests made — is present for both providers, and its cost is always estimated, never billed: from the token counts on OpenAI, from Google's per-image price for the resolution on Gemini. `warning` is set when fewer images than requested were produced and carries the failing request's error.
 
 ### hokuz_edit_image
 

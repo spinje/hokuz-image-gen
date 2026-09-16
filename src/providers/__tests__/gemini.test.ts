@@ -104,6 +104,104 @@ describe("parseInteraction", () => {
   });
 });
 
+describe("image dimensions", () => {
+  /**
+   * SOI, a minimal APP0 segment, then a SOF segment carrying the size. The
+   * provider reads the size out of the bytes because the API reports none.
+   */
+  function jpeg(sofMarker: number, width: number, height: number): string {
+    const app0 = Buffer.from([0xff, 0xe0, 0x00, 0x04, 0x00, 0x00]);
+    const sof = Buffer.alloc(11);
+    sof.writeUInt8(0xff, 0);
+    sof.writeUInt8(sofMarker, 1);
+    sof.writeUInt16BE(9, 2); // segment length
+    sof.writeUInt8(8, 4); // sample precision
+    sof.writeUInt16BE(height, 5);
+    sof.writeUInt16BE(width, 7);
+    sof.writeUInt8(1, 9); // component count
+    return Buffer.concat([
+      Buffer.from([0xff, 0xd8]),
+      app0,
+      sof,
+      Buffer.alloc(16), // trailing bytes the walk never reaches
+    ]).toString("base64");
+  }
+
+  it("reports the JPEG's pixel size, baseline or progressive, and none for other bytes", () => {
+    for (const sofMarker of [0xc0, 0xc2]) {
+      const result = parseInteraction({
+        output_image: { data: jpeg(sofMarker, 1360, 768), mime_type: "image/jpeg" },
+      });
+      expect(result.images[0]).toMatchObject({ width: 1360, height: 768 });
+    }
+
+    // Bytes that are not a JPEG the walk can follow carry no size at all.
+    const notAJpeg = parseInteraction({
+      output_image: { data: IMG_A, mime_type: "image/jpeg" },
+    });
+    expect(notAJpeg.images[0]).toEqual({ data: IMG_A, mimeType: "image/jpeg" });
+  });
+});
+
+describe("usage and estimated cost", () => {
+  // Copied from a live Lite 1K generate. The token counts cannot price the
+  // image (0.5K and 1K report the same 1120 output image tokens), which is why
+  // the cost comes from the per-image table instead.
+  const USAGE = {
+    total_tokens: 1490,
+    total_input_tokens: 9,
+    total_output_tokens: 1481,
+    output_tokens_by_modality: [{ modality: "image", tokens: 1120 }],
+  };
+
+  it("reports the token counts with Google's per-image price", () => {
+    const result = parseInteraction({ output_image: { data: IMG_A }, usage: USAGE }, 0.0336);
+    expect(result.usage).toEqual({
+      inputTokens: 9,
+      outputTokens: 1481,
+      estimatedCostUsd: 0.0336,
+    });
+
+    // One interaction can carry more than one image, and Google charges per
+    // image, so the cost follows the count rather than the single request.
+    const two = parseInteraction(
+      {
+        output_image: { data: IMG_A },
+        steps: [{ type: "model_output", content: [{ type: "image", data: IMG_B }] }],
+        usage: USAGE,
+      },
+      0.0336
+    );
+    expect(two.images).toHaveLength(2);
+    expect(two.usage?.estimatedCostUsd).toBe(0.0672);
+  });
+
+  it("still returns the image when the response reports no usage", () => {
+    const result = parseInteraction({ output_image: { data: IMG_A } }, 0.0336);
+    expect(result.usage).toBeUndefined();
+    expect(result.images).toHaveLength(1);
+  });
+
+  it("prices each request at the model and resolution it was sent with", async () => {
+    createMock.mockResolvedValue({ output_image: { data: IMG_A }, usage: USAGE });
+
+    const oneK = await generateImage("p", baseConfig);
+    expect(oneK.usage?.estimatedCostUsd).toBe(0.067);
+
+    const fourK = await generateImage("p", { ...baseConfig, resolution: "4K" });
+    expect(fourK.usage?.estimatedCostUsd).toBe(0.151);
+
+    // An edit may carry no resolution ("auto"); the request is built with the
+    // provider's default, so that is the resolution the price must come from.
+    const auto = await editImage(
+      "p",
+      [{ data: IMG_B, mimeType: "image/png" }],
+      { ...baseConfig, resolution: undefined }
+    );
+    expect(auto.usage?.estimatedCostUsd).toBe(0.067);
+  });
+});
+
 describe("generateImage request shape", () => {
   it("puts image options in response_format and only temperature in generation_config", async () => {
     createMock.mockResolvedValue({ output_image: { data: IMG_A } });

@@ -85,9 +85,16 @@ async function main() {
         model: "gemini-3.1-flash-lite-image",
         resolution: "1K",
       });
-      geminiImage = out.images[0].path;
+      const [image] = out.images;
+      const size = `${image.width}x${image.height}`;
+      assert(size === "1024x1024", `expected 1024x1024, got ${size}`);
+      assert(
+        out.usage?.estimated_cost_usd === 0.0336,
+        `expected an estimated cost of $0.0336, got ${out.usage?.estimated_cost_usd}`
+      );
+      geminiImage = image.path;
       await assertJpeg(geminiImage);
-      return geminiImage;
+      return `${geminiImage} ${size} $${out.usage.estimated_cost_usd.toFixed(4)}`;
     });
 
     await step("Gemini Lite edit, aspect_ratio omitted", async () => {
@@ -98,8 +105,11 @@ async function main() {
         output_path: path.join(dir, "gemini-edit.jpg"),
         model: "gemini-3.1-flash-lite-image",
       });
-      await assertJpeg(out.images[0].path);
-      return out.images[0].path;
+      const [image] = out.images;
+      assert(image.width > 0 && image.height > 0, "no pixel size reported");
+      assert(out.usage?.estimated_cost_usd > 0, "no estimated cost reported");
+      await assertJpeg(image.path);
+      return `${image.path} ${image.width}x${image.height}`;
     });
   }
 
@@ -183,7 +193,7 @@ async function main() {
 
   await client.close();
 
-  console.log(`Estimated OpenAI cost: $${costUsd.toFixed(4)}`);
+  console.log(`Estimated cost: $${costUsd.toFixed(4)}`);
   console.log(failures === 0 ? `All steps passed. Files in ${dir}` : `${failures} step(s) failed.`);
   process.exit(failures === 0 ? 0 : 1);
 }

@@ -9,6 +9,7 @@ import { GoogleGenAI } from "@google/genai";
 import {
   DEFAULTS,
   ENV_VARS,
+  GEMINI_PRICE_PER_IMAGE_USD,
   MIME_TYPES,
   type Resolution,
 } from "../constants.js";
@@ -105,6 +106,7 @@ function buildResponseFormat(config: GenerationConfig) {
 export interface InteractionLike {
   status?: string;
   output_text?: string;
+  usage?: { total_input_tokens?: number; total_output_tokens?: number };
   output_image?: { data?: string; mime_type?: string };
   steps?: Array<{
     type?: string;
@@ -119,9 +121,45 @@ export interface InteractionLike {
 }
 
 /**
- * Extract images and text description from an interaction response.
+ * Read a JPEG's pixel size from its SOF segment. The API reports no dimensions,
+ * and these models return JPEG only (gotcha 3), so this is the whole decoder:
+ * anything that is not a JPEG we can walk gets no width/height.
  */
-export function parseInteraction(interaction: InteractionLike): ImageResponse {
+function jpegDimensions(buf: Buffer): { width: number; height: number } | undefined {
+  if (buf.length < 4 || buf[0] !== 0xff || buf[1] !== 0xd8) return undefined;
+  let i = 2;
+  while (i + 9 < buf.length) {
+    if (buf[i] !== 0xff) return undefined; // lost marker sync
+    const marker = buf[i + 1];
+    if (marker === 0xff) {
+      i++; // fill byte
+      continue;
+    }
+    if (marker === 0xd8 || (marker >= 0xd0 && marker <= 0xd7) || marker === 0x01) {
+      i += 2; // standalone marker, no length
+      continue;
+    }
+    if (marker === 0xd9 || marker === 0xda) return undefined; // EOI or scan data before any SOF
+    const length = buf.readUInt16BE(i + 2);
+    const isSof =
+      marker >= 0xc0 && marker <= 0xcf && marker !== 0xc4 && marker !== 0xc8 && marker !== 0xcc;
+    if (isSof) return { height: buf.readUInt16BE(i + 5), width: buf.readUInt16BE(i + 7) };
+    i += 2 + length;
+  }
+  return undefined;
+}
+
+/**
+ * Extract images, text description and usage from an interaction response.
+ *
+ * `imagePriceUsd` is what Google charges for one image of the requested model
+ * and resolution; without it the result carries no usage rather than a cost
+ * this module cannot stand behind.
+ */
+export function parseInteraction(
+  interaction: InteractionLike,
+  imagePriceUsd?: number
+): ImageResponse {
   const images: GeneratedImage[] = [];
   const seen = new Set<string>();
   let description: string | undefined;
@@ -129,7 +167,10 @@ export function parseInteraction(interaction: InteractionLike): ImageResponse {
   const addImage = (data?: string, mimeType?: string) => {
     if (!data || seen.has(data)) return;
     seen.add(data);
-    images.push({ data, mimeType: mimeType ?? "image/jpeg" });
+    const mime = mimeType ?? "image/jpeg";
+    const dimensions =
+      mime === "image/jpeg" ? jpegDimensions(Buffer.from(data, "base64")) : undefined;
+    images.push({ data, mimeType: mime, ...dimensions });
   };
 
   const addText = (text?: string) => {
@@ -166,7 +207,30 @@ export function parseInteraction(interaction: InteractionLike): ImageResponse {
     );
   }
 
-  return { images, description };
+  const { total_input_tokens: inputTokens, total_output_tokens: outputTokens } =
+    interaction.usage ?? {};
+  const usage =
+    typeof inputTokens === "number" &&
+    typeof outputTokens === "number" &&
+    imagePriceUsd !== undefined
+      ? {
+          inputTokens,
+          outputTokens,
+          // Google bills per image, so the cost scales with what came back.
+          estimatedCostUsd: imagePriceUsd * images.length,
+        }
+      : undefined;
+
+  return { images, description, usage };
+}
+
+/**
+ * What one image of this request costs, or undefined for a model/resolution
+ * the price table does not carry (unreachable: validation guarantees the
+ * resolution is supported and `constants.test.ts` guarantees it has a price).
+ */
+function imagePriceUsd(config: GenerationConfig): number | undefined {
+  return GEMINI_PRICE_PER_IMAGE_USD[config.model]?.[config.resolution ?? DEFAULTS.resolution];
 }
 
 /**
@@ -186,7 +250,7 @@ export async function generateImage(
       generation_config: { temperature: config.temperature ?? DEFAULTS.temperature },
     });
 
-    return parseInteraction(interaction as InteractionLike);
+    return parseInteraction(interaction as InteractionLike, imagePriceUsd(config));
   } catch (error) {
     return handleApiError(error);
   }
@@ -221,7 +285,7 @@ export async function editImage(
       generation_config: { temperature: config.temperature ?? DEFAULTS.temperature },
     });
 
-    return parseInteraction(interaction as InteractionLike);
+    return parseInteraction(interaction as InteractionLike, imagePriceUsd(config));
   } catch (error) {
     return handleApiError(error);
   }
