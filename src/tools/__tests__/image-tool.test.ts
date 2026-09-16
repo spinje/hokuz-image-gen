@@ -109,7 +109,10 @@ describe("image tool pipeline", () => {
 
   it("surfaces the error when the first request fails", async () => {
     generateMock.mockRejectedValue(
-      new McpError(ErrorType.CONTENT_BLOCKED, "Error: Content was blocked by safety filters.")
+      new McpError(
+        ErrorType.CONTENT_BLOCKED,
+        "Error: No images were generated. The content may have been blocked by safety filters. Try modifying your prompt."
+      )
     );
 
     const result = await harness.callTool(TOOL, { prompt: "p", output_path: tmp });
@@ -119,7 +122,10 @@ describe("image tool pipeline", () => {
     expect(result.structuredContent).toEqual({
       success: false,
       images: [],
-      error: "Error: Content was blocked by safety filters.",
+      error:
+        "Error: No images were generated. The content may have been blocked by safety filters. Try modifying your prompt.",
+      // The McpError's own type, so the caller can act without parsing prose.
+      error_type: "CONTENT_BLOCKED",
     });
   });
 
@@ -137,6 +143,7 @@ describe("image tool pipeline", () => {
       success: false,
       images: [],
       error: "Error: Unexpected error during image generation. boom",
+      error_type: "UNKNOWN_ERROR",
     });
   });
 

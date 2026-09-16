@@ -5,6 +5,7 @@
 
 import { z } from "zod";
 import { OUTPUT_FORMATS } from "../constants.js";
+import { ErrorType } from "../types.js";
 
 /**
  * Output schema for hokuz_generate_image and hokuz_edit_image
@@ -19,11 +20,11 @@ export const ImageToolOutputSchema = z.object({
         width: z
           .number()
           .optional()
-          .describe("Image width in pixels, when the provider reports it"),
+          .describe("Image width in pixels"),
         height: z
           .number()
           .optional()
-          .describe("Image height in pixels, when the provider reports it"),
+          .describe("Image height in pixels"),
       })
     )
     .describe("The images written to disk, in order"),
@@ -39,18 +40,24 @@ export const ImageToolOutputSchema = z.object({
     })
     .optional()
     .describe(
-      "Token usage summed over the requests made, with a cost estimated from those counts (OpenAI models only)"
+      "Token usage summed over the requests made, with an estimated cost: from the token counts on OpenAI models, from Google's per-image price for the resolution on Gemini models (input and text tokens, a fraction of a cent, are not included)"
     ),
   warning: z
     .string()
     .optional()
     .describe(
-      "Set when fewer images than requested were produced; includes the failure reason"
+      "Set when fewer images than requested were produced. The call still succeeds and images holds what was produced, so retry only the shortfall. Carries the failing request's reason."
     ),
   error: z
     .string()
     .optional()
     .describe("Error message when the call failed; starts with 'Error:'"),
+  error_type: z
+    .enum(ErrorType)
+    .optional()
+    .describe(
+      "Why the call failed, for choosing the next step. INVALID_MODEL_OPTION, INVALID_IMAGE_PATH, IMAGE_TOO_LARGE: fix the arguments. CONTENT_BLOCKED: rephrase the prompt or change the input images. API_RATE_LIMIT: wait, then retry. MISSING_API_KEY: the provider's key is missing, invalid or denied; use the other provider. API_ERROR: read `error` — retry when it names a network or 5xx failure, otherwise fix the arguments it names or switch model. FILE_WRITE_ERROR: fix output_path. UNKNOWN_ERROR: unexpected."
+    ),
 });
 
 export type ImageToolOutput = z.infer<typeof ImageToolOutputSchema>;

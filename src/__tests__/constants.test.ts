@@ -1,6 +1,7 @@
 import { describe, it, expect } from "vitest";
 import {
   DEFAULTS,
+  GEMINI_PRICE_PER_IMAGE_USD,
   IMAGE_MODELS,
   IMAGE_MODEL_CAPABILITIES,
   getUnsupportedInputImageMessage,
@@ -289,5 +290,27 @@ describe("getUnsupportedInputImageMessage", () => {
     ).toBe(
       "Error: Model 'gemini-3.1-flash-image' (Nano Banana 2) does not accept image/bmp input ('~/pics/old.bmp'). Supported input formats: jpeg, png, webp, gif, heic, heif. Convert the image."
     );
+  });
+});
+
+describe("GEMINI_PRICE_PER_IMAGE_USD", () => {
+  it("prices exactly the resolutions the Gemini models support, and no other model", () => {
+    // The provider looks the price up by model + resolution and reports no
+    // usage at all when it misses, so a gap here is a silently costless result;
+    // a row for an OpenAI model would be a price nothing bills against.
+    const geminiModels = IMAGE_MODELS.filter(
+      (model) => IMAGE_MODEL_CAPABILITIES[model].provider === "google"
+    );
+    expect(Object.keys(GEMINI_PRICE_PER_IMAGE_USD).sort()).toEqual([...geminiModels].sort());
+
+    for (const model of geminiModels) {
+      expect({
+        model,
+        priced: Object.keys(GEMINI_PRICE_PER_IMAGE_USD[model] ?? {}).sort(),
+      }).toEqual({
+        model,
+        priced: [...IMAGE_MODEL_CAPABILITIES[model].resolutions].sort(),
+      });
+    }
   });
 });

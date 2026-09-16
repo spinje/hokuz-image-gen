@@ -85,9 +85,16 @@ async function main() {
         model: "gemini-3.1-flash-lite-image",
         resolution: "1K",
       });
-      geminiImage = out.images[0].path;
+      const [image] = out.images;
+      const size = `${image.width}x${image.height}`;
+      assert(size === "1024x1024", `expected 1024x1024, got ${size}`);
+      assert(
+        out.usage?.estimated_cost_usd === 0.0336,
+        `expected an estimated cost of $0.0336, got ${out.usage?.estimated_cost_usd}`
+      );
+      geminiImage = image.path;
       await assertJpeg(geminiImage);
-      return geminiImage;
+      return `${geminiImage} ${size} $${out.usage.estimated_cost_usd.toFixed(4)}`;
     });
 
     await step("Gemini Lite edit, aspect_ratio omitted", async () => {
@@ -98,8 +105,11 @@ async function main() {
         output_path: path.join(dir, "gemini-edit.jpg"),
         model: "gemini-3.1-flash-lite-image",
       });
-      await assertJpeg(out.images[0].path);
-      return out.images[0].path;
+      const [image] = out.images;
+      assert(image.width > 0 && image.height > 0, "no pixel size reported");
+      assert(out.usage?.estimated_cost_usd > 0, "no estimated cost reported");
+      await assertJpeg(image.path);
+      return `${image.path} ${image.width}x${image.height}`;
     });
   }
 
@@ -183,7 +193,42 @@ async function main() {
 
   await client.close();
 
-  console.log(`Estimated OpenAI cost: $${costUsd.toFixed(4)}`);
+  // The only check that ties our Gemini error mapping to the real SDK. The
+  // classification duck-types `status` off an internal error class, so a bump
+  // that renames or re-types it leaves every unit test green while every live
+  // failure degrades to a generic retry. A rejected key is free.
+  if (HAS_GEMINI) {
+    await step("live: a rejected Gemini key maps to MISSING_API_KEY", async () => {
+      const badKeyClient = new Client({ name: "hokuz-smoke-badkey", version: "0.0.0" });
+      const badKeyTransport = new StdioClientTransport({
+        command: process.execPath,
+        args: [SERVER],
+        env: { ...process.env, GEMINI_API_KEY: "not-a-real-key", GOOGLE_API_KEY: "" },
+      });
+      await badKeyClient.connect(badKeyTransport);
+      try {
+        const result = await badKeyClient.callTool({
+          name: "hokuz_generate_image",
+          arguments: {
+            prompt: "a placeholder prompt",
+            output_path: dir,
+            model: "gemini-3.1-flash-lite-image",
+          },
+        });
+        const text = result.content?.[0]?.text ?? "";
+        assert(result.isError === true, `expected an error result, got: ${text}`);
+        assert(
+          result.structuredContent?.error_type === "MISSING_API_KEY",
+          `expected error_type MISSING_API_KEY, got ${result.structuredContent?.error_type}: ${text}`
+        );
+        return text.slice(0, 90);
+      } finally {
+        await badKeyClient.close();
+      }
+    });
+  }
+
+  console.log(`Estimated cost: $${costUsd.toFixed(4)}`);
   console.log(failures === 0 ? `All steps passed. Files in ${dir}` : `${failures} step(s) failed.`);
   process.exit(failures === 0 ? 0 : 1);
 }

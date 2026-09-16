@@ -27,9 +27,11 @@ export interface GeneratedImage {
 /**
  * Token usage and estimated cost for one provider request.
  *
- * Only providers that report token counts populate this (OpenAI); the cost is
- * derived from those counts and the hand-maintained price table, so it is an
- * estimate, not a billed amount.
+ * Both providers populate this. The cost is always an estimate, never a billed
+ * amount, and its basis is whatever the provider charges on: OpenAI's token
+ * prices (OPENAI_PRICE_PER_MILLION_TOKENS) applied to the counts it reports,
+ * Google's per-image price for the requested resolution
+ * (GEMINI_PRICE_PER_IMAGE_USD), whose token counts do not determine the price.
  */
 export interface UsageReport {
   inputTokens: number;

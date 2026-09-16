@@ -14,6 +14,7 @@ import { inferOutputFormatFromPath } from "../services/file-utils.js";
 import type { GenerationConfig } from "../types.js";
 import {
   IMAGE_TOOL_ANNOTATIONS,
+  MODEL_GUIDE,
   imageToolError,
   runImageTool,
 } from "./image-tool.js";
@@ -24,18 +25,12 @@ import { DEFAULTS } from "../constants.js";
  */
 const TOOL_DESCRIPTION = `Generate images from text prompts with Google's Nano Banana (Gemini) or OpenAI's GPT Image 2.5 models; pick with \`model\`. Unsupported combinations (model x resolution / aspect ratio / output format / provider-only option) are rejected before any API call as an error result naming the supported values; nothing is silently downgraded.
 
-Models (approximate time and cost for one 1K image):
-- gemini-3.1-flash-lite-image (Nano Banana 2 Lite): ~5s, ~$0.034, 1K only. Cheapest Gemini model; drafts and batches.
-- gemini-3.1-flash-image (Nano Banana 2, DEFAULT): ~11s, ~$0.045 (0.5K) / $0.067 (1K) / $0.10 (2K) / $0.15 (4K); the only model with 1:4, 4:1, 1:8, 8:1. Best everyday choice.
-- gemini-3-pro-image (Nano Banana Pro): ~17s, ~$0.13 (1K/2K) to ~$0.24 (4K). Photorealism, hero shots, factual content.
-- gpt-image-2.5-flare (OpenAI): cost and time follow \`quality\`: low ~$0.006/10s, medium ~$0.013/14s, high ~$0.05/18s, xhigh ~$0.09/27s, max ~$0.21/46s. The cheapest image overall is flare at low. Single subjects and short text.
-- gpt-image-2.5-sunburst (OpenAI): same prices, about 1.5-2x slower (high ~30s, max ~85s). Multi-element text layouts, branding, and edits where precision matters.
-OpenAI models take 1K (~1 megapixel) or 2K (~4 megapixels, about twice the cost) at the ten base ratios; the exact pixel size is derived from the ratio and reported in the result. Gemini models produce jpeg only and report no usage; OpenAI models produce jpeg, png or webp, can render a transparent background (png/webp only), and report token usage with an estimated cost. A model whose provider key is not configured on the server fails at call time with an error naming the variable.
+${MODEL_GUIDE}
 
 Rules the schema cannot express:
 - output_path: a trailing slash or an existing directory means a timestamped file inside it; otherwise it is the file to write. Parent directories are created. An existing file is never overwritten: -2, -3, ... is appended. When output_format is omitted the path's extension (.jpg/.png/.webp) selects it, else jpeg; the saved extension always matches the format. A .png/.webp path therefore needs an OpenAI model; with a Gemini model use .jpg or a directory. The returned path is authoritative and differs from output_path when a suffix was needed.
 - quality and transparent_background are OpenAI-only; temperature is Gemini-only. An explicit value on the other provider is rejected, not ignored. Omit them and the provider applies its default (medium / 1.0). transparent_background: false is accepted everywhere.
-- num_images makes that many separate requests, one after another, so time and cost scale linearly; if a later request fails you get the images so far plus a \`warning\` naming the reason. OpenAI tier-1 accounts allow 5 images per minute.
+- num_images makes that many separate requests, one after another, so time and cost scale linearly and the whole call blocks until the last one returns (4 sunburst images at max quality is several minutes). If a later request fails you get the images so far, still as a success, plus a \`warning\` naming the reason; re-request only the shortfall. OpenAI tier-1 accounts allow 5 images per minute.
 
 Examples:
 - Draft: model="gpt-image-2.5-flare", quality="low", output_path="~/drafts/"

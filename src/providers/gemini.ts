@@ -9,7 +9,9 @@ import { GoogleGenAI } from "@google/genai";
 import {
   DEFAULTS,
   ENV_VARS,
+  GEMINI_PRICE_PER_IMAGE_USD,
   MIME_TYPES,
+  type ImageModel,
   type Resolution,
 } from "../constants.js";
 import {
@@ -105,6 +107,7 @@ function buildResponseFormat(config: GenerationConfig) {
 export interface InteractionLike {
   status?: string;
   output_text?: string;
+  usage?: { total_input_tokens?: number; total_output_tokens?: number };
   output_image?: { data?: string; mime_type?: string };
   steps?: Array<{
     type?: string;
@@ -119,9 +122,51 @@ export interface InteractionLike {
 }
 
 /**
- * Extract images and text description from an interaction response.
+ * Read a JPEG's pixel size from its SOF segment. The API reports no dimensions,
+ * and these models return JPEG only (gotcha 3), so this is the whole decoder:
+ * anything that is not a JPEG we can walk gets no width/height.
  */
-export function parseInteraction(interaction: InteractionLike): ImageResponse {
+function jpegDimensions(buf: Buffer): { width: number; height: number } | undefined {
+  if (buf.length < 4 || buf[0] !== 0xff || buf[1] !== 0xd8) return undefined;
+  let i = 2;
+  while (i + 9 < buf.length) {
+    if (buf[i] !== 0xff) return undefined; // lost marker sync
+    const marker = buf[i + 1];
+    if (marker === 0xff) {
+      i++; // fill byte
+      continue;
+    }
+    if (marker === 0xd8 || (marker >= 0xd0 && marker <= 0xd7) || marker === 0x01) {
+      i += 2; // standalone marker, no length
+      continue;
+    }
+    if (marker === 0xd9 || marker === 0xda) return undefined; // EOI or scan data before any SOF
+    const length = buf.readUInt16BE(i + 2);
+    const isSof =
+      marker >= 0xc0 && marker <= 0xcf && marker !== 0xc4 && marker !== 0xc8 && marker !== 0xcc;
+    if (isSof) {
+      const height = buf.readUInt16BE(i + 5);
+      const width = buf.readUInt16BE(i + 7);
+      // A zero edge means we misread the segment; report nothing rather than
+      // publish a 0x0 that the response text would silently drop anyway.
+      return width > 0 && height > 0 ? { width, height } : undefined;
+    }
+    i += 2 + length;
+  }
+  return undefined;
+}
+
+/**
+ * Extract images, text description and usage from an interaction response.
+ *
+ * `imagePriceUsd` is what Google charges for one image of the requested model
+ * and resolution; without it the result carries no usage rather than a cost
+ * this module cannot stand behind.
+ */
+export function parseInteraction(
+  interaction: InteractionLike,
+  imagePriceUsd?: number
+): ImageResponse {
   const images: GeneratedImage[] = [];
   const seen = new Set<string>();
   let description: string | undefined;
@@ -129,7 +174,11 @@ export function parseInteraction(interaction: InteractionLike): ImageResponse {
   const addImage = (data?: string, mimeType?: string) => {
     if (!data || seen.has(data)) return;
     seen.add(data);
-    images.push({ data, mimeType: mimeType ?? "image/jpeg" });
+    images.push({
+      data,
+      mimeType: mimeType ?? "image/jpeg",
+      ...jpegDimensions(Buffer.from(data, "base64")),
+    });
   };
 
   const addText = (text?: string) => {
@@ -166,7 +215,30 @@ export function parseInteraction(interaction: InteractionLike): ImageResponse {
     );
   }
 
-  return { images, description };
+  const { total_input_tokens: inputTokens, total_output_tokens: outputTokens } =
+    interaction.usage ?? {};
+  const usage =
+    typeof inputTokens === "number" &&
+    typeof outputTokens === "number" &&
+    imagePriceUsd !== undefined
+      ? {
+          inputTokens,
+          outputTokens,
+          // Google bills per image, so the cost scales with what came back.
+          estimatedCostUsd: imagePriceUsd * images.length,
+        }
+      : undefined;
+
+  return { images, description, usage };
+}
+
+/**
+ * What one image of this request costs, or undefined for a model/resolution
+ * the price table does not carry (unreachable: validation guarantees the
+ * resolution is supported and `constants.test.ts` guarantees it has a price).
+ */
+function imagePriceUsd(config: GenerationConfig): number | undefined {
+  return GEMINI_PRICE_PER_IMAGE_USD[config.model]?.[config.resolution ?? DEFAULTS.resolution];
 }
 
 /**
@@ -186,9 +258,9 @@ export async function generateImage(
       generation_config: { temperature: config.temperature ?? DEFAULTS.temperature },
     });
 
-    return parseInteraction(interaction as InteractionLike);
+    return parseInteraction(interaction as InteractionLike, imagePriceUsd(config));
   } catch (error) {
-    return handleApiError(error);
+    return handleApiError(error, config.model);
   }
 }
 
@@ -221,61 +293,140 @@ export async function editImage(
       generation_config: { temperature: config.temperature ?? DEFAULTS.temperature },
     });
 
-    return parseInteraction(interaction as InteractionLike);
+    return parseInteraction(interaction as InteractionLike, imagePriceUsd(config));
   } catch (error) {
-    return handleApiError(error);
+    return handleApiError(error, config.model);
   }
 }
 
 /**
- * Handle API errors and convert to McpError
+ * The fields the SDK's error classes carry that we read. `@google/genai` throws
+ * an internal Stainless-style hierarchy it does not export (the exported
+ * `ApiError` is a different, unused class), so there is nothing to `instanceof`
+ * against and the mapping below duck-types instead.
  */
-function handleApiError(error: unknown): never {
+interface GeminiApiErrorLike {
+  status?: unknown;
+  message?: unknown;
+  body?: unknown;
+  error?: { error?: { message?: unknown } };
+}
+
+/**
+ * Google's own message for a failed request.
+ *
+ * Normally it is in the parsed field (`error.error.message`). An invalid API key
+ * is the exception: the SDK leaves that field empty and puts the reason in the
+ * raw body, which is a JSON array, so the body is parsed as a fallback. Anything
+ * else falls back to the SDK's own message, whose "<status> " prefix would
+ * otherwise be repeated by our own text.
+ */
+function apiMessage(error: GeminiApiErrorLike): string {
+  const structured = error.error?.error?.message;
+  if (typeof structured === "string") return structured;
+
+  if (typeof error.body === "string") {
+    try {
+      const parsed: unknown = JSON.parse(error.body);
+      const first = Array.isArray(parsed) ? (parsed[0] as unknown) : parsed;
+      const message = (first as { error?: { message?: unknown } } | undefined)?.error?.message;
+      if (typeof message === "string") return message;
+    } catch {
+      // Not JSON; fall through to the SDK's own message.
+    }
+  }
+
+  if (typeof error.message === "string") return error.message.replace(/^\d{3} /, "");
+  return String(error);
+}
+
+/**
+ * The HTTP status of a failed request, or undefined when it never reached
+ * Google. `status` is a number on every shape captured so far, but the class
+ * that carries it is internal to the SDK, so a bump could rename or re-type it.
+ * Falling back to the `"<status> "` prefix the SDK puts on every HTTP message
+ * keeps a key rejection from being misread as a network failure worth retrying.
+ */
+function resolveStatus(error: GeminiApiErrorLike): number | undefined {
+  if (typeof error.status === "number") return error.status;
+  if (typeof error.status === "string" && /^\d{3}$/.test(error.status)) {
+    return Number(error.status);
+  }
+  const prefixed = typeof error.message === "string" && /^(\d{3}) /.exec(error.message);
+  return prefixed ? Number(prefixed[1]) : undefined;
+}
+
+/**
+ * Map a Gemini SDK error to an McpError whose message says what to do next.
+ *
+ * Classification is by HTTP status, like the OpenAI module's. The two text
+ * checks are deliberate exceptions: a rejected API key comes back as a 400 with
+ * no distinguishing code, and a safety block has no code either (no real block
+ * was triggered while capturing these shapes, so the wording is a best guess).
+ */
+function handleApiError(error: unknown, model: ImageModel): never {
   // Preserve McpErrors we raised ourselves (e.g. validation, content blocked).
   if (error instanceof McpError) {
     throw error;
   }
 
-  const errorMessage = error instanceof Error ? error.message : String(error);
+  const apiError = (error ?? {}) as GeminiApiErrorLike;
+  const message = apiMessage(apiError);
+  const status = resolveStatus(apiError);
 
-  // Check for rate limiting
-  if (
-    errorMessage.includes("429") ||
-    errorMessage.toLowerCase().includes("rate limit")
-  ) {
+  if (status === 400) {
+    const body = typeof apiError.body === "string" ? apiError.body : "";
+    if (/api key/i.test(message) || /api key/i.test(body)) {
+      throw new McpError(
+        ErrorType.MISSING_API_KEY,
+        `Error: Gemini rejected the API key: ${message}. Check ${ENV_VARS.geminiApiKey} (or ${ENV_VARS.googleApiKey}), or choose an OpenAI model.`,
+        error
+      );
+    }
+    if (/safety|blocked/i.test(message)) {
+      throw new McpError(
+        ErrorType.CONTENT_BLOCKED,
+        `Error: Gemini's safety filters blocked this request: ${message}. Rephrase the prompt or change the input images.`,
+        error
+      );
+    }
+  }
+
+  switch (status) {
+    case 401:
+    case 403:
+      throw new McpError(
+        ErrorType.MISSING_API_KEY,
+        `Error: Gemini denied the request (${status}): ${message}. Check ${ENV_VARS.geminiApiKey} (or ${ENV_VARS.googleApiKey}) and the project's billing, or choose an OpenAI model.`,
+        error
+      );
+    case 404:
+      throw new McpError(
+        ErrorType.API_ERROR,
+        `Error: Gemini reports model '${model}' was not found (${message}). The model ID may have been retired, or this resolution is not offered for it; try another Gemini model or an OpenAI model.`,
+        error
+      );
+    case 429:
+      throw new McpError(
+        ErrorType.API_RATE_LIMIT,
+        `Error: Gemini rate limit exceeded (429): ${message}. Wait a minute and retry, lower num_images, or use an OpenAI model.`,
+        error
+      );
+  }
+
+  if (status !== undefined && status >= 400 && status < 500) {
     throw new McpError(
-      ErrorType.API_RATE_LIMIT,
-      "Error: Gemini rate limit exceeded. Wait before retrying, lower num_images, or use an OpenAI model."
+      ErrorType.API_ERROR,
+      `Error: Gemini rejected the request (${status}): ${message}. Adjust the arguments accordingly.`,
+      error
     );
   }
 
-  // Check for authentication errors
-  if (
-    errorMessage.includes("401") ||
-    errorMessage.includes("403") ||
-    errorMessage.toLowerCase().includes("api key")
-  ) {
-    throw new McpError(
-      ErrorType.MISSING_API_KEY,
-      `Error: Invalid or missing API key. Please check your ${ENV_VARS.geminiApiKey} environment variable, or choose an OpenAI model.`
-    );
-  }
-
-  // Check for content safety blocks
-  if (
-    errorMessage.toLowerCase().includes("blocked") ||
-    errorMessage.toLowerCase().includes("safety")
-  ) {
-    throw new McpError(
-      ErrorType.CONTENT_BLOCKED,
-      "Error: Content was blocked by safety filters. Try modifying your prompt to be less explicit or controversial."
-    );
-  }
-
-  // Generic API error
+  // 5xx, and no status at all when the request never reached Google
+  // (connection, timeout, abort).
   throw new McpError(
     ErrorType.API_ERROR,
-    `Error: API request failed. ${errorMessage}`,
+    `Error: Gemini request failed (${status ?? "network"}): ${message}. Retry; if it persists, try an OpenAI model.`,
     error
   );
 }

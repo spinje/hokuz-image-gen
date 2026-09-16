@@ -29,9 +29,9 @@ Follow `.claude/agents/REVIEW-PROTOCOL.md` (read it first). Lens-specifics on to
 | Zod input schema + `.describe()` | `src/schemas/generate.ts`, `src/schemas/edit.ts` | hand |
 | Published JSON Schema (enums, `default`, `required`) | derived by the MCP SDK from the Zod schema | generated — but `.default()` decides `required`; dropping it makes the field required unless it is `.optional()` (gotcha 7) |
 | Handler defaults (`params.x ?? DEFAULTS.x`) | `src/tools/generate-image.ts`, `src/tools/edit-image.ts` | hand |
-| `TOOL_DESCRIPTION` template (model guidance with speed/cost, the rules the schema cannot express, examples — deliberately **not** an Args list) | top of each tool file | hand |
+| `TOOL_DESCRIPTION` template (model guidance with speed/cost, the rules the schema cannot express, examples — deliberately **not** an Args list) | top of each tool file; the shared `MODEL_GUIDE` paragraph both embed lives in `src/tools/image-tool.ts` and interpolates its Gemini prices from `GEMINI_PRICE_PER_IMAGE_USD` | hand |
 | Output Zod schema vs what the handler actually returns | `src/schemas/output.ts` vs the `output` objects in `src/tools/image-tool.ts` | hand, both sides |
-| `DEFAULTS`, `LIMITS`, `IMAGE_MODEL_CAPABILITIES` | `src/constants.ts` | hand |
+| `DEFAULTS`, `LIMITS`, `IMAGE_MODEL_CAPABILITIES`, `GEMINI_PRICE_PER_IMAGE_USD` | `src/constants.ts` | hand |
 | README parameter tables, model table, cost table | `README.md` | hand |
 | `CLAUDE.md` gotchas and constants reference | `CLAUDE.md` | hand |
 | Contract tests | `src/__tests__/server.test.ts` (enums, defaults, required, output shape), request-shape `toEqual` in `src/providers/__tests__/gemini.test.ts` and `openai.test.ts` | hand |

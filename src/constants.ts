@@ -139,6 +139,23 @@ export const OPENAI_PRICE_PER_MILLION_TOKENS = {
   imageOutput: 30,
 } as const;
 
+/**
+ * Gemini image output price in USD per image, by model and resolution.
+ * Hand-maintained from https://ai.google.dev/gemini-api/docs/pricing (Standard
+ * tier) and cited in the README; the only input to a Gemini result's estimated
+ * cost. Input and text tokens (a fraction of a cent) are deliberately not priced.
+ *
+ * Token counts cannot stand in for this: the API reports the same 1120 output
+ * image tokens for a Flash 0.5K and a Flash 1K image, which are priced apart.
+ */
+export const GEMINI_PRICE_PER_IMAGE_USD: Partial<
+  Record<ImageModel, Partial<Record<Resolution, number>>>
+> = {
+  "gemini-3.1-flash-lite-image": { "1K": 0.0336 },
+  "gemini-3.1-flash-image": { "0.5K": 0.045, "1K": 0.067, "2K": 0.101, "4K": 0.151 },
+  "gemini-3-pro-image": { "1K": 0.134, "2K": 0.134, "4K": 0.24 },
+};
+
 /** MIME types for output formats */
 export const MIME_TYPES: Record<OutputFormat, string> = {
   jpeg: "image/jpeg",

@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { createRequire } from "module";
 import { IMAGE_MODELS, QUALITIES } from "../constants.js";
+import { ErrorType } from "../types.js";
 import { connectTestClient } from "./harness.js";
 
 let harness: Awaited<ReturnType<typeof connectTestClient>>;
@@ -41,7 +42,7 @@ describe("published tool contract", () => {
       const items = outputProperties.images.items;
       expect(items.required.sort()).toEqual(["format", "path"]);
       expect(items.properties).not.toHaveProperty("dataUrl");
-      // Pixel size is optional because only OpenAI reports it.
+      // Pixel size stays optional: a JPEG header we cannot walk yields none.
       expect(Object.keys(items.properties).sort()).toEqual([
         "format",
         "height",
@@ -50,6 +51,19 @@ describe("published tool contract", () => {
       ]);
       expect(outputProperties).toHaveProperty("usage");
       expect(outputProperties).toHaveProperty("warning");
+      // error_type is how the caller picks its next step, so the published
+      // list must be every type the pipeline can actually emit.
+      expect((outputProperties.error_type as { enum: string[] }).enum).toEqual(
+        Object.values(ErrorType)
+      );
+      // The enum is what the caller matches on; the describe string is what
+      // tells it what to do about each value. A tenth type would otherwise be
+      // published with no guidance at all.
+      const errorTypeGuidance = (outputProperties.error_type as { description: string })
+        .description;
+      for (const type of Object.values(ErrorType)) {
+        expect(errorTypeGuidance).toContain(type);
+      }
       expect(tool.annotations).toEqual({
         readOnlyHint: false,
         destructiveHint: false,
