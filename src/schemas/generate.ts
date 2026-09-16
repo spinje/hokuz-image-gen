@@ -40,11 +40,11 @@ export const GenerateImageInputSchema = z
       .enum(IMAGE_MODELS)
       .default(DEFAULTS.model)
       .describe(
-        "Image model. Google (Gemini API): 'gemini-3.1-flash-image' (Nano Banana 2, balanced default, 0.5K-4K, " +
-          "extreme aspect ratios), 'gemini-3.1-flash-lite-image' (Nano Banana 2 Lite, cheapest/fastest, 1K only), " +
-          "'gemini-3-pro-image' (Nano Banana Pro, highest quality, 1K-4K). OpenAI: 'gpt-image-2.5-flare' (fast, " +
-          "everyday generation), 'gpt-image-2.5-sunburst' (slower, best editing precision); both 1K/2K, quality " +
-          `ladder via 'quality'. Default: ${DEFAULTS.model}`
+        `Options: ${IMAGE_MODELS.join(", ")}. Gemini models: gemini-3.1-flash-lite-image (cheapest ` +
+          "Gemini, 1K only), gemini-3.1-flash-image (default, 0.5K-4K, extreme ratios), " +
+          "gemini-3-pro-image (highest quality). OpenAI: gpt-image-2.5-flare (fast), " +
+          "gpt-image-2.5-sunburst (editing precision, text). See the tool description for cost and " +
+          `when to use which. Default: ${DEFAULTS.model}`
       ),
 
     aspect_ratio: z
@@ -52,8 +52,8 @@ export const GenerateImageInputSchema = z
       .default(DEFAULTS.aspectRatio)
       .describe(
         `Aspect ratio. Options: ${ASPECT_RATIOS.join(", ")}. The extreme ratios (1:4, 4:1, 1:8, 8:1) are ` +
-          "supported only by gemini-3.1-flash-image; OpenAI models accept the other ten. Unsupported " +
-          `combinations are rejected before the API call. Default: ${DEFAULTS.aspectRatio}`
+          "supported only by gemini-3.1-flash-image; OpenAI models accept the other ten. " +
+          `Default: ${DEFAULTS.aspectRatio}`
       ),
 
     resolution: z
@@ -62,8 +62,7 @@ export const GenerateImageInputSchema = z
       .describe(
         `Output resolution. Options: ${RESOLUTIONS.join(", ")}. Gemini: Lite is 1K only, Pro is 1K/2K/4K. ` +
           "OpenAI models: 1K (~1 megapixel) or 2K (~4 megapixels) only; exact pixel size is derived from " +
-          "aspect_ratio and returned in the result. Unsupported model/resolution combinations are rejected " +
-          `before the API call. Default: ${DEFAULTS.resolution}`
+          `aspect_ratio and returned in the result. Default: ${DEFAULTS.resolution}`
       ),
 
     // No .default(): see gotcha 7. With one, the handler could not tell an
@@ -92,8 +91,8 @@ export const GenerateImageInputSchema = z
       .boolean()
       .optional()
       .describe(
-        "OpenAI models only. true renders a transparent background; requires output_format png or " +
-          "webp. Gemini models reject `true`."
+        "OpenAI models only; requires output_format png or webp (or a .png/.webp output_path). " +
+          "false is accepted on every model."
       ),
 
     num_images: z

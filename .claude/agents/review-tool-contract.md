@@ -29,7 +29,7 @@ Follow `.claude/agents/REVIEW-PROTOCOL.md` (read it first). Lens-specifics on to
 | Zod input schema + `.describe()` | `src/schemas/generate.ts`, `src/schemas/edit.ts` | hand |
 | Published JSON Schema (enums, `default`, `required`) | derived by the MCP SDK from the Zod schema | generated — but `.default()` decides `required`; dropping it makes the field required unless it is `.optional()` (gotcha 7) |
 | Handler defaults (`params.x ?? DEFAULTS.x`) | `src/tools/generate-image.ts`, `src/tools/edit-image.ts` | hand |
-| `TOOL_DESCRIPTION` template (Args list, model guidance with speed/cost) | top of each tool file | hand |
+| `TOOL_DESCRIPTION` template (model guidance with speed/cost, the rules the schema cannot express, examples — deliberately **not** an Args list) | top of each tool file | hand |
 | Output Zod schema vs what the handler actually returns | `src/schemas/*.ts` vs the `output` object in each handler | hand, both sides |
 | `DEFAULTS`, `LIMITS`, `IMAGE_MODEL_CAPABILITIES` | `src/constants.ts` | hand |
 | README parameter tables, model table, cost table | `README.md` | hand |
@@ -44,7 +44,7 @@ Follow `.claude/agents/REVIEW-PROTOCOL.md` (read it first). Lens-specifics on to
 ## Review Checklist
 
 ### 1. Schema ↔ Handler ↔ Description Agreement
-For every parameter the diff touches: same option list in the Zod enum, the `.describe()` text, the `TOOL_DESCRIPTION` Args line, and the README row? Same default in `.default()`, `DEFAULTS`, the handler's `??`, and the prose? A default that exists in one place and not another is a finding — the SDK applies `.default()`, so the handler's fallback is only defence in depth, but the DESCRIPTION is what the LLM reads.
+For every parameter the diff touches: same option list in the Zod enum, the `.describe()` text, the README row, and — where the description mentions the parameter at all — the `TOOL_DESCRIPTION`? A description that has started restating the schema (an args list, a returns block, an option enum) is itself a finding: that duplication is where the known drift lived, and `server.test.ts` pins only the model IDs and quality levels. Same default in `.default()`, `DEFAULTS`, the handler's `??`, and the prose? A default that exists in one place and not another is a finding — the SDK applies `.default()`, so the handler's fallback is only defence in depth, but the DESCRIPTION is what the LLM reads.
 
 ### 2. Published Shape
 Does the change alter what `listTools` returns — a new field, a changed `required` list, a changed enum? If so, is that intended, and is the contract test updated? A field that lost `.default()` becomes required — unless it is `.optional()` (gotcha 7) — and every existing caller that omits it now gets an `isError` result.

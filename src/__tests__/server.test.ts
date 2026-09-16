@@ -1,5 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { createRequire } from "module";
+import { IMAGE_MODELS, QUALITIES } from "../constants.js";
 import { connectTestClient } from "./harness.js";
 
 let harness: Awaited<ReturnType<typeof connectTestClient>>;
@@ -55,6 +56,30 @@ describe("published tool contract", () => {
         idempotentHint: false,
         openWorldHint: true,
       });
+    }
+  });
+
+  it("names every model and every quality level in both descriptions the LLM reads", async () => {
+    // The tool description, the model describe string, the README and this file
+    // are hand-maintained and drift apart silently. This is the mechanical half
+    // of keeping them in sync: a model or quality added to the registry without
+    // a word about it in the text the caller reads fails here.
+    const { tools } = await harness.client.listTools();
+    expect(tools).toHaveLength(2);
+
+    for (const tool of tools) {
+      const modelDescription = (
+        tool.inputSchema.properties as Record<string, { description?: string }>
+      ).model.description;
+
+      for (const model of IMAGE_MODELS) {
+        expect(tool.description).toContain(model);
+        expect(modelDescription).toContain(model);
+      }
+      for (const quality of QUALITIES) {
+        // Word boundaries: "low" is a substring of "follow", "high" of "xhigh".
+        expect(tool.description).toMatch(new RegExp(`\\b${quality}\\b`));
+      }
     }
   });
 
