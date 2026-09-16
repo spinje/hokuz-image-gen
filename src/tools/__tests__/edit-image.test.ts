@@ -189,6 +189,20 @@ describe(TOOL, () => {
     expect(editMock).toHaveBeenCalledTimes(1);
   });
 
+  it("takes the output format from the output_path's extension, which then faces validation", async () => {
+    // The generate tool proves the precedence; this guards edit's own copy of
+    // the line, which nothing else here would notice going missing.
+    const result = await harness.callTool(TOOL, {
+      prompt: "p",
+      image_paths: [first],
+      output_path: path.join(tmp, "out.png"),
+    });
+
+    expect(result.isError).toBe(true);
+    expect(firstText(result)).toMatch(/does not support output_format 'png'/);
+    expect(editMock).not.toHaveBeenCalled();
+  });
+
   it("rejects an explicit resolution on an OpenAI model with the default 'auto' ratio", async () => {
     // With a schema default on resolution the handler could not tell this from
     // "the caller said nothing", and the 2K would be silently ignored.
