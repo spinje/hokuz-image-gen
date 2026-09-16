@@ -37,15 +37,15 @@ const TOOL_DESCRIPTION = `Edit images with text instructions using Google's Nano
 
 Models (approximate time and cost for one 1K image):
 - gemini-3.1-flash-lite-image (Nano Banana 2 Lite): ~5s, ~$0.034, 1K only. Cheapest Gemini model; drafts and batches.
-- gemini-3.1-flash-image (Nano Banana 2, DEFAULT): ~11s, ~$0.045-$0.15 by resolution (0.5K-4K); the only model with 1:4, 4:1, 1:8, 8:1. Best everyday choice.
+- gemini-3.1-flash-image (Nano Banana 2, DEFAULT): ~11s, ~$0.045 (0.5K) / $0.067 (1K) / $0.10 (2K) / $0.15 (4K); the only model with 1:4, 4:1, 1:8, 8:1. Best everyday choice.
 - gemini-3-pro-image (Nano Banana Pro): ~17s, ~$0.13 (1K/2K) to ~$0.24 (4K). Photorealism, hero shots, factual content.
-- gpt-image-2.5-flare (OpenAI): cost and time follow \`quality\`: low ~$0.006/10s, medium ~$0.013/14s, high ~$0.05/18s, xhigh ~$0.09/27s, max ~$0.21/46s. The cheapest image overall is flare at low. Strong text rendering.
-- gpt-image-2.5-sunburst (OpenAI): same prices, about 1.5-2x slower (high ~30s, max ~85s). Best for text-heavy posters, branding and precise composition.
-OpenAI models take 1K (~1 megapixel) or 2K (~4 megapixels, about twice the cost) at the ten base ratios; the exact pixel size is derived from the ratio and reported in the result. Gemini models produce jpeg only and report no usage; OpenAI models produce jpeg, png or webp, can render a transparent background (png/webp only), and report token usage with an estimated cost.
+- gpt-image-2.5-flare (OpenAI): cost and time follow \`quality\`: low ~$0.006/10s, medium ~$0.013/14s, high ~$0.05/18s, xhigh ~$0.09/27s, max ~$0.21/46s. The cheapest image overall is flare at low. Single subjects and short text.
+- gpt-image-2.5-sunburst (OpenAI): same prices, about 1.5-2x slower (high ~30s, max ~85s). Multi-element text layouts, branding, and edits where precision matters.
+OpenAI models take 1K (~1 megapixel) or 2K (~4 megapixels, about twice the cost) at the ten base ratios; the exact pixel size is derived from the ratio and reported in the result. Gemini models produce jpeg only and report no usage; OpenAI models produce jpeg, png or webp, can render a transparent background (png/webp only), and report token usage with an estimated cost. A model whose provider key is not configured on the server fails at call time with an error naming the variable.
 
 Rules the schema cannot express:
-- image_paths: local paths or URLs, in the order the prompt refers to them ("first image"). Gemini models: up to 14 images, 7 MB each, jpeg/png/webp/gif/heic/heif. OpenAI models: up to 16, 50 MB each, jpeg/png/webp only. A reference image costs ~$0.01 on OpenAI and a fraction of a cent on Gemini, so prefer gemini-3.1-flash-image for compositions with 4+ references.
-- aspect_ratio "auto" (the default, whether omitted or passed): Gemini models keep the input's exact framing and apply resolution (1K unless set). OpenAI models re-render at a size of their own choosing near the input's ratio, and resolution must then be omitted (an explicit resolution with auto is rejected); set a ratio to control the size, which recomposes the image. Only Gemini preserves the input framing pixel for pixel.
+- image_paths: local paths or URLs, in the order the prompt refers to them ("first image"). Gemini models: up to 14 images, 7 MB each, jpeg/png/webp/gif/heic/heif. OpenAI models: up to 16, 50 MB each, jpeg/png/webp only. A reference image costs ~$0.01 on OpenAI and a fraction of a cent on Gemini, so prefer gemini-3.1-flash-image for compositions with 4+ references. Each image is checked for type and size before any API call; the first bad one fails the whole call.
+- aspect_ratio "auto" (the default): Gemini models keep the input's framing and composition and re-render it at resolution (1K unless set), so set 2K or 4K to keep the detail of a large input. OpenAI models re-render at a size of their own choosing near the input's ratio (roughly 1-2 megapixels), and resolution must then be omitted (an explicit resolution with auto is rejected); set a ratio to control the size, which recomposes the image. Only Gemini keeps the original framing.
 - There is no mask or inpainting: describe the region to change in the prompt and say what must stay unchanged.
 - output_path, provider-only options and num_images behave as in hokuz_generate_image.
 

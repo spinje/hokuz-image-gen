@@ -105,7 +105,7 @@ export const EditImageInputSchema = z
       .optional()
       .describe(
         `OpenAI models only. Options: ${QUALITIES.join(", ")}. Cost per 1K image scales roughly ` +
-          "$0.006 / $0.013 / $0.05 / $0.09 / $0.21 and latency 10 s to 90 s. Use medium for drafts and most " +
+          "$0.006 / $0.013 / $0.05 / $0.09 / $0.21 and latency ~10-46 s (flare) or ~16-85 s (sunburst). Use low for throwaway drafts, medium for most " +
           "work, high for final assets, xhigh/max only when high visibly fails. Gemini models reject this " +
           `option. Default for OpenAI models: ${DEFAULTS.quality}`
       ),
@@ -163,8 +163,8 @@ export const EditImageOutputSchema = z.object({
   images: z
     .array(
       z.object({
-        path: z.string().describe("File path where the image was saved"),
-        format: z.string().describe("Image format (jpeg, png or webp)"),
+        path: z.string().describe("File path where the image was saved; authoritative, and different from output_path when a -2, -3 suffix was needed"),
+        format: z.enum(OUTPUT_FORMATS).describe("Image format"),
         width: z
           .number()
           .optional()
