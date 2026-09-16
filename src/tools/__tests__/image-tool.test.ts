@@ -123,6 +123,23 @@ describe("image tool pipeline", () => {
     });
   });
 
+  it("wraps a non-McpError in the tool's own 'Unexpected error' message", async () => {
+    // Every provider failure is an McpError whose message passes through as
+    // is; this is the one branch that composes a message, and the activity
+    // word in it is per handler.
+    generateMock.mockRejectedValue(new Error("boom"));
+
+    const result = await harness.callTool(TOOL, { prompt: "p", output_path: tmp });
+
+    expect(result.isError).toBe(true);
+    expect(firstText(result)).toBe("Error: Unexpected error during image generation. boom");
+    expect(result.structuredContent).toEqual({
+      success: false,
+      images: [],
+      error: "Error: Unexpected error during image generation. boom",
+    });
+  });
+
   it("reports the provider's pixel size and sums usage across the num_images loop", async () => {
     generateMock.mockResolvedValue({
       images: [{ data: IMG, mimeType: "image/jpeg", width: 1360, height: 768 }],
