@@ -144,7 +144,13 @@ function jpegDimensions(buf: Buffer): { width: number; height: number } | undefi
     const length = buf.readUInt16BE(i + 2);
     const isSof =
       marker >= 0xc0 && marker <= 0xcf && marker !== 0xc4 && marker !== 0xc8 && marker !== 0xcc;
-    if (isSof) return { height: buf.readUInt16BE(i + 5), width: buf.readUInt16BE(i + 7) };
+    if (isSof) {
+      const height = buf.readUInt16BE(i + 5);
+      const width = buf.readUInt16BE(i + 7);
+      // A zero edge means we misread the segment; report nothing rather than
+      // publish a 0x0 that the response text would silently drop anyway.
+      return width > 0 && height > 0 ? { width, height } : undefined;
+    }
     i += 2 + length;
   }
   return undefined;
@@ -309,10 +315,11 @@ interface GeminiApiErrorLike {
 /**
  * Google's own message for a failed request.
  *
- * Normally it is in the parsed body (`error.error.message`). An invalid API key
- * is the exception: the SDK leaves the body unparsed and it is a JSON array, so
- * that case is read from `body`. Anything else falls back to the SDK's message,
- * whose "<status> " prefix would otherwise be repeated by our own text.
+ * Normally it is in the parsed field (`error.error.message`). An invalid API key
+ * is the exception: the SDK leaves that field empty and puts the reason in the
+ * raw body, which is a JSON array, so the body is parsed as a fallback. Anything
+ * else falls back to the SDK's own message, whose "<status> " prefix would
+ * otherwise be repeated by our own text.
  */
 function apiMessage(error: GeminiApiErrorLike): string {
   const structured = error.error?.error?.message;
@@ -334,6 +341,22 @@ function apiMessage(error: GeminiApiErrorLike): string {
 }
 
 /**
+ * The HTTP status of a failed request, or undefined when it never reached
+ * Google. `status` is a number on every shape captured so far, but the class
+ * that carries it is internal to the SDK, so a bump could rename or re-type it.
+ * Falling back to the `"<status> "` prefix the SDK puts on every HTTP message
+ * keeps a key rejection from being misread as a network failure worth retrying.
+ */
+function resolveStatus(error: GeminiApiErrorLike): number | undefined {
+  if (typeof error.status === "number") return error.status;
+  if (typeof error.status === "string" && /^\d{3}$/.test(error.status)) {
+    return Number(error.status);
+  }
+  const prefixed = typeof error.message === "string" && /^(\d{3}) /.exec(error.message);
+  return prefixed ? Number(prefixed[1]) : undefined;
+}
+
+/**
  * Map a Gemini SDK error to an McpError whose message says what to do next.
  *
  * Classification is by HTTP status, like the OpenAI module's. The two text
@@ -349,7 +372,7 @@ function handleApiError(error: unknown, model: ImageModel): never {
 
   const apiError = (error ?? {}) as GeminiApiErrorLike;
   const message = apiMessage(apiError);
-  const status = typeof apiError.status === "number" ? apiError.status : undefined;
+  const status = resolveStatus(apiError);
 
   if (status === 400) {
     const body = typeof apiError.body === "string" ? apiError.body : "";

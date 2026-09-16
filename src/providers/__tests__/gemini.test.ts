@@ -146,6 +146,18 @@ describe("image dimensions", () => {
     });
     expect(notAJpeg.images[0]).toEqual({ data: IMG_A, mimeType: "image/jpeg" });
   });
+
+  it("reports no size rather than a 0x0 one when the segment reads as zero", () => {
+    // The response text drops a zero edge as falsy, so publishing it in
+    // structuredContent alone would make the two channels disagree.
+    const zeroSized = parseInteraction({
+      output_image: { data: jpeg(0xc0, 0, 768), mime_type: "image/jpeg" },
+    });
+    const [image] = zeroSized.images;
+    expect(image).not.toHaveProperty("width");
+    expect(image).not.toHaveProperty("height");
+    expect(image.data).toBeTruthy();
+  });
 });
 
 describe("usage and estimated cost", () => {
@@ -299,7 +311,9 @@ describe("API error mapping", () => {
    */
   function apiError(args: {
     message: string;
-    status?: number;
+    // Deliberately wider than the live shape: the class carrying it is internal
+    // to the SDK, so a bump could re-type it and the mapping must cope.
+    status?: number | string;
     error?: unknown;
     body?: string;
   }): Error {
@@ -374,6 +388,29 @@ describe("API error mapping", () => {
       }),
       ErrorType.MISSING_API_KEY,
       "Error: Gemini rejected the API key: API error occurred. Check GEMINI_API_KEY (or GOOGLE_API_KEY), or choose an OpenAI model.",
+    ],
+    [
+      "a rejected key whose status the SDK exposes as a string, not a number",
+      apiError({
+        message: '400 API error occurred: [{"error":{"code":400,...}}]',
+        // An SDK bump could re-type this. Reading it as "no status" would call
+        // an unrecoverable key rejection a network blip and advise a retry.
+        status: "400",
+        error: { httpMeta: {} },
+        body: '[{"error":{"message":"API key not valid. Please pass a valid API key."}}]',
+      }),
+      ErrorType.MISSING_API_KEY,
+      "Error: Gemini rejected the API key: API key not valid. Please pass a valid API key.. Check GEMINI_API_KEY (or GOOGLE_API_KEY), or choose an OpenAI model.",
+    ],
+    [
+      "a rate limit whose status survives only in the SDK's message prefix",
+      apiError({
+        message: "429 Resource has been exhausted (e.g. check quota).",
+        status: undefined,
+        error: { error: { message: "Resource has been exhausted (e.g. check quota)." } },
+      }),
+      ErrorType.API_RATE_LIMIT,
+      "Error: Gemini rate limit exceeded (429): Resource has been exhausted (e.g. check quota).. Wait a minute and retry, lower num_images, or use an OpenAI model.",
     ],
     [
       "a safety block (400)",
