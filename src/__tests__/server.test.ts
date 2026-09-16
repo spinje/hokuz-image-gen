@@ -49,7 +49,28 @@ describe("published tool contract", () => {
         "path",
         "width",
       ]);
-      expect(outputProperties).toHaveProperty("usage");
+      // usage is what a caller quotes back as "this cost $X", so its shape is
+      // the claim: the counts are optional because a provider can price a
+      // request without reporting them, cost_basis says whether they produced
+      // the cost at all, and the two request counts say what the totals cover.
+      const usage = outputProperties.usage as {
+        properties: Record<string, unknown>;
+        required: string[];
+      };
+      expect(Object.keys(usage.properties).sort()).toEqual([
+        "cost_basis",
+        "estimated_cost_usd",
+        "input_tokens",
+        "output_tokens",
+        "requests_reported",
+        "requests_succeeded",
+      ]);
+      expect(usage.required.sort()).toEqual([
+        "cost_basis",
+        "estimated_cost_usd",
+        "requests_reported",
+        "requests_succeeded",
+      ]);
       expect(outputProperties).toHaveProperty("warning");
       // error_type is how the caller picks its next step, so the published
       // list must be every type the pipeline can actually emit.
@@ -64,6 +85,10 @@ describe("published tool contract", () => {
       for (const type of Object.values(ErrorType)) {
         expect(errorTypeGuidance).toContain(type);
       }
+      // retryable answers what error_type cannot: whether the same call again
+      // could work. No default — it is absent on a success, not "false".
+      expect(outputProperties.retryable).toMatchObject({ type: "boolean" });
+      expect(outputProperties.retryable).not.toHaveProperty("default");
       expect(tool.annotations).toEqual({
         readOnlyHint: false,
         destructiveHint: false,

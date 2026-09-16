@@ -126,6 +126,8 @@ describe("image tool pipeline", () => {
         "Error: No images were generated. The content may have been blocked by safety filters. Try modifying your prompt.",
       // The McpError's own type, so the caller can act without parsing prose.
       error_type: "CONTENT_BLOCKED",
+      // Nothing about repeating this call would change the verdict.
+      retryable: false,
     });
   });
 
@@ -144,13 +146,62 @@ describe("image tool pipeline", () => {
       images: [],
       error: "Error: Unexpected error during image generation. boom",
       error_type: "UNKNOWN_ERROR",
+      // We have no idea what went wrong, so we do not invite a retry.
+      retryable: false,
+    });
+  });
+
+  it("lets a provider's own verdict override the type's default", async () => {
+    // API_ERROR is retryable by type, so a 4xx the mapper marked unretryable
+    // would otherwise be published as "try again" and be rejected again.
+    generateMock.mockRejectedValue(
+      new McpError(
+        ErrorType.API_ERROR,
+        "Error: OpenAI rejected the request: Invalid value. Adjust the arguments accordingly.",
+        undefined,
+        { retryable: false }
+      )
+    );
+
+    const rejected = await harness.callTool(TOOL, { prompt: "p", output_path: tmp });
+    expect(rejected.structuredContent).toMatchObject({
+      error_type: "API_ERROR",
+      retryable: false,
+    });
+
+    // The table's other true: a rate limit clears on its own, and the schema
+    // tells the caller to wait and retry, so the verdict must agree.
+    generateMock.mockRejectedValue(
+      new McpError(ErrorType.API_RATE_LIMIT, "Error: Rate limit exceeded.")
+    );
+    const rateLimited = await harness.callTool(TOOL, { prompt: "p", output_path: tmp });
+    expect(rateLimited.structuredContent).toMatchObject({
+      error_type: "API_RATE_LIMIT",
+      retryable: true,
+    });
+
+    // Without a verdict from the mapper the table answers, and for API_ERROR
+    // (a 5xx or a dropped connection) its answer is "retry".
+    generateMock.mockRejectedValue(
+      new McpError(ErrorType.API_ERROR, "Error: Gemini request failed (network): fetch failed.")
+    );
+
+    const transient = await harness.callTool(TOOL, { prompt: "p", output_path: tmp });
+    expect(transient.structuredContent).toMatchObject({
+      error_type: "API_ERROR",
+      retryable: true,
     });
   });
 
   it("reports the provider's pixel size and sums usage across the num_images loop", async () => {
     generateMock.mockResolvedValue({
       images: [{ data: IMG, mimeType: "image/jpeg", width: 1360, height: 768 }],
-      usage: { inputTokens: 15, outputTokens: 229, estimatedCostUsd: 0.007 },
+      usage: {
+        inputTokens: 15,
+        outputTokens: 229,
+        estimatedCostUsd: 0.007,
+        costBasis: "tokens",
+      },
     });
 
     const result = await harness.callTool(TOOL, {
@@ -162,7 +213,14 @@ describe("image tool pipeline", () => {
     });
 
     expect(result.structuredContent).toMatchObject({
-      usage: { input_tokens: 30, output_tokens: 458, estimated_cost_usd: 0.014 },
+      usage: {
+        input_tokens: 30,
+        output_tokens: 458,
+        estimated_cost_usd: 0.014,
+        cost_basis: "tokens",
+        requests_succeeded: 2,
+        requests_reported: 2,
+      },
     });
     const images = (result.structuredContent as {
       images: Array<{ width?: number; height?: number }>;
@@ -173,7 +231,7 @@ describe("image tool pipeline", () => {
     ]);
     expect(firstText(result)).toContain("(1360x768)");
     expect(firstText(result)).toContain(
-      "Usage: 30 input + 458 output tokens, estimated cost $0.0140"
+      "Usage: 30 input + 458 output tokens, estimated cost $0.0140 (from those token counts)"
     );
   });
 
@@ -181,7 +239,12 @@ describe("image tool pipeline", () => {
     generateMock
       .mockResolvedValueOnce({
         images: [{ data: IMG, mimeType: "image/jpeg" }],
-        usage: { inputTokens: 15, outputTokens: 229, estimatedCostUsd: 0.007 },
+        usage: {
+          inputTokens: 15,
+          outputTokens: 229,
+          estimatedCostUsd: 0.007,
+          costBasis: "tokens",
+        },
       })
       .mockResolvedValueOnce(okResponse());
 
@@ -194,8 +257,78 @@ describe("image tool pipeline", () => {
 
     expect(generateMock).toHaveBeenCalledTimes(2);
     expect(firstText(result)).toContain(
-      "Usage (reported for 1 of 2 requests): 15 input + 229 output tokens, estimated cost $0.0070"
+      "Usage (reported for 1 of 2 requests): 15 input + 229 output tokens, estimated cost $0.0070 (from those token counts)"
     );
+    // The same scope in the structured channel: a caller reading only that one
+    // must not take the totals for the whole call's cost.
+    expect(result.structuredContent).toMatchObject({
+      usage: { requests_succeeded: 2, requests_reported: 1 },
+    });
+  });
+
+  it("sums the counts of the requests that reported them, ignoring those that did not", async () => {
+    // Gemini prices per image, so a request can carry a cost with no counts.
+    generateMock
+      .mockResolvedValueOnce({
+        images: [{ data: IMG, mimeType: "image/jpeg" }],
+        usage: {
+          inputTokens: 9,
+          outputTokens: 1481,
+          estimatedCostUsd: 0.0625,
+          costBasis: "per_image",
+        },
+      })
+      .mockResolvedValueOnce({
+        images: [{ data: IMG, mimeType: "image/jpeg" }],
+        usage: { estimatedCostUsd: 0.0625, costBasis: "per_image" },
+      });
+
+    const result = await harness.callTool(TOOL, {
+      prompt: "p",
+      output_path: tmp,
+      num_images: 2,
+    });
+
+    expect(result.structuredContent).toMatchObject({
+      usage: {
+        input_tokens: 9,
+        output_tokens: 1481,
+        estimated_cost_usd: 0.125,
+        cost_basis: "per_image",
+        // Both requests priced their image, so the totals cover the whole call.
+        requests_succeeded: 2,
+        requests_reported: 2,
+      },
+    });
+    expect(firstText(result)).toContain(
+      "Usage: 9 input + 1481 output tokens, estimated cost $0.1250 (the provider's per-image price, not derived from those tokens)"
+    );
+  });
+
+  it("omits a token count entirely rather than reporting 0 when no request gave one", async () => {
+    // A 0 would assert the provider charged nothing for input, which is a
+    // different claim from "the provider did not say". Both channels stay quiet.
+    generateMock.mockResolvedValue({
+      images: [{ data: IMG, mimeType: "image/jpeg" }],
+      usage: { estimatedCostUsd: 0.067, costBasis: "per_image" },
+    });
+
+    const result = await harness.callTool(TOOL, { prompt: "p", output_path: tmp });
+
+    const usage = (result.structuredContent as { usage: Record<string, unknown> }).usage;
+    expect(usage).toEqual({
+      estimated_cost_usd: 0.067,
+      cost_basis: "per_image",
+      requests_succeeded: 1,
+      requests_reported: 1,
+    });
+    expect(firstText(result)).toContain(
+      "Usage: estimated cost $0.0670 (the provider's per-image price, not derived from those tokens)"
+    );
+    // No count is named. The basis clause still says "tokens" to deny them, so
+    // match the shape a count would take rather than the bare word.
+    expect(firstText(result)).not.toMatch(/\d+ input/);
+    expect(firstText(result)).not.toMatch(/\d+ output/);
   });
 
   it("omits usage and dimensions for a provider that reports neither", async () => {

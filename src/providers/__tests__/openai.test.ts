@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeEach, vi } from "vitest";
 import { APIConnectionError, APIError } from "openai";
 import { IMAGE_MODEL_CAPABILITIES } from "../../constants.js";
-import { ErrorType, type GenerationConfig } from "../../types.js";
+import { ErrorType, McpError, type GenerationConfig } from "../../types.js";
 
 const FLARE = IMAGE_MODEL_CAPABILITIES["gpt-image-2.5-flare"];
 
@@ -226,6 +226,8 @@ describe("response parsing", () => {
     expect(response.usage?.inputTokens).toBe(1039);
     expect(response.usage?.outputTokens).toBe(229);
     expect(response.usage?.estimatedCostUsd).toBeCloseTo(0.015137, 9);
+    // The counts above are what produced that cost, unlike Gemini's per-image price.
+    expect(response.usage?.costBasis).toBe("tokens");
   });
 
   it("reports the size the provider chose for an edit sent with size 'auto'", async () => {
@@ -342,6 +344,28 @@ describe("API error mapping", () => {
           "Error: OpenAI rejected the request: Invalid value. Adjust the arguments accordingly.",
       })
     );
+  });
+
+  it("says a 4xx is not worth retrying and leaves the 5xx tail's verdict open", async () => {
+    // Every one of these is API_ERROR, the type that spans both a 500 worth
+    // retrying and an argument the API will reject again.
+    // 403 and 404 have their own branches; 400 reaches the generic 4xx one.
+    for (const status of [403, 404, 400]) {
+      generateMock.mockRejectedValue(apiError(status, { message: "boom" }));
+      await expect(generateImage("p", baseConfig)).rejects.toMatchObject({
+        type: ErrorType.API_ERROR,
+        retryable: false,
+      });
+    }
+
+    // A 500 and a 408 both leave the verdict open so the type's default stands.
+    for (const status of [500, 408]) {
+      generateMock.mockRejectedValue(apiError(status, { message: "boom" }));
+      await expect(generateImage("p", baseConfig)).rejects.toSatisfy(
+        (e: unknown) =>
+          e instanceof McpError && e.type === ErrorType.API_ERROR && e.retryable === undefined
+      );
+    }
   });
 
   it("maps a connection failure with no status to a retryable API_ERROR", async () => {

@@ -177,6 +177,7 @@ describe("usage and estimated cost", () => {
       inputTokens: 9,
       outputTokens: 1481,
       estimatedCostUsd: 0.0336,
+      costBasis: "per_image",
     });
 
     // One interaction can carry more than one image, and Google charges per
@@ -193,9 +194,13 @@ describe("usage and estimated cost", () => {
     expect(two.usage?.estimatedCostUsd).toBe(0.0672);
   });
 
-  it("still returns the image when the response reports no usage", () => {
+  it("still reports the per-image cost when the response reports no token counts", () => {
+    // The price comes from the model and resolution we sent, not from the
+    // response, so a missing `usage` block must not throw that cost away.
     const result = parseInteraction({ output_image: { data: IMG_A } }, 0.0336);
-    expect(result.usage).toBeUndefined();
+    expect(result.usage).toEqual({ estimatedCostUsd: 0.0336, costBasis: "per_image" });
+    expect(result.usage).not.toHaveProperty("inputTokens");
+    expect(result.usage).not.toHaveProperty("outputTokens");
     expect(result.images).toHaveLength(1);
   });
 
@@ -212,6 +217,8 @@ describe("usage and estimated cost", () => {
 
     const oneK = await generateImage("p", baseConfig);
     expect(oneK.usage?.estimatedCostUsd).toBe(0.067);
+    // Google charges per image; the counts beside it did not produce that cost.
+    expect(oneK.usage?.costBasis).toBe("per_image");
 
     const fourK = await generateImage("p", { ...baseConfig, resolution: "4K" });
     expect(fourK.usage?.estimatedCostUsd).toBe(0.151);
@@ -468,6 +475,51 @@ describe("API error mapping", () => {
       await expect(generateImage("p", baseConfig)).rejects.toMatchObject({ type, message });
     });
   }
+
+  it("says a 4xx is not worth retrying, since the request itself is what failed", async () => {
+    // API_ERROR spans a retired model ID and a 500, so the type alone cannot
+    // tell the caller whether to try again; the status can.
+    // 404 has its own branch; 400 is the likeliest Gemini rejection and reaches
+    // the generic 4xx branch, so both are exercised.
+    for (const status of [404, 400]) {
+      createMock.mockRejectedValue(
+        apiError({
+          message: `${status} Requested entity was not found.`,
+          status,
+          error: googleBody("Requested entity was not found.", status),
+        })
+      );
+
+      await expect(generateImage("p", baseConfig)).rejects.toMatchObject({
+        type: ErrorType.API_ERROR,
+        retryable: false,
+      });
+    }
+  });
+
+  it("leaves a 408 retryable, since a timeout can clear without the call changing", async () => {
+    createMock.mockRejectedValue(
+      apiError({
+        message: "408 Request Timeout",
+        status: 408,
+        error: googleBody("Request Timeout", 408),
+      })
+    );
+
+    await expect(generateImage("p", baseConfig)).rejects.toSatisfy(
+      (e: unknown) =>
+        e instanceof McpError && e.type === ErrorType.API_ERROR && e.retryable === undefined
+    );
+  });
+
+  it("passes no verdict on a 5xx, leaving the type's default (retry) to stand", async () => {
+    createMock.mockRejectedValue(apiError({ message: "503 Service Unavailable", status: 503 }));
+
+    await expect(generateImage("p", baseConfig)).rejects.toSatisfy(
+      (e: unknown) =>
+        e instanceof McpError && e.type === ErrorType.API_ERROR && e.retryable === undefined
+    );
+  });
 
   it("re-throws McpErrors raised inside the request path with their original message", async () => {
     // parseInteraction throws CONTENT_BLOCKED when the response has no image.

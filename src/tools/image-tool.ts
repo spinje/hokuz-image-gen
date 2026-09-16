@@ -79,15 +79,29 @@ export interface ImageToolRun {
 /**
  * Add up the per-request usage reports of one tool call (num_images makes one
  * request per image). Undefined when no request reported usage.
+ *
+ * A token count is summed over the reports that carry it and omitted entirely
+ * when none does: a 0 would claim the provider charged nothing for it, which is
+ * a different statement from "the provider did not say". Every request in one
+ * call goes to one model, so they share one cost basis: the first report's.
  */
 function sumUsage(usages: UsageReport[]): UsageReport | undefined {
-  if (usages.length === 0) return undefined;
+  const [first] = usages;
+  if (!first) return undefined;
 
-  return usages.reduce((total, usage) => ({
-    inputTokens: total.inputTokens + usage.inputTokens,
-    outputTokens: total.outputTokens + usage.outputTokens,
-    estimatedCostUsd: total.estimatedCostUsd + usage.estimatedCostUsd,
-  }));
+  const sum = (count: (usage: UsageReport) => number | undefined) => {
+    const reported = usages.flatMap((usage) => count(usage) ?? []);
+    return reported.length ? reported.reduce((total, n) => total + n, 0) : undefined;
+  };
+  const inputTokens = sum((usage) => usage.inputTokens);
+  const outputTokens = sum((usage) => usage.outputTokens);
+
+  return {
+    ...(inputTokens !== undefined ? { inputTokens } : {}),
+    ...(outputTokens !== undefined ? { outputTokens } : {}),
+    estimatedCostUsd: usages.reduce((total, usage) => total + usage.estimatedCostUsd, 0),
+    costBasis: first.costBasis,
+  };
 }
 
 /** The num_images loop, saving, usage, warning, text and structured output. */
@@ -157,9 +171,14 @@ export async function runImageTool({
     images: outputImages,
     description,
     usage: usage && {
-      input_tokens: usage.inputTokens,
-      output_tokens: usage.outputTokens,
+      ...(usage.inputTokens !== undefined ? { input_tokens: usage.inputTokens } : {}),
+      ...(usage.outputTokens !== undefined ? { output_tokens: usage.outputTokens } : {}),
       estimated_cost_usd: usage.estimatedCostUsd,
+      cost_basis: usage.costBasis,
+      // The same two numbers the text line's scope clause uses, so a caller
+      // reading either channel sees the same scope.
+      requests_succeeded: successfulRequests,
+      requests_reported: usages.length,
     },
     warning,
   };
@@ -180,7 +199,21 @@ export async function runImageTool({
       usages.length < successfulRequests
         ? ` (reported for ${usages.length} of ${successfulRequests} requests)`
         : "";
-    textContent += `\n\nUsage${scope}: ${usage.inputTokens} input + ${usage.outputTokens} output tokens, estimated cost $${usage.estimatedCostUsd.toFixed(4)}`;
+    // A cost can arrive without counts (Google prices per image), so name only
+    // the counts the provider reported rather than printing an undefined.
+    const counts = [
+      usage.inputTokens !== undefined ? `${usage.inputTokens} input` : undefined,
+      usage.outputTokens !== undefined ? `${usage.outputTokens} output` : undefined,
+    ].filter((count) => count !== undefined);
+    const tokens = counts.length ? `${counts.join(" + ")} tokens, ` : "";
+    // Name the basis here too. Counts printed next to a cost they did not
+    // produce invite exactly the arithmetic cost_basis exists to prevent, and a
+    // client that surfaces only this text would never see that field.
+    const basis =
+      usage.costBasis === "tokens"
+        ? " (from those token counts)"
+        : " (the provider's per-image price, not derived from those tokens)";
+    textContent += `\n\nUsage${scope}: ${tokens}estimated cost $${usage.estimatedCostUsd.toFixed(4)}${basis}`;
   }
   if (warning) {
     textContent += `\n\nWarning: ${warning}`;
@@ -194,6 +227,24 @@ export async function runImageTool({
     structuredContent: output,
   };
 }
+
+/**
+ * Whether a type is worth retrying when nothing about the call changes. The
+ * provider mappers override API_ERROR, the one type that spans both a 500 and
+ * a 400; this table is the answer for every other type and the fallback for an
+ * API_ERROR raised outside a mapper.
+ */
+const RETRYABLE_BY_TYPE: Record<ErrorType, boolean> = {
+  [ErrorType.MISSING_API_KEY]: false,
+  [ErrorType.INVALID_IMAGE_PATH]: false,
+  [ErrorType.IMAGE_TOO_LARGE]: false,
+  [ErrorType.API_RATE_LIMIT]: true,
+  [ErrorType.CONTENT_BLOCKED]: false,
+  [ErrorType.FILE_WRITE_ERROR]: false,
+  [ErrorType.API_ERROR]: true,
+  [ErrorType.INVALID_MODEL_OPTION]: false,
+  [ErrorType.UNKNOWN_ERROR]: false,
+};
 
 /** The uniform failure result. `activity` is "generation" or "editing". */
 export function imageToolError(
@@ -210,6 +261,10 @@ export function imageToolError(
     images: [],
     error: errorMessage,
     error_type: error instanceof McpError ? error.type : ErrorType.UNKNOWN_ERROR,
+    retryable:
+      error instanceof McpError
+        ? (error.retryable ?? RETRYABLE_BY_TYPE[error.type])
+        : false,
   };
 
   return {

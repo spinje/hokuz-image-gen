@@ -340,6 +340,27 @@ describe("loadInputImage", () => {
     );
   });
 
+  it("separates a transient fetch failure from a URL that is simply wrong", async () => {
+    // INVALID_IMAGE_PATH otherwise means "fix the arguments", so a timeout or a
+    // failing host would tell the caller to rewrite a URL that is already right.
+    vi.stubGlobal("fetch", vi.fn().mockRejectedValue(Object.assign(new Error("t"), { name: "TimeoutError" })));
+    await expect(loadInputImage("https://example.com/pic.jpg", GEMINI)).rejects.toMatchObject({
+      type: ErrorType.INVALID_IMAGE_PATH,
+      retryable: true,
+    });
+
+    stubFetch(new Response(null, { status: 503 }));
+    await expect(loadInputImage("https://example.com/pic.jpg", GEMINI)).rejects.toMatchObject({
+      retryable: true,
+    });
+
+    // A 404 from the host is the URL being wrong, and repeating it cannot help.
+    stubFetch(new Response(null, { status: 404 }));
+    await expect(loadInputImage("https://example.com/pic.jpg", GEMINI)).rejects.toMatchObject({
+      retryable: false,
+    });
+  });
+
   it("does not treat non-http schemes as URLs", async () => {
     const fetchMock = vi.fn();
     vi.stubGlobal("fetch", fetchMock);

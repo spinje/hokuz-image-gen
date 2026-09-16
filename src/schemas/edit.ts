@@ -121,7 +121,7 @@ export const EditImageInputSchema = z
       .optional()
       .describe(
         "OpenAI models only; requires output_format png or webp (or a .png/.webp output_path). " +
-          "false is accepted on every model. Default: opaque."
+          "false is accepted on every model. Default: false (opaque)."
       ),
 
     num_images: z

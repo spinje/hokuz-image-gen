@@ -92,6 +92,11 @@ async function main() {
         out.usage?.estimated_cost_usd === 0.0336,
         `expected an estimated cost of $0.0336, got ${out.usage?.estimated_cost_usd}`
       );
+      // The only live observation of which basis each provider reports.
+      assert(
+        out.usage?.cost_basis === "per_image",
+        `expected cost_basis per_image, got ${out.usage?.cost_basis}`
+      );
       geminiImage = image.path;
       await assertJpeg(geminiImage);
       return `${geminiImage} ${size} $${out.usage.estimated_cost_usd.toFixed(4)}`;
@@ -127,6 +132,11 @@ async function main() {
       const size = `${image.width}x${image.height}`;
       assert(size === "1360x768", `expected 1360x768, got ${size}`);
       assert(out.usage?.estimated_cost_usd > 0, "no estimated cost reported");
+      // The only live observation that this provider prices by token.
+      assert(
+        out.usage?.cost_basis === "tokens",
+        `expected cost_basis tokens, got ${out.usage?.cost_basis}`
+      );
       flareImage = image.path;
       await assertJpeg(flareImage);
       return `${size} $${out.usage.estimated_cost_usd.toFixed(4)}`;

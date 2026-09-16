@@ -65,7 +65,8 @@ export const GenerateImageInputSchema = z
       .enum(RESOLUTIONS)
       .default(DEFAULTS.resolution)
       .describe(
-        `Output resolution. Options: ${RESOLUTIONS.join(", ")}. Gemini: Lite is 1K only, Pro is 1K/2K/4K. ` +
+        `Output resolution. Options: ${RESOLUTIONS.join(", ")}. Gemini: Flash is 0.5K-4K and the only ` +
+          "model with 0.5K, Lite is 1K only, Pro is 1K/2K/4K. " +
           "OpenAI models: 1K (~1 megapixel) or 2K (~4 megapixels) only; exact pixel size is derived from " +
           `aspect_ratio and returned in the result. Default: ${DEFAULTS.resolution}`
       ),
@@ -97,7 +98,7 @@ export const GenerateImageInputSchema = z
       .optional()
       .describe(
         "OpenAI models only; requires output_format png or webp (or a .png/.webp output_path). " +
-          "false is accepted on every model. Default: opaque."
+          "false is accepted on every model. Default: false (opaque)."
       ),
 
     num_images: z

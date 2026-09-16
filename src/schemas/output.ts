@@ -34,14 +34,39 @@ export const ImageToolOutputSchema = z.object({
     .describe("Model's text description of the result, when it gave one"),
   usage: z
     .object({
-      input_tokens: z.number(),
-      output_tokens: z.number(),
-      estimated_cost_usd: z.number(),
+      input_tokens: z
+        .number()
+        .optional()
+        .describe(
+          "Prompt and input-image tokens, summed over the requests that reported them. Absent when no request's response carried a token count, which says nothing about how many were used."
+        ),
+      output_tokens: z
+        .number()
+        .optional()
+        .describe("Generated-image tokens, summed over the requests that reported them"),
+      estimated_cost_usd: z
+        .number()
+        .describe(
+          "The total for the requests_reported requests, not the price of one image. Estimated, never billed. Read cost_basis before relating it to the token counts."
+        ),
+      cost_basis: z
+        .enum(["tokens", "per_image"])
+        .describe(
+          "How estimated_cost_usd was arrived at. 'tokens': arithmetic over the counts above and a price table (OpenAI). 'per_image': Google's published price for the model and resolution (Gemini) — the counts above are real but did NOT produce this cost, and input and text tokens, a fraction of a cent, are not in it."
+        ),
+      requests_succeeded: z
+        .number()
+        .describe(
+          "Provider requests that returned an image; num_images makes one request per image. A request that failed is not counted here and is described in warning instead."
+        ),
+      requests_reported: z
+        .number()
+        .describe(
+          "How many of those requests estimated_cost_usd covers. Lower than requests_succeeded means it is a partial view of the call, not its whole cost. The token counts have their own scope: each is summed only over the requests that reported it, which can be fewer still."
+        ),
     })
     .optional()
-    .describe(
-      "Token usage summed over the requests made, with an estimated cost: from the token counts on OpenAI models, from Google's per-image price for the resolution on Gemini models (input and text tokens, a fraction of a cent, are not included)"
-    ),
+    .describe("Token usage and an estimated cost for the requests that reported them"),
   warning: z
     .string()
     .optional()
@@ -56,7 +81,13 @@ export const ImageToolOutputSchema = z.object({
     .enum(ErrorType)
     .optional()
     .describe(
-      "Why the call failed, for choosing the next step. INVALID_MODEL_OPTION, INVALID_IMAGE_PATH, IMAGE_TOO_LARGE: fix the arguments. CONTENT_BLOCKED: rephrase the prompt or change the input images. API_RATE_LIMIT: wait, then retry. MISSING_API_KEY: the provider's key is missing, invalid or denied; use the other provider. API_ERROR: read `error` — retry when it names a network or 5xx failure, otherwise fix the arguments it names or switch model. FILE_WRITE_ERROR: fix output_path. UNKNOWN_ERROR: unexpected."
+      "Why the call failed, for choosing the next step. INVALID_MODEL_OPTION, INVALID_IMAGE_PATH, IMAGE_TOO_LARGE: fix the arguments. CONTENT_BLOCKED: rephrase the prompt or change the input images. API_RATE_LIMIT: wait, then retry. MISSING_API_KEY: the provider's key is missing, invalid or denied; use the other provider. API_ERROR: the provider failed the request; read retryable rather than guessing from the message. FILE_WRITE_ERROR: fix output_path. UNKNOWN_ERROR: unexpected."
+    ),
+  retryable: z
+    .boolean()
+    .optional()
+    .describe(
+      "Whether repeating the identical call could succeed. false means it cannot: change the arguments, the prompt, or the server's configuration first. Wait before retrying when error_type is API_RATE_LIMIT."
     ),
 });
 
