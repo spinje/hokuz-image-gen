@@ -27,7 +27,7 @@ Follow `.claude/agents/REVIEW-PROTOCOL.md` (read it first). Lens-specifics on to
 | `prompt` | sent to the API | capped at `LIMITS.maxPromptLength` (50 000 chars) |
 | stdout | MCP JSON-RPC channel | `console.log` is a lint error; `console.error` only |
 
-**Known pre-existing behaviours (recorded, not findings unless the diff touches them):** silent overwrite of an existing output file; unrestricted fetch host; symlinks followed on read and write. (Unbounded fetch buffering and the missing fetch timeout were closed by `loadInputImage`.) These are trade-offs not yet decided, not endorsements — a change that touches the same code should be asked whether it makes them worse or is the moment to fix them.
+**Known pre-existing behaviours (recorded, not findings unless the diff touches them):** unrestricted fetch host; symlinks followed on read and write. (Unbounded fetch buffering and the missing fetch timeout were closed by `loadInputImage`; silent overwrite of an existing output file was closed by `resolveOutputPath`, which resolves to the first name not already on disk.) These are trade-offs not yet decided, not endorsements — a change that touches the same code should be asked whether it makes them worse or is the moment to fix them.
 
 ## Review Checklist
 

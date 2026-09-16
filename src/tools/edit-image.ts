@@ -80,7 +80,7 @@ export function registerEditImageTool(server: McpServer): void {
       outputSchema: EditImageOutputSchema,
       annotations: {
         readOnlyHint: false, // Always writes the result to output_path
-        destructiveHint: false, // Doesn't delete existing data
+        destructiveHint: false, // Never deletes or overwrites an existing file
         idempotentHint: false, // Same inputs can produce different results
         openWorldHint: true, // Interacts with an external provider API
       },

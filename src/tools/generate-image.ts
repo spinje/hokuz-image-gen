@@ -75,7 +75,7 @@ export function registerGenerateImageTool(server: McpServer): void {
       outputSchema: GenerateImageOutputSchema,
       annotations: {
         readOnlyHint: false, // Always writes the result to output_path
-        destructiveHint: false, // Doesn't delete existing data
+        destructiveHint: false, // Never deletes or overwrites an existing file
         idempotentHint: false, // Same prompt produces different images
         openWorldHint: true, // Interacts with an external provider API
       },

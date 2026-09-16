@@ -116,9 +116,12 @@ export async function resolveOutputPath(
   const endsWithSeparator = /[\\/]$/.test(outputPath);
   if (endsWithSeparator || (await isDirectory(absolutePath))) {
     await ensureDirectory(absolutePath);
-    // Generate filename in the directory
-    const filename = `${generateTimestampFilename()}${index > 0 ? `-${index + 1}` : ""}${extension}`;
-    return path.join(absolutePath, filename);
+    return nextFreeName(
+      absolutePath,
+      generateTimestampFilename(),
+      extension,
+      index
+    );
   }
 
   // Check if parent directory exists
@@ -135,9 +138,28 @@ export async function resolveOutputPath(
     ? path.basename(absolutePath, ext)
     : path.basename(absolutePath);
 
-  const suffix = index > 0 ? `-${index + 1}` : "";
+  return nextFreeName(parentDir, baseName, extension, index);
+}
 
-  return path.join(parentDir, `${baseName}${suffix}${extension}`);
+/**
+ * The first name in `dir` that is not taken: `base.ext`, then `base-2.ext`,
+ * `base-3.ext`, and so on. `index` (0-based) is where the search starts, so
+ * the images of one num_images call keep their order, and an existing file
+ * pushes every later one along rather than being overwritten.
+ */
+async function nextFreeName(
+  dir: string,
+  baseName: string,
+  extension: string,
+  index: number
+): Promise<string> {
+  for (let n = index; ; n++) {
+    const candidate = path.join(
+      dir,
+      `${baseName}${n > 0 ? `-${n + 1}` : ""}${extension}`
+    );
+    if (!(await pathExists(candidate))) return candidate;
+  }
 }
 
 /**

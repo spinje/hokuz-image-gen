@@ -209,7 +209,9 @@ One singleton `OpenAI` client from `OPENAI_API_KEY`. Both calls send `{ model, p
 "~/images/foo.png"                     → file mode: extension replaced → foo.jpg (jpeg)
 "~/images/foo"                         → file mode: extension appended → foo.jpg (jpeg)
 A TRAILING SEPARATOR always means directory, even if it does not exist yet.
-index ≥ 1 appends -2, -3, … in both modes (this is the same-millisecond collision guard).
+index ≥ 1 appends -2, -3, … in both modes, and so does an existing file: the
+resolved name is the first one not on disk, so a saved image never overwrites
+one (which is what `destructiveHint: false` claims).
 ```
 
 `loadInputImage(pathOrUrl, model)` is the only way an edit input enters the process. It checks **type → allowlist → size → read** and stops at the first failure, so the bytes of an image the model would reject are never read:
