@@ -171,7 +171,7 @@ Give such an option a `.default()` and every call it cannot apply to starts eith
 
 **Before a test counts as done, mutate the code it guards and read the failure count.** A test that stays green when its behaviour breaks is deleted, not kept. Restore mutations from a saved copy, never with `git checkout -- <file>` on a dirty tree.
 
-**Manual verification** after changes that touch the API path: `npm run build && npm run smoke` (about 10 cents, needs both keys; it skips a provider whose key is absent and says so). `scripts/smoke.mjs` drives the built server over stdio and asserts a generate and an edit per provider, a transparent PNG on disk, and the pre-flight rejections that must cost nothing.
+**Manual verification** after changes that touch the API path: `npm run build && npm run smoke` (about 10 cents, needs both keys; it skips a provider whose key is absent and says so). `scripts/smoke.mjs` drives the built server over stdio and asserts a generate and an edit per provider (with the pixel size and estimated cost each now reports), a transparent PNG on disk, the pre-flight rejections that must cost nothing, and one live rejected-key call. That last step is the only thing tying the Gemini error mapping to the real SDK: the classification duck-types `status` off an error class the SDK does not export, so a bump that renames or re-types it would leave every unit test green while every live failure degraded to a generic retry. A rejected key is free.
 
 ## Adding a Parameter or a Tool
 

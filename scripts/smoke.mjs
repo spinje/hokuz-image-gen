@@ -193,6 +193,41 @@ async function main() {
 
   await client.close();
 
+  // The only check that ties our Gemini error mapping to the real SDK. The
+  // classification duck-types `status` off an internal error class, so a bump
+  // that renames or re-types it leaves every unit test green while every live
+  // failure degrades to a generic retry. A rejected key is free.
+  if (HAS_GEMINI) {
+    await step("live: a rejected Gemini key maps to MISSING_API_KEY", async () => {
+      const badKeyClient = new Client({ name: "hokuz-smoke-badkey", version: "0.0.0" });
+      const badKeyTransport = new StdioClientTransport({
+        command: process.execPath,
+        args: [SERVER],
+        env: { ...process.env, GEMINI_API_KEY: "not-a-real-key", GOOGLE_API_KEY: "" },
+      });
+      await badKeyClient.connect(badKeyTransport);
+      try {
+        const result = await badKeyClient.callTool({
+          name: "hokuz_generate_image",
+          arguments: {
+            prompt: "a placeholder prompt",
+            output_path: dir,
+            model: "gemini-3.1-flash-lite-image",
+          },
+        });
+        const text = result.content?.[0]?.text ?? "";
+        assert(result.isError === true, `expected an error result, got: ${text}`);
+        assert(
+          result.structuredContent?.error_type === "MISSING_API_KEY",
+          `expected error_type MISSING_API_KEY, got ${result.structuredContent?.error_type}: ${text}`
+        );
+        return text.slice(0, 90);
+      } finally {
+        await badKeyClient.close();
+      }
+    });
+  }
+
   console.log(`Estimated cost: $${costUsd.toFixed(4)}`);
   console.log(failures === 0 ? `All steps passed. Files in ${dir}` : `${failures} step(s) failed.`);
   process.exit(failures === 0 ? 0 : 1);
