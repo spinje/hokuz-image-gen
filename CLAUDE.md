@@ -251,7 +251,7 @@ All failures become `McpError(type, message, details?)` with an actionable messa
 2. New resolution/aspect tokens go in `RESOLUTIONS` / `ASPECT_RATIOS` (a new resolution also needs its Gemini `image_size` token in `IMAGE_SIZE_API_VALUES` in `providers/gemini.ts`, and its pixel area in `RESOLUTION_PIXEL_AREA` in `providers/openai.ts`).
 3. Smoke-test the ID against that provider's API; IDs are not guaranteed stable.
 4. If the model belongs to a new provider, add it to `Provider`, write `providers/<name>.ts` exporting `label`, `hasApiKey`, `generateImage` and `editImage`, add it to the `PROVIDERS` table in `providers/index.ts`, and add the key to `ENV_VARS`.
-5. Update the model enum assertion in `server.test.ts`, the model paragraphs in both `TOOL_DESCRIPTION`s and both schemas' `model.describe()`, and the README model and cost tables. Speed/cost figures are hand-maintained in those four places.
+5. Update the model enum assertion in `server.test.ts`, the model line in `MODEL_GUIDE` (`tools/image-tool.ts`, which both `TOOL_DESCRIPTION`s embed, so it is edited once), both schemas' `model.describe()`, and the README model and cost tables. A Gemini model's prices in `MODEL_GUIDE` come from `GEMINI_PRICE_PER_IMAGE_USD` and must not be typed in; its latency, the OpenAI figures and the README tables are still hand-maintained.
 
 ## Claude's Operating Guidelines
 

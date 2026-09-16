@@ -30,13 +30,12 @@ import { DEFAULTS } from "../constants.js";
 const TOOL_DESCRIPTION = `Edit images with text instructions using Google's Nano Banana (Gemini) or OpenAI's GPT Image 2.5 models; pick with \`model\`. Basic edits ("remove the background"), style transfer, character consistency, colorization, object manipulation and multi-image composition. Unsupported combinations (model x resolution / aspect ratio / output format / provider-only option) are rejected before any image is loaded and before any API call, as an error result naming the supported values; nothing is silently downgraded.
 
 ${MODEL_GUIDE}
-OpenAI models take 1K (~1 megapixel) or 2K (~4 megapixels, about twice the cost) at the ten base ratios; the exact pixel size is derived from the ratio. Every result reports each image's pixel size and an estimated cost (Google's per-image price on Gemini, token-based on OpenAI). Gemini models produce jpeg only; OpenAI models produce jpeg, png or webp and can render a transparent background (png/webp only). A model whose provider key is not configured on the server fails at call time with an error naming the variable.
 
 Rules the schema cannot express:
 - image_paths: local paths or URLs, in the order the prompt refers to them ("first image"). Gemini models: up to 14 images, 7 MB each, jpeg/png/webp/gif/heic/heif. OpenAI models: up to 16, 50 MB each, jpeg/png/webp only. A reference image costs ~$0.01 on OpenAI and a fraction of a cent on Gemini, so prefer gemini-3.1-flash-image for compositions with 4+ references. Each image is checked for type and size before any API call; the first bad one fails the whole call.
 - aspect_ratio "auto" (the default): Gemini models keep the input's framing and composition and re-render it at resolution (1K unless set), so set 2K or 4K to keep the detail of a large input. OpenAI models re-render at a size of their own choosing near the input's ratio (roughly 1-2 megapixels), and resolution must then be omitted (an explicit resolution with auto is rejected); set a ratio to control the size, which recomposes the image. Only Gemini keeps the original framing.
 - There is no mask or inpainting: describe the region to change in the prompt and say what must stay unchanged.
-- output_path, provider-only options and num_images behave as in hokuz_generate_image.
+- output_path, provider-only options and num_images behave as in hokuz_generate_image; in particular a .png or .webp output_path selects that format and therefore needs an OpenAI model.
 
 Examples:
 - Faithful edit: model="gemini-3-pro-image", prompt="Change the jacket to navy; keep everything else identical"

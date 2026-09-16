@@ -19,7 +19,7 @@ An MCP (Model Context Protocol) server for generating and editing images using G
 - **Multi-Image Composition**: Combine up to 14 images (Gemini) or 16 (OpenAI) into new compositions
 - **High Resolution**: Up to 4K output (model-dependent)
 - **PNG, WebP and transparent backgrounds**: OpenAI models produce `jpeg`, `png` or `webp`, with an optional transparent background (png/webp only)
-- **Cost reporting**: every result reports the pixel size of each image and an estimated cost — Google's per-image price on Gemini models, the measured token counts on OpenAI models
+- **Cost reporting**: results report the pixel size of each image and an estimated cost — Google's per-image price on Gemini models, the measured token counts on OpenAI models
 - **Model-aware validation**: Unsupported combinations of model, resolution, aspect ratio and provider-only option are rejected before any API call — no silent downgrades
 
 ## Models
@@ -61,7 +61,7 @@ These are the prices the server estimates a Gemini result's cost with (`GEMINI_P
 | `xhigh`   | ~$0.09      | ~27 s        | ~47 s           |
 | `max`     | ~$0.21      | ~46 s        | ~85 s           |
 
-`2K` roughly doubles the output-token cost of the same quality. `output_format` does not change the price, but a PNG file is roughly 16x the size of the same image as JPEG on disk. Reference images on an edit cost about $0.01 each (~1000 input tokens per 1K image), versus a fraction of a cent on Gemini — for compositions with 4+ reference images prefer `gemini-3.1-flash-image`. OpenAI prices are token-based ($5 / $8 / $30 per million text-input / image-input / image-output tokens, **verify on the [OpenAI pricing page](https://developers.openai.com/api/docs/pricing)**). Every result reports an estimated cost: from the measured token counts on OpenAI models, from Google's per-image price for the requested resolution on Gemini models (input and text tokens, a fraction of a cent, are not included).
+`2K` roughly doubles the output-token cost of the same quality. `output_format` does not change the price, but a PNG file is roughly 16x the size of the same image as JPEG on disk. Reference images on an edit cost about $0.01 each (~1000 input tokens per 1K image), versus a fraction of a cent on Gemini — for compositions with 4+ reference images prefer `gemini-3.1-flash-image`. OpenAI prices are token-based ($5 / $8 / $30 per million text-input / image-input / image-output tokens, **verify on the [OpenAI pricing page](https://developers.openai.com/api/docs/pricing)**). Results report an estimated cost: from the measured token counts on OpenAI models, from Google's per-image price for the requested resolution on Gemini models (input and text tokens, a fraction of a cent, are not included).
 
 **Rule of thumb:** default to **Flash** for everyday work; drop to **Lite** for drafts, thumbnails, and high-volume batches where speed and cost matter most; reach for **Pro** for hero shots, photorealism, and cinematic lighting where the extra time and cost are justified. Reach for **Flare** or **Sunburst** when the image carries text or must match a precise composition, and raise `quality` only as far as the result needs.
 
@@ -181,7 +181,7 @@ output_path: ~/images/headshot.jpg
 aspect_ratio: 3:4
 ```
 
-**Returns** (both tools): `{ success, images: [{ path, format, width?, height? }], description?, usage?, warning?, error?, error_type? }`. `width`/`height` are each image's pixel size, reported for both providers. `usage` — `{ input_tokens, output_tokens, estimated_cost_usd }`, summed over the requests made — is present for both providers, and its cost is always estimated, never billed: from the token counts on OpenAI, from Google's per-image price for the resolution on Gemini. `warning` is set when fewer images than requested were produced and carries the failing request's error. `error_type` accompanies `error` with the failure class — `INVALID_MODEL_OPTION`, `INVALID_IMAGE_PATH`, `IMAGE_TOO_LARGE`, `CONTENT_BLOCKED`, `API_RATE_LIMIT`, `MISSING_API_KEY`, `API_ERROR`, `FILE_WRITE_ERROR` or `UNKNOWN_ERROR` — so a caller can pick its next step without parsing the message.
+**Returns** (both tools): `{ success, images: [{ path, format, width?, height? }], description?, usage?, warning?, error?, error_type? }`. `width`/`height` are each image's pixel size, reported for both providers, and omitted rather than guessed if a response's bytes cannot be read. `usage` — `{ input_tokens, output_tokens, estimated_cost_usd }`, summed over the requests made — is reported by both providers, and its cost is always estimated, never billed: from the token counts on OpenAI, from Google's per-image price for the resolution on Gemini. Note that on Gemini the token counts are real but do **not** determine that cost. `warning` is set when fewer images than requested were produced; the call still succeeds and carries the failing request's error. `error_type` accompanies `error` with the failure class — `INVALID_MODEL_OPTION`, `INVALID_IMAGE_PATH`, `IMAGE_TOO_LARGE`, `CONTENT_BLOCKED`, `API_RATE_LIMIT`, `MISSING_API_KEY`, `API_ERROR`, `FILE_WRITE_ERROR` or `UNKNOWN_ERROR` — so a caller can pick its next step without parsing the message.
 
 ### hokuz_edit_image
 
@@ -339,8 +339,17 @@ GPT Image models may require organisation verification in the [OpenAI dashboard]
 ### "OpenAI's content moderation blocked this request"
 The prompt or an input image tripped OpenAI's moderation. The message names the stage and categories; rephrase the prompt or change the inputs.
 
-### "Content was blocked"
-The prompt may have triggered safety filters. Try rephrasing with less explicit or controversial content.
+### "No images were generated" / "Gemini's safety filters blocked this request"
+The prompt may have triggered safety filters. Try rephrasing with less explicit or controversial content. Gemini returns a blocked request either as a response carrying no image (the first message) or as a 400 naming safety (the second); both come back as `error_type` `CONTENT_BLOCKED`.
+
+### "Gemini rejected the API key"
+Google answers an invalid key with a 400 rather than a 401. Check `GEMINI_API_KEY` (or `GOOGLE_API_KEY`) in the MCP server's environment — get a key at [AI Studio](https://aistudio.google.com/) — or use an OpenAI model.
+
+### "Gemini denied the request (403)"
+The key is valid but not allowed to call this model: check the project's billing and API enablement in the Google Cloud console, or use an OpenAI model.
+
+### "Gemini reports model '…' was not found"
+A 404 means either the model ID has been retired or the requested resolution is not offered for it. Verify the ID against the [models list](https://ai.google.dev/gemini-api/docs/models), try another Gemini model, or use an OpenAI model.
 
 ### "Rate limit exceeded"
 You've made too many requests. Wait a few minutes before trying again. OpenAI tier-1 accounts allow about 5 images per minute, so `num_images: 4` on a GPT Image model is close to the ceiling.

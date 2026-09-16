@@ -168,10 +168,11 @@ export function parseInteraction(
   const addImage = (data?: string, mimeType?: string) => {
     if (!data || seen.has(data)) return;
     seen.add(data);
-    const mime = mimeType ?? "image/jpeg";
-    const dimensions =
-      mime === "image/jpeg" ? jpegDimensions(Buffer.from(data, "base64")) : undefined;
-    images.push({ data, mimeType: mime, ...dimensions });
+    images.push({
+      data,
+      mimeType: mimeType ?? "image/jpeg",
+      ...jpegDimensions(Buffer.from(data, "base64")),
+    });
   };
 
   const addText = (text?: string) => {
@@ -350,16 +351,6 @@ function handleApiError(error: unknown, model: ImageModel): never {
   const message = apiMessage(apiError);
   const status = typeof apiError.status === "number" ? apiError.status : undefined;
 
-  // No status at all means the request never reached Google (connection,
-  // timeout, abort).
-  if (status === undefined) {
-    throw new McpError(
-      ErrorType.API_ERROR,
-      `Error: Gemini request failed (network): ${message}. Retry; if it persists, try an OpenAI model.`,
-      error
-    );
-  }
-
   if (status === 400) {
     const body = typeof apiError.body === "string" ? apiError.body : "";
     if (/api key/i.test(message) || /api key/i.test(body)) {
@@ -400,7 +391,7 @@ function handleApiError(error: unknown, model: ImageModel): never {
       );
   }
 
-  if (status >= 400 && status < 500) {
+  if (status !== undefined && status >= 400 && status < 500) {
     throw new McpError(
       ErrorType.API_ERROR,
       `Error: Gemini rejected the request (${status}): ${message}. Adjust the arguments accordingly.`,
@@ -408,9 +399,11 @@ function handleApiError(error: unknown, model: ImageModel): never {
     );
   }
 
+  // 5xx, and no status at all when the request never reached Google
+  // (connection, timeout, abort).
   throw new McpError(
     ErrorType.API_ERROR,
-    `Error: Gemini request failed (${status}): ${message}. Retry; if it persists, try an OpenAI model.`,
+    `Error: Gemini request failed (${status ?? "network"}): ${message}. Retry; if it persists, try an OpenAI model.`,
     error
   );
 }

@@ -53,7 +53,10 @@ export const EditImageInputSchema = z
       .string()
       .min(1, "Output path is required")
       .describe(
-        "Local file path to save the edited image. Can be a directory (filename will be auto-generated with timestamp) or a full file path."
+        "Where to save the edited image. A trailing slash, or a path that is already a directory, " +
+          "means a timestamped file inside it; anything else is the file to write, and its extension " +
+          "is replaced to match the output format. An existing file is never overwritten (-2, -3 is " +
+          "appended), so use the path returned in the result."
       ),
 
     model: z
@@ -83,9 +86,9 @@ export const EditImageInputSchema = z
       .optional()
       .describe(
         `Output resolution: ${RESOLUTIONS.join(", ")} per model (Lite 1K only; Pro 1K/2K/4K; OpenAI ` +
-          "1K/2K). Omit it unless you also set an aspect_ratio: Gemini applies 1K when omitted; on " +
-          "OpenAI models with aspect_ratio 'auto' the provider chooses the size and an explicit " +
-          "resolution is rejected."
+          "1K/2K). Gemini models re-render the edit at this resolution, 1K when omitted, so set 2K " +
+          "or 4K to keep a large input's detail. OpenAI models reject it unless you also set an " +
+          "aspect_ratio, because with 'auto' the provider chooses the size itself."
       ),
 
     // No .default(): see gotcha 7. With one, the handler could not tell an
@@ -115,7 +118,7 @@ export const EditImageInputSchema = z
       .optional()
       .describe(
         "OpenAI models only; requires output_format png or webp (or a .png/.webp output_path). " +
-          "false is accepted on every model."
+          "false is accepted on every model. Default: opaque."
       ),
 
     num_images: z

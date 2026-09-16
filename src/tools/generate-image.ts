@@ -26,7 +26,6 @@ import { DEFAULTS } from "../constants.js";
 const TOOL_DESCRIPTION = `Generate images from text prompts with Google's Nano Banana (Gemini) or OpenAI's GPT Image 2.5 models; pick with \`model\`. Unsupported combinations (model x resolution / aspect ratio / output format / provider-only option) are rejected before any API call as an error result naming the supported values; nothing is silently downgraded.
 
 ${MODEL_GUIDE}
-OpenAI models take 1K (~1 megapixel) or 2K (~4 megapixels, about twice the cost) at the ten base ratios; the exact pixel size is derived from the ratio. Every result reports each image's pixel size and an estimated cost (Google's per-image price on Gemini, token-based on OpenAI). Gemini models produce jpeg only; OpenAI models produce jpeg, png or webp and can render a transparent background (png/webp only). A model whose provider key is not configured on the server fails at call time with an error naming the variable.
 
 Rules the schema cannot express:
 - output_path: a trailing slash or an existing directory means a timestamped file inside it; otherwise it is the file to write. Parent directories are created. An existing file is never overwritten: -2, -3, ... is appended. When output_format is omitted the path's extension (.jpg/.png/.webp) selects it, else jpeg; the saved extension always matches the format. A .png/.webp path therefore needs an OpenAI model; with a Gemini model use .jpg or a directory. The returned path is authoritative and differs from output_path when a suffix was needed.

@@ -56,6 +56,14 @@ describe("published tool contract", () => {
       expect((outputProperties.error_type as { enum: string[] }).enum).toEqual(
         Object.values(ErrorType)
       );
+      // The enum is what the caller matches on; the describe string is what
+      // tells it what to do about each value. A tenth type would otherwise be
+      // published with no guidance at all.
+      const errorTypeGuidance = (outputProperties.error_type as { description: string })
+        .description;
+      for (const type of Object.values(ErrorType)) {
+        expect(errorTypeGuidance).toContain(type);
+      }
       expect(tool.annotations).toEqual({
         readOnlyHint: false,
         destructiveHint: false,

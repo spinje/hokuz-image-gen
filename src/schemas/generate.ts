@@ -33,7 +33,10 @@ export const GenerateImageInputSchema = z
       .string()
       .min(1, "Output path is required")
       .describe(
-        "Local file path to save the generated image. Can be a directory (filename will be auto-generated with timestamp) or a full file path."
+        "Where to save the generated image. A trailing slash, or a path that is already a directory, " +
+          "means a timestamped file inside it; anything else is the file to write, and its extension " +
+          "is replaced to match the output format. An existing file is never overwritten (-2, -3 is " +
+          "appended), so use the path returned in the result."
       ),
 
     model: z
@@ -92,7 +95,7 @@ export const GenerateImageInputSchema = z
       .optional()
       .describe(
         "OpenAI models only; requires output_format png or webp (or a .png/.webp output_path). " +
-          "false is accepted on every model."
+          "false is accepted on every model. Default: opaque."
       ),
 
     num_images: z

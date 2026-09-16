@@ -106,11 +106,15 @@ describe("parseInteraction", () => {
 
 describe("image dimensions", () => {
   /**
-   * SOI, a minimal APP0 segment, then a SOF segment carrying the size. The
-   * provider reads the size out of the bytes because the API reports none.
+   * SOI, a minimal APP0 segment, a Huffman table, then a SOF segment carrying
+   * the size. The provider reads the size out of the bytes because the API
+   * reports none. The DHT is load-bearing: its marker (0xC4) sits inside the
+   * 0xC0-0xCF range, so a walk that does not exclude it would read the size out
+   * of Huffman bytes and report an invented one.
    */
   function jpeg(sofMarker: number, width: number, height: number): string {
     const app0 = Buffer.from([0xff, 0xe0, 0x00, 0x04, 0x00, 0x00]);
+    const dht = Buffer.from([0xff, 0xc4, 0x00, 0x06, 0x00, 0x11, 0x22, 0x33]);
     const sof = Buffer.alloc(11);
     sof.writeUInt8(0xff, 0);
     sof.writeUInt8(sofMarker, 1);
@@ -122,6 +126,7 @@ describe("image dimensions", () => {
     return Buffer.concat([
       Buffer.from([0xff, 0xd8]),
       app0,
+      dht,
       sof,
       Buffer.alloc(16), // trailing bytes the walk never reaches
     ]).toString("base64");
@@ -178,6 +183,14 @@ describe("usage and estimated cost", () => {
 
   it("still returns the image when the response reports no usage", () => {
     const result = parseInteraction({ output_image: { data: IMG_A } }, 0.0336);
+    expect(result.usage).toBeUndefined();
+    expect(result.images).toHaveLength(1);
+  });
+
+  it("reports no usage rather than a NaN cost when no price is known", () => {
+    // Unreachable in production (validation plus the constants invariant), so
+    // this pins the choice not to publish a cost the module cannot stand behind.
+    const result = parseInteraction({ output_image: { data: IMG_A }, usage: USAGE });
     expect(result.usage).toBeUndefined();
     expect(result.images).toHaveLength(1);
   });
@@ -348,6 +361,19 @@ describe("API error mapping", () => {
       }),
       ErrorType.MISSING_API_KEY,
       "Error: Gemini rejected the API key: API key not valid. Please pass a valid API key.. Check GEMINI_API_KEY (or GOOGLE_API_KEY), or choose an OpenAI model.",
+    ],
+    [
+      "an invalid API key behind a body that is not JSON at all (400)",
+      apiError({
+        message: "400 API error occurred",
+        status: 400,
+        error: { httpMeta: {} },
+        // A gateway can answer with HTML. Nothing parses, so the reason only
+        // survives because the key check reads the raw body too.
+        body: "<html><body>API key not valid</body></html>",
+      }),
+      ErrorType.MISSING_API_KEY,
+      "Error: Gemini rejected the API key: API error occurred. Check GEMINI_API_KEY (or GOOGLE_API_KEY), or choose an OpenAI model.",
     ],
     [
       "a safety block (400)",

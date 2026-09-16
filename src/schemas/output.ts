@@ -46,7 +46,7 @@ export const ImageToolOutputSchema = z.object({
     .string()
     .optional()
     .describe(
-      "Set when fewer images than requested were produced; includes the failure reason"
+      "Set when fewer images than requested were produced. The call still succeeds and images holds what was produced, so retry only the shortfall. Carries the failing request's reason."
     ),
   error: z
     .string()
@@ -56,7 +56,7 @@ export const ImageToolOutputSchema = z.object({
     .enum(ErrorType)
     .optional()
     .describe(
-      "Why the call failed, for choosing the next step. INVALID_MODEL_OPTION, INVALID_IMAGE_PATH, IMAGE_TOO_LARGE: fix the arguments. CONTENT_BLOCKED: rephrase the prompt or change the input images. API_RATE_LIMIT: wait, then retry. MISSING_API_KEY: the server lacks that provider's key; use the other provider. API_ERROR: retry; if it persists, switch model. FILE_WRITE_ERROR: fix output_path. UNKNOWN_ERROR: unexpected."
+      "Why the call failed, for choosing the next step. INVALID_MODEL_OPTION, INVALID_IMAGE_PATH, IMAGE_TOO_LARGE: fix the arguments. CONTENT_BLOCKED: rephrase the prompt or change the input images. API_RATE_LIMIT: wait, then retry. MISSING_API_KEY: the provider's key is missing, invalid or denied; use the other provider. API_ERROR: read `error` — retry when it names a network or 5xx failure, otherwise fix the arguments it names or switch model. FILE_WRITE_ERROR: fix output_path. UNKNOWN_ERROR: unexpected."
     ),
 });
 

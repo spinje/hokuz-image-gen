@@ -25,9 +25,10 @@ import {
 } from "../types.js";
 
 /**
- * A Gemini per-image price as the guide quotes it ("$0.034", "$0.24"). Every
- * price it asks for exists: `constants.test.ts` pins one for every resolution a
- * Gemini model supports, so the throw is a build-time tripwire, not a runtime path.
+ * A Gemini per-image price as the guide quotes it ("$0.034", "$0.24"). The
+ * table is `Partial`, so a missing row is not a type error: the throw fires
+ * while this module loads and the server refuses to start. `constants.test.ts`
+ * pins a price for every resolution a Gemini model supports, so CI sees it first.
  */
 function usd(model: ImageModel, resolution: Resolution): string {
   const price = GEMINI_PRICE_PER_IMAGE_USD[model]?.[resolution];
@@ -38,16 +39,19 @@ function usd(model: ImageModel, resolution: Resolution): string {
 }
 
 /**
- * The model guidance both TOOL_DESCRIPTIONs embed verbatim. The Gemini figures
- * come from the price table the server bills its estimates against; the OpenAI
- * ones are hand-maintained benchmark estimates with nothing to derive them from.
+ * The model guidance both TOOL_DESCRIPTIONs embed verbatim: which model to pick,
+ * and what every model does regardless of which tool is calling. The Gemini
+ * figures come from the price table the server bills its estimates against; the
+ * OpenAI ones are hand-maintained benchmark estimates with nothing to derive
+ * them from. Anything that differs between the two tools stays in the tool file.
  */
 export const MODEL_GUIDE = `Models (approximate time and cost for one 1K image):
 - gemini-3.1-flash-lite-image (Nano Banana 2 Lite): ~5s, ~${usd("gemini-3.1-flash-lite-image", "1K")}, 1K only. Cheapest Gemini model; drafts and batches.
 - gemini-3.1-flash-image (Nano Banana 2, DEFAULT): ~11s, ~${usd("gemini-3.1-flash-image", "0.5K")} (0.5K) / ${usd("gemini-3.1-flash-image", "1K")} (1K) / ${usd("gemini-3.1-flash-image", "2K")} (2K) / ${usd("gemini-3.1-flash-image", "4K")} (4K); the only model with 1:4, 4:1, 1:8, 8:1. Best everyday choice.
 - gemini-3-pro-image (Nano Banana Pro): ~17s, ~${usd("gemini-3-pro-image", "1K")} (1K/2K) to ~${usd("gemini-3-pro-image", "4K")} (4K). Photorealism, hero shots, factual content.
 - gpt-image-2.5-flare (OpenAI): cost and time follow \`quality\`: low ~$0.006/10s, medium ~$0.013/14s, high ~$0.05/18s, xhigh ~$0.09/27s, max ~$0.21/46s. The cheapest image overall is flare at low. Single subjects and short text.
-- gpt-image-2.5-sunburst (OpenAI): same prices, about 1.5-2x slower (high ~30s, max ~85s). Multi-element text layouts, branding, and edits where precision matters.`;
+- gpt-image-2.5-sunburst (OpenAI): same prices, about 1.5-2x slower (high ~30s, max ~85s). Multi-element text layouts, branding, and edits where precision matters.
+OpenAI models take 1K (~1 megapixel) or 2K (~4 megapixels, about twice the cost) at the ten base ratios; the exact pixel size is derived from the ratio. Results carry each image's pixel size and an estimated cost (Google's per-image price on Gemini, token-based on OpenAI); either is omitted rather than guessed when the response does not carry it. Gemini models produce jpeg only; OpenAI models produce jpeg, png or webp and can render a transparent background (png/webp only). A model whose provider key is not configured on the server fails at call time with an error naming the variable.`;
 
 /** Annotations shared by both tools (same file-writing, never-overwriting behaviour). */
 export const IMAGE_TOOL_ANNOTATIONS = {
