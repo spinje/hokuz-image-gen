@@ -232,7 +232,7 @@ Remote fetches carry a 30 s `AbortSignal.timeout`.
 
 ## Error Handling
 
-All failures become `McpError(type, message, details?)` with an actionable message that starts with `Error:`. Handlers catch everything and return `{ content: [{ type: "text", text }], structuredContent: { success: false, images: [], error }, isError: true }`. Validation (`validateGenerationConfig`, including the input-image count) runs before any API call and, in edit, before any image is loaded; each image's type and size are then checked by `loadInputImage` before its bytes are read.
+All failures become `McpError(type, message, details?)` with an actionable message that starts with `Error:`. Handlers catch everything and return `{ content: [{ type: "text", text }], structuredContent: { success: false, images: [], error, error_type }, isError: true }`, where `error_type` is the `McpError`'s own `type` (`UNKNOWN_ERROR` for anything else) so the caller can choose its next step without parsing the message; `schemas/output.ts` publishes the enum and its describe string says what each value means. Validation (`validateGenerationConfig`, including the input-image count) runs before any API call and, in edit, before any image is loaded; each image's type and size are then checked by `loadInputImage` before its bytes are read.
 
 ## Constants Reference (`src/constants.ts`)
 

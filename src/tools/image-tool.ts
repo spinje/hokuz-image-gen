@@ -17,6 +17,7 @@ import {
 import type { ImageToolOutput } from "../schemas/output.js";
 import { resolveOutputPath, saveBase64Image } from "../services/file-utils.js";
 import {
+  ErrorType,
   McpError,
   type GeneratedImage,
   type ImageResponse,
@@ -204,6 +205,7 @@ export function imageToolError(
     success: false,
     images: [],
     error: errorMessage,
+    error_type: error instanceof McpError ? error.type : ErrorType.UNKNOWN_ERROR,
   };
 
   return {

@@ -181,7 +181,7 @@ output_path: ~/images/headshot.jpg
 aspect_ratio: 3:4
 ```
 
-**Returns** (both tools): `{ success, images: [{ path, format, width?, height? }], description?, usage?, warning?, error? }`. `width`/`height` are each image's pixel size, reported for both providers. `usage` — `{ input_tokens, output_tokens, estimated_cost_usd }`, summed over the requests made — is present for both providers, and its cost is always estimated, never billed: from the token counts on OpenAI, from Google's per-image price for the resolution on Gemini. `warning` is set when fewer images than requested were produced and carries the failing request's error.
+**Returns** (both tools): `{ success, images: [{ path, format, width?, height? }], description?, usage?, warning?, error?, error_type? }`. `width`/`height` are each image's pixel size, reported for both providers. `usage` — `{ input_tokens, output_tokens, estimated_cost_usd }`, summed over the requests made — is present for both providers, and its cost is always estimated, never billed: from the token counts on OpenAI, from Google's per-image price for the resolution on Gemini. `warning` is set when fewer images than requested were produced and carries the failing request's error. `error_type` accompanies `error` with the failure class — `INVALID_MODEL_OPTION`, `INVALID_IMAGE_PATH`, `IMAGE_TOO_LARGE`, `CONTENT_BLOCKED`, `API_RATE_LIMIT`, `MISSING_API_KEY`, `API_ERROR`, `FILE_WRITE_ERROR` or `UNKNOWN_ERROR` — so a caller can pick its next step without parsing the message.
 
 ### hokuz_edit_image
 

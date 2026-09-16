@@ -120,6 +120,8 @@ describe("image tool pipeline", () => {
       success: false,
       images: [],
       error: "Error: Content was blocked by safety filters.",
+      // The McpError's own type, so the caller can act without parsing prose.
+      error_type: "CONTENT_BLOCKED",
     });
   });
 
@@ -137,6 +139,7 @@ describe("image tool pipeline", () => {
       success: false,
       images: [],
       error: "Error: Unexpected error during image generation. boom",
+      error_type: "UNKNOWN_ERROR",
     });
   });
 

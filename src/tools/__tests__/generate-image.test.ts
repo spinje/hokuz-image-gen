@@ -97,6 +97,8 @@ describe(TOOL, () => {
 
     expect(result.isError).toBe(true);
     expect(firstText(result)).toMatch(/does not support resolution '2K'/);
+    // A pre-flight rejection is an argument problem, not an API failure.
+    expect(result.structuredContent?.error_type).toBe("INVALID_MODEL_OPTION");
     expect(generateMock).not.toHaveBeenCalled();
   });
 

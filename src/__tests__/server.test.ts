@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { createRequire } from "module";
 import { IMAGE_MODELS, QUALITIES } from "../constants.js";
+import { ErrorType } from "../types.js";
 import { connectTestClient } from "./harness.js";
 
 let harness: Awaited<ReturnType<typeof connectTestClient>>;
@@ -50,6 +51,11 @@ describe("published tool contract", () => {
       ]);
       expect(outputProperties).toHaveProperty("usage");
       expect(outputProperties).toHaveProperty("warning");
+      // error_type is how the caller picks its next step, so the published
+      // list must be every type the pipeline can actually emit.
+      expect((outputProperties.error_type as { enum: string[] }).enum).toEqual(
+        Object.values(ErrorType)
+      );
       expect(tool.annotations).toEqual({
         readOnlyHint: false,
         destructiveHint: false,

@@ -5,6 +5,7 @@
 
 import { z } from "zod";
 import { OUTPUT_FORMATS } from "../constants.js";
+import { ErrorType } from "../types.js";
 
 /**
  * Output schema for hokuz_generate_image and hokuz_edit_image
@@ -51,6 +52,12 @@ export const ImageToolOutputSchema = z.object({
     .string()
     .optional()
     .describe("Error message when the call failed; starts with 'Error:'"),
+  error_type: z
+    .enum(ErrorType)
+    .optional()
+    .describe(
+      "Why the call failed, for choosing the next step. INVALID_MODEL_OPTION, INVALID_IMAGE_PATH, IMAGE_TOO_LARGE: fix the arguments. CONTENT_BLOCKED: rephrase the prompt or change the input images. API_RATE_LIMIT: wait, then retry. MISSING_API_KEY: the server lacks that provider's key; use the other provider. API_ERROR: retry; if it persists, switch model. FILE_WRITE_ERROR: fix output_path. UNKNOWN_ERROR: unexpected."
+    ),
 });
 
 export type ImageToolOutput = z.infer<typeof ImageToolOutputSchema>;
