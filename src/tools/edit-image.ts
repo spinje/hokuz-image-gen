@@ -8,26 +8,19 @@
  */
 
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
-import {
-  EditImageInputSchema,
-  EditImageOutputSchema,
-  type EditImageOutput,
-} from "../schemas/edit.js";
+import { EditImageInputSchema } from "../schemas/edit.js";
+import { ImageToolOutputSchema } from "../schemas/output.js";
 import { editImage, validateGenerationConfig } from "../providers/index.js";
 import {
   inferOutputFormatFromPath,
-  resolveOutputPath,
-  saveBase64Image,
   loadInputImage,
 } from "../services/file-utils.js";
+import type { GenerationConfig, InputImage } from "../types.js";
 import {
-  McpError,
-  sumUsage,
-  type InputImage,
-  type GeneratedImage,
-  type GenerationConfig,
-  type UsageReport,
-} from "../types.js";
+  IMAGE_TOOL_ANNOTATIONS,
+  imageToolError,
+  runImageTool,
+} from "./image-tool.js";
 import { DEFAULTS } from "../constants.js";
 
 /**
@@ -65,13 +58,8 @@ export function registerEditImageTool(server: McpServer): void {
       title: "Edit Image",
       description: TOOL_DESCRIPTION,
       inputSchema: EditImageInputSchema,
-      outputSchema: EditImageOutputSchema,
-      annotations: {
-        readOnlyHint: false, // Always writes the result to output_path
-        destructiveHint: false, // Never deletes or overwrites an existing file
-        idempotentHint: false, // Same inputs can produce different results
-        openWorldHint: true, // Interacts with an external provider API
-      },
+      outputSchema: ImageToolOutputSchema,
+      annotations: IMAGE_TOOL_ANNOTATIONS,
     },
     async (params) => {
       try {
@@ -82,7 +70,6 @@ export function registerEditImageTool(server: McpServer): void {
         // "auto" -> omit aspect ratio so the model preserves the native ratio.
         const aspectRatio =
           aspectRatioParam === "auto" ? undefined : aspectRatioParam;
-        const requestedCount = params.num_images ?? DEFAULTS.numImages;
         // Explicit output_format wins; otherwise the output_path's extension
         // picks the format, so 'logo.png' on a Gemini model is rejected below
         // rather than saved as a JPEG named logo.jpg.
@@ -118,122 +105,15 @@ export function registerEditImageTool(server: McpServer): void {
           inputImages.push(await loadInputImage(imagePath, model));
         }
 
-        // num_images is implemented via repeated independent requests, each
-        // asking for one image. Stop once we have enough.
-        const collected: GeneratedImage[] = [];
-        const descriptions: string[] = [];
-        const usages: UsageReport[] = [];
-        let successfulRequests = 0;
-        let failureReason: string | undefined;
-        for (
-          let attempt = 0;
-          collected.length < requestedCount && attempt < requestedCount;
-          attempt++
-        ) {
-          try {
-            const response = await editImage(params.prompt, inputImages, config);
-            collected.push(...response.images);
-            successfulRequests++;
-            if (response.description) descriptions.push(response.description);
-            if (response.usage) usages.push(response.usage);
-          } catch (err) {
-            if (collected.length === 0) throw err;
-            failureReason = err instanceof Error ? err.message : String(err);
-            break;
-          }
-        }
-
-        const usage = sumUsage(usages);
-        const imagesToSave = collected.slice(0, requestedCount);
-
-        // Process the generated images - save to files
-        const outputImages: EditImageOutput["images"] = [];
-
-        for (let i = 0; i < imagesToSave.length; i++) {
-          const image = imagesToSave[i];
-          const filePath = await resolveOutputPath(
-            params.output_path,
-            outputFormat,
-            i
-          );
-          await saveBase64Image(image.data, filePath);
-
-          outputImages.push({
-            path: filePath,
-            format: outputFormat,
-            width: image.width,
-            height: image.height,
-          });
-        }
-
-        const description = descriptions.length
-          ? Array.from(new Set(descriptions)).join("\n---\n")
-          : undefined;
-
-        const warning =
-          outputImages.length < requestedCount
-            ? `Requested ${requestedCount} image(s) but only ${outputImages.length} were produced.` +
-              (failureReason ? ` The failed request reported: ${failureReason}` : "")
-            : undefined;
-
-        const output: EditImageOutput = {
-          success: true,
-          images: outputImages,
-          description,
-          usage: usage && {
-            input_tokens: usage.inputTokens,
-            output_tokens: usage.outputTokens,
-            estimated_cost_usd: usage.estimatedCostUsd,
-          },
-          warning,
-        };
-
-        // Format response text
-        const paths = outputImages
-          .map((img) =>
-            img.width && img.height
-              ? `${img.path} (${img.width}x${img.height})`
-              : img.path
-          )
-          .join("\n  ");
-        let textContent = `Successfully edited ${params.image_paths.length} image(s) and generated ${outputImages.length} result(s):\n  ${paths}`;
-        if (usage) {
-          // Say so when the totals cover only some of the requests, rather
-          // than letting them read as the cost of the whole call.
-          const scope =
-            usages.length < successfulRequests
-              ? ` (reported for ${usages.length} of ${successfulRequests} requests)`
-              : "";
-          textContent += `\n\nUsage${scope}: ${usage.inputTokens} input + ${usage.outputTokens} output tokens, estimated cost $${usage.estimatedCostUsd.toFixed(4)}`;
-        }
-        if (warning) {
-          textContent += `\n\nWarning: ${warning}`;
-        }
-        if (description) {
-          textContent += `\n\nDescription: ${description}`;
-        }
-
-        return {
-          content: [{ type: "text", text: textContent }],
-          structuredContent: output,
-        };
+        return await runImageTool({
+          outputFormat,
+          outputPath: params.output_path,
+          requestedCount: params.num_images ?? DEFAULTS.numImages,
+          produce: () => editImage(params.prompt, inputImages, config),
+          summary: (n) => `Successfully edited ${params.image_paths.length} image(s) and generated ${n} result(s):`,
+        });
       } catch (error) {
-        const errorMessage =
-          error instanceof McpError
-            ? error.message
-            : `Error: Unexpected error during image editing. ${error instanceof Error ? error.message : String(error)}`;
-
-        const output: EditImageOutput = {
-          success: false,
-          images: [],
-          error: errorMessage,
-        };
-
-        return {
-          content: [{ type: "text", text: errorMessage }],
-          structuredContent: output,
-          isError: true,
-        };
+        return imageToolError(error, "editing");
       }
     }
   );

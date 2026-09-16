@@ -56,7 +56,9 @@ A local MCP (Model Context Protocol) server that exposes two tools, `hokuz_gener
 │   ├── server.ts               # createServer(); name/version from package.json
 │   ├── constants.ts            # Models, capability registry, limits, defaults, pricing
 │   ├── types.ts                # GenerationConfig, ImageResponse, ErrorType, McpError
-│   ├── schemas/{generate,edit}.ts      # Zod input/output schemas (LLM reads the .describe() strings)
+│   ├── schemas/
+│   │   ├── {generate,edit}.ts  # Zod input schemas (LLM reads the .describe() strings)
+│   │   └── output.ts           # The one output schema both tools publish
 │   ├── providers/
 │   │   ├── index.ts            # validateGenerationConfig + dispatch on the registry's `provider`
 │   │   ├── gemini.ts           # Interactions API: request build, response parse, error mapping
@@ -66,7 +68,8 @@ A local MCP (Model Context Protocol) server that exposes two tools, `hokuz_gener
 │   │   ├── file-utils.ts       # Output path resolution, image loading (file/URL)
 │   │   └── __tests__/
 │   ├── tools/
-│   │   ├── {generate,edit}-image.ts    # TOOL_DESCRIPTION + handler
+│   │   ├── {generate,edit}-image.ts    # TOOL_DESCRIPTION + param -> config mapping
+│   │   ├── image-tool.ts       # The shared pipeline: loop, saving, text, error result
 │   │   └── __tests__/          # Through a real MCP client over an in-memory transport
 │   └── __tests__/
 │       ├── harness.ts          # connectTestClient(): real server + SDK Client, InMemoryTransport
@@ -83,7 +86,7 @@ A local MCP (Model Context Protocol) server that exposes two tools, `hokuz_gener
 └── CLAUDE.md
 ```
 
-**Tool pattern** — each tool is three files with one job each: `schemas/<tool>.ts` (Zod shapes + `.describe()` strings the LLM reads), `tools/<tool>.ts` (the big `TOOL_DESCRIPTION` template string, defaults, orchestration, response formatting), and the shared services. Registration happens in `server.ts`. Tool names carry the `hokuz_` prefix.
+**Tool pattern** — a tool file holds only what is genuinely that tool's: `schemas/<tool>.ts` (the `.strict()` Zod input schema and the `.describe()` strings the LLM reads) and `tools/<tool>.ts` (the big `TOOL_DESCRIPTION` template string, the defaults, the param → `GenerationConfig` mapping, `validateGenerationConfig`, and in edit's case the `loadInputImage` loop). Everything both tools do identically lives once: the `num_images` loop, saving, usage, the `warning`, the response text and the uniform failure result in `tools/image-tool.ts` (`runImageTool`, `imageToolError`, `IMAGE_TOOL_ANNOTATIONS`), and the published output schema in `schemas/output.ts`. A handler is therefore a mapping wrapped in `try { ... return await runImageTool(...) } catch (error) { return imageToolError(error, "<activity>") }`. Registration happens in `server.ts`. Tool names carry the `hokuz_` prefix.
 
 ## Dev Environment
 
@@ -156,7 +159,8 @@ Give such an option a `.default()` and every call it cannot apply to starts eith
 - `providers/__tests__/gemini.test.ts` — exact Interactions request shape, `aspect_ratio` omitted for `auto`, `parseInteraction` de-dup/fallbacks, API error mapping, `GEMINI_API_KEY` precedence.
 - `providers/__tests__/openai.test.ts` — exact `images.generate` and `images.edit` request shapes, size derivation (spot checks plus an invariant sweep over every ratio x resolution), edit files in order with an explicit MIME type, parse of dimensions and the cost arithmetic, refusal of a format we did not request, error mapping by status and by `code`, missing-key path and the client's `logLevel`.
 - `providers/__tests__/index.test.ts` — dispatch to the provider the registry names, and validation before dispatch.
-- `tools/__tests__/*.test.ts` — defaults reach the provider (including the per-provider `quality`/`temperature` rule), validation before image loading and before any API call, the per-model input count/size/type rejections, `num_images` loop with summed `usage` and the partial-failure `warning`, files written (with the format's extension), schema-boundary rejections.
+- `tools/__tests__/image-tool.test.ts` — the pipeline both tools share, driven once through `hokuz_generate_image`: the `num_images` loop and its `-N` filenames, a single response carrying more images than asked for, the partial-failure `warning`, the error result, summed `usage` with the "reported for n of m requests" scope, and a provider that reports neither usage nor dimensions.
+- `tools/__tests__/{generate,edit}-image.test.ts` — only what is per tool: defaults reach the provider (including the per-provider `quality`/`temperature` rule), the output-format precedence, validation before image loading and before any API call, the per-model input count/size/type rejections, files written (with the format's extension), schema-boundary rejections.
 - `__tests__/server.test.ts` — tool names, annotations, JSON Schema enums/defaults/`required`, output schema shape, package.json version, and the drift guard: every `IMAGE_MODELS` ID and every `QUALITIES` value is named in both `TOOL_DESCRIPTION`s, and every ID in both `model` describe strings. `__tests__/constants.test.ts` — validation messages and the "defaults are valid for every model" invariant.
 
 **How tool tests work:** `connectTestClient()` in `src/__tests__/harness.ts` builds the real server via `createServer()` and connects an SDK `Client` over `InMemoryTransport`. Only `providers/index.js`'s `generateImage` / `editImage` are mocked (`vi.mock` with `importOriginal`, so `validateGenerationConfig` stays real). This exercises the SDK's input and output schema validation exactly as a production client would.
@@ -175,7 +179,7 @@ Give such an option a `.default()` and every call it cannot apply to starts eith
 
 A parameter only one provider accepts follows gotcha 7 instead: `.optional()` with no `.default()`, a registry axis that says which models take it, a `getUnsupportedModelOptionMessage` branch naming the alternative, and the provider module applying its own default.
 
-**Tool:** `src/schemas/newtool.ts` (`.strict()` input schema, output schema, inferred types) → `src/tools/newtool.ts` (`registerNewTool(server)` with a `hokuz_` name; copy the annotations block and the `catch` → `{ content, structuredContent: { success: false, ... }, isError: true }` pattern from an existing tool) → register in `src/server.ts` and add the banner line in `src/index.ts` → `tools/__tests__/newtool.test.ts` through `connectTestClient()` and the name list in `server.test.ts` → README Tools section → `npm run check`.
+**Tool:** `src/schemas/newtool.ts` (`.strict()` input schema and its inferred type only — the output schema is `schemas/output.ts`) → `src/tools/newtool.ts` (`registerNewTool(server)` with a `hokuz_` name, `outputSchema: ImageToolOutputSchema` and `annotations: IMAGE_TOOL_ANNOTATIONS`; the handler builds a `GenerationConfig`, calls `validateGenerationConfig`, and hands the rest to `runImageTool({ outputFormat, outputPath, requestedCount, produce, summary })`, with `catch (error) { return imageToolError(error, "<activity>") }`) → register in `src/server.ts` and add the banner line in `src/index.ts` → `tools/__tests__/newtool.test.ts` through `connectTestClient()` for the mapping and validation order (the pipeline is already covered), and the name list in `server.test.ts` → README Tools section → `npm run check`.
 
 ## Provider Modules
 

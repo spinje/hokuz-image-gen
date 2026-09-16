@@ -20,8 +20,8 @@ Follow `.claude/agents/REVIEW-PROTOCOL.md` (read it first). Lens-specifics on to
 
 ## This Repo's Shape (so you can tell convention from drift)
 
-- **Two tools, one archetype.** `generate-image.ts` and `edit-image.ts` deliberately mirror: apply defaults → build `GenerationConfig` → `validateGenerationConfig` → (edit: load images) → request loop → save → format text + structured output → uniform catch. Mirroring is convention. The finding is when they DIVERGE without a reason, or when shared logic grows in both instead of moving to `services/`.
-- **Homes for extraction:** `src/services/` for behaviour, `src/constants.ts` for data, `src/types.ts` for shared shapes. A third home is a finding unless the deletion test says otherwise.
+- **Two tools, one archetype.** `generate-image.ts` and `edit-image.ts` are each: apply defaults → build `GenerationConfig` → `validateGenerationConfig` → (edit: load images) → `runImageTool`, wrapped in a `catch` that returns `imageToolError`. Everything after that point — the request loop, saving, usage, the warning, the response text and the failure result — lives once in `tools/image-tool.ts`, and the output schema once in `schemas/output.ts`. The finding is a handler that grows pipeline logic BESIDE `runImageTool` instead of inside it (its own loop, its own text formatting, its own catch shape), or the two mappings diverging without a reason.
+- **Homes for extraction:** `src/services/` for behaviour, `src/constants.ts` for data, `src/types.ts` for shared shapes, `src/tools/image-tool.ts` for what both tool handlers do identically. A fifth home is a finding unless the deletion test says otherwise.
 - **The service boundary is intentionally thin:** one request → whatever it returns. `numImages` is deliberately NOT in `GenerationConfig`; the loop lives in the tool layer. Moving orchestration into the service or count logic into the service is a shape change, not a simplification.
 
 ## What to Hunt

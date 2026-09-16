@@ -3,7 +3,6 @@ import * as fs from "fs/promises";
 import * as os from "os";
 import * as path from "path";
 import { DEFAULTS } from "../../constants.js";
-import { ErrorType, McpError } from "../../types.js";
 
 const { editMock } = vi.hoisted(() => ({ editMock: vi.fn() }));
 
@@ -203,6 +202,32 @@ describe(TOOL, () => {
     expect(editMock).not.toHaveBeenCalled();
   });
 
+  it("hands its own count, summary line and activity word to the shared pipeline", async () => {
+    // The pipeline is tested through generate; these three inputs are the only
+    // things edit contributes to the reply, and nothing else here observes them.
+    const result = await harness.callTool(TOOL, {
+      prompt: "p",
+      image_paths: [first, second],
+      output_path: tmp,
+      num_images: 2,
+    });
+
+    expect(editMock).toHaveBeenCalledTimes(2);
+    expect(firstText(result)).toContain(
+      "Successfully edited 2 image(s) and generated 2 result(s):"
+    );
+
+    editMock.mockRejectedValue(new Error("boom"));
+    const failed = await harness.callTool(TOOL, {
+      prompt: "p",
+      image_paths: [first],
+      output_path: tmp,
+    });
+
+    expect(failed.isError).toBe(true);
+    expect(firstText(failed)).toBe("Error: Unexpected error during image editing. boom");
+  });
+
   it("rejects an explicit resolution on an OpenAI model with the default 'auto' ratio", async () => {
     // With a schema default on resolution the handler could not tell this from
     // "the caller said nothing", and the 2K would be silently ignored.
@@ -219,34 +244,5 @@ describe(TOOL, () => {
       "Error: Model 'gpt-image-2.5-flare' (GPT Image 2.5 Flare) cannot apply resolution '2K' when aspect_ratio is 'auto' because the provider chooses the output size. Set an aspect_ratio to control the size, or omit resolution."
     );
     expect(editMock).not.toHaveBeenCalled();
-  });
-
-  it("sums usage across the num_images loop and warns when a later request fails", async () => {
-    editMock
-      .mockResolvedValueOnce({
-        images: [{ data: OUT, mimeType: "image/jpeg" }],
-        usage: { inputTokens: 1039, outputTokens: 229, estimatedCostUsd: 0.0151 },
-      })
-      .mockRejectedValueOnce(
-        new McpError(ErrorType.API_RATE_LIMIT, "Error: Rate limit exceeded.")
-      );
-
-    const result = await harness.callTool(TOOL, {
-      prompt: "p",
-      image_paths: [first],
-      output_path: tmp,
-      num_images: 2,
-    });
-
-    expect(result.isError).toBeFalsy();
-    expect(editMock).toHaveBeenCalledTimes(2);
-    expect(result.structuredContent).toMatchObject({
-      usage: { input_tokens: 1039, output_tokens: 229, estimated_cost_usd: 0.0151 },
-      warning:
-        "Requested 2 image(s) but only 1 were produced. The failed request reported: Error: Rate limit exceeded.",
-    });
-    expect(firstText(result)).toContain(
-      "Warning: Requested 2 image(s) but only 1 were produced. The failed request reported: Error: Rate limit exceeded."
-    );
   });
 });

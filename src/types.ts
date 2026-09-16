@@ -38,20 +38,6 @@ export interface UsageReport {
 }
 
 /**
- * Add up the per-request usage reports of one tool call (num_images makes one
- * request per image). Undefined when no request reported usage.
- */
-export function sumUsage(usages: UsageReport[]): UsageReport | undefined {
-  if (usages.length === 0) return undefined;
-
-  return usages.reduce((total, usage) => ({
-    inputTokens: total.inputTokens + usage.inputTokens,
-    outputTokens: total.outputTokens + usage.outputTokens,
-    estimatedCostUsd: total.estimatedCostUsd + usage.estimatedCostUsd,
-  }));
-}
-
-/**
  * Configuration for a single image generation/edit request.
  *
  * Note: `numImages` is intentionally NOT part of this config. Requesting
