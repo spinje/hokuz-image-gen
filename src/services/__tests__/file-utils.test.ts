@@ -15,7 +15,9 @@ vi.mock("fs/promises", async (importOriginal) => {
   return { ...actual, readFile: readFileSpy };
 });
 
-const { loadInputImage, resolveOutputPath } = await import("../file-utils.js");
+const { inferOutputFormatFromPath, loadInputImage, resolveOutputPath } = await import(
+  "../file-utils.js"
+);
 
 const GEMINI = "gemini-3.1-flash-image" as const;
 const OPENAI = "gpt-image-2.5-flare" as const;
@@ -107,6 +109,21 @@ describe("resolveOutputPath", () => {
     vi.stubEnv("HOME", tmp);
     const resolved = await resolveOutputPath("~/pics/foo.jpg", "jpeg");
     expect(resolved).toBe(path.join(tmp, "pics", "foo.jpg"));
+  });
+
+});
+
+describe("inferOutputFormatFromPath", () => {
+  it.each([
+    ["pic.jpg", "jpeg"],
+    ["pic.jpeg", "jpeg"],
+    ["pic.png", "png"],
+    ["pic.webp", "webp"],
+    ["PIC.PNG", "png"],
+    ["notes.txt", undefined],
+    ["images/", undefined],
+  ])("reads '%s' as %s", (name, format) => {
+    expect(inferOutputFormatFromPath(path.join(tmp, name))).toBe(format);
   });
 });
 

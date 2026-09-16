@@ -136,12 +136,13 @@ When the SDK's schema validation rejects a call, the client receives `{ isError:
 
 ### 7. Options a handler must not default are `.optional()` with **no** schema default
 
-`quality` (OpenAI), `temperature` (Gemini) and edit's `resolution` are published `.optional()` with no `.default()`, which is the opposite of gotcha 1's rule for every shared option — deliberately. `transparent_background` (OpenAI) follows the same rule. The handler passes them through exactly as given and **the provider that owns the option applies its default** (`config.x ?? DEFAULTS.x` in `providers/gemini.ts` / `providers/openai.ts`), so an option reaches the request as a default only where that default is valid. Without this the handler could not tell "the LLM asked for temperature 0.2 on an OpenAI model" from "the SDK filled the default in", and would have to ignore the request silently. The cases:
+`quality` (OpenAI), `temperature` (Gemini), `output_format` and edit's `resolution` are published `.optional()` with no `.default()`, which is the opposite of gotcha 1's rule for every shared option — deliberately. `transparent_background` (OpenAI) follows the same rule. The handler passes them through exactly as given and **the provider that owns the option applies its default** (`config.x ?? DEFAULTS.x` in `providers/gemini.ts` / `providers/openai.ts`), so an option reaches the request as a default only where that default is valid. Without this the handler could not tell "the LLM asked for temperature 0.2 on an OpenAI model" from "the SDK filled the default in", and would have to ignore the request silently. The cases:
 
 - `temperature` on an OpenAI model → rejected, naming the Gemini alternative. Gemini applies `DEFAULTS.temperature` when the config carries none.
 - `quality` on a Gemini model → rejected, naming the OpenAI models. OpenAI applies `DEFAULTS.quality` when the config carries none.
 - edit `resolution` with `aspect_ratio: "auto"` on an OpenAI model → rejected, because the provider derives the pixel size from the ratio and `size: "auto"` would drop the resolution. Generate keeps its `.default("1K")`: it always has a ratio.
 - `transparent_background: true` on a Gemini model → rejected, naming the OpenAI models; `false` is what every model already does, so it passes. No default: OpenAI's `background` is `"opaque"` unless the caller asked otherwise.
+- `output_format` omitted → the handler falls back to the extension of `output_path` (`inferOutputFormatFromPath`), then to `DEFAULTS.outputFormat`. A schema default would hide the extension, so `logo.png` on a Gemini model would be saved as `logo.jpg` instead of rejected.
 
 Give such an option a `.default()` and every call it cannot apply to starts either failing validation or being silently ignored.
 
@@ -197,6 +198,8 @@ One singleton `OpenAI` client from `OPENAI_API_KEY`. Both calls send `{ model, p
 **Error mapping** (`handleApiError`): `McpError` pass-through, then `instanceof APIError` with `code === "moderation_blocked"` → `CONTENT_BLOCKED` (message carries the stage and categories), then `status` 401 → `MISSING_API_KEY`, 403/404 → `API_ERROR`, 429 → `API_RATE_LIMIT`, other 4xx → `API_ERROR`, else a retryable `API_ERROR` (status or `network`). A non-`APIError` — only the SDK call is wrapped — is a retryable `API_ERROR` that quotes the message and claims nothing about its cause.
 
 ## File Utility Patterns
+
+`inferOutputFormatFromPath(outputPath)` reads `.jpg`/`.jpeg`/`.png`/`.webp` (case-insensitive) and returns undefined for anything else. The format a handler uses is `params.output_format ?? inferOutputFormatFromPath(params.output_path) ?? DEFAULTS.outputFormat`, and the saved file always carries that format's extension.
 
 `resolveOutputPath(outputPath, format, index)`:
 

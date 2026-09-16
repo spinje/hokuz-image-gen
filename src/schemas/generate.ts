@@ -66,13 +66,16 @@ export const GenerateImageInputSchema = z
           `before the API call. Default: ${DEFAULTS.resolution}`
       ),
 
+    // No .default(): see gotcha 7. With one, the handler could not tell an
+    // explicit format from a filled-in default, and could not fall back to the
+    // output_path's extension.
     output_format: z
       .enum(OUTPUT_FORMATS)
-      .default(DEFAULTS.outputFormat)
+      .optional()
       .describe(
-        `Output file format. Options: ${OUTPUT_FORMATS.join(", ")}. Gemini models produce jpeg only; ` +
-          "OpenAI models produce all three. The output_path extension is replaced to match. " +
-          `Default: ${DEFAULTS.outputFormat}`
+        "Output file format. jpeg is produced by every model; png and webp by OpenAI models only. " +
+          "Default: the extension of output_path (.jpg/.jpeg/.png/.webp) when it has one, otherwise " +
+          "jpeg. The saved file's extension always matches the format."
       ),
 
     quality: z

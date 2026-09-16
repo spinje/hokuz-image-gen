@@ -81,7 +81,9 @@ describe("published tool contract", () => {
     expect(props.resolution.default).toBe("1K");
     expect(props.num_images.default).toBe(1);
     expect(props.output_format.enum).toEqual(["jpeg", "png", "webp"]);
-    expect(props.output_format.default).toBe("jpeg");
+    // No default: without one the handler can tell an explicit format from a
+    // filled-in default and fall back to the output_path's extension.
+    expect(props.output_format).not.toHaveProperty("default");
     expect(generate.inputSchema.required).toEqual(["prompt", "output_path"]);
 
     // Provider-specific options: published with their enum but no default, so

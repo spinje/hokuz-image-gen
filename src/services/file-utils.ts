@@ -73,6 +73,24 @@ async function ensureDirectory(dirPath: string): Promise<void> {
   }
 }
 
+/** Output format per output-path extension, case-insensitive. */
+const OUTPUT_FORMAT_BY_EXTENSION: Record<string, OutputFormat> = {
+  ".jpg": "jpeg",
+  ".jpeg": "jpeg",
+  ".png": "png",
+  ".webp": "webp",
+};
+
+/**
+ * The output format an `output_path` asks for by its extension, or undefined
+ * when its extension names none we produce (a directory path included).
+ */
+export function inferOutputFormatFromPath(
+  outputPath: string
+): OutputFormat | undefined {
+  return OUTPUT_FORMAT_BY_EXTENSION[path.extname(outputPath).toLowerCase()];
+}
+
 /**
  * Resolve the output path for saving an image
  *
@@ -116,6 +134,7 @@ export async function resolveOutputPath(
   const baseName = ext
     ? path.basename(absolutePath, ext)
     : path.basename(absolutePath);
+
   const suffix = index > 0 ? `-${index + 1}` : "";
 
   return path.join(parentDir, `${baseName}${suffix}${extension}`);

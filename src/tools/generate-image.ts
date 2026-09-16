@@ -13,7 +13,11 @@ import {
   type GenerateImageOutput,
 } from "../schemas/generate.js";
 import { generateImage, validateGenerationConfig } from "../providers/index.js";
-import { resolveOutputPath, saveBase64Image } from "../services/file-utils.js";
+import {
+  inferOutputFormatFromPath,
+  resolveOutputPath,
+  saveBase64Image,
+} from "../services/file-utils.js";
 import {
   McpError,
   sumUsage,
@@ -84,7 +88,13 @@ export function registerGenerateImageTool(server: McpServer): void {
         const aspectRatio = params.aspect_ratio ?? DEFAULTS.aspectRatio;
         const resolution = params.resolution ?? DEFAULTS.resolution;
         const requestedCount = params.num_images ?? DEFAULTS.numImages;
-        const outputFormat = params.output_format ?? DEFAULTS.outputFormat;
+        // Explicit output_format wins; otherwise the output_path's extension
+        // picks the format, so 'logo.png' on a Gemini model is rejected below
+        // rather than saved as a JPEG named logo.jpg.
+        const outputFormat =
+          params.output_format ??
+          inferOutputFormatFromPath(params.output_path) ??
+          DEFAULTS.outputFormat;
 
         // Provider-specific options carry no schema default and are passed
         // through as given: the provider that owns the option applies its own

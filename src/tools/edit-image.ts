@@ -15,6 +15,7 @@ import {
 } from "../schemas/edit.js";
 import { editImage, validateGenerationConfig } from "../providers/index.js";
 import {
+  inferOutputFormatFromPath,
   resolveOutputPath,
   saveBase64Image,
   loadInputImage,
@@ -94,7 +95,13 @@ export function registerEditImageTool(server: McpServer): void {
         const aspectRatio =
           aspectRatioParam === "auto" ? undefined : aspectRatioParam;
         const requestedCount = params.num_images ?? DEFAULTS.numImages;
-        const outputFormat = params.output_format ?? DEFAULTS.outputFormat;
+        // Explicit output_format wins; otherwise the output_path's extension
+        // picks the format, so 'logo.png' on a Gemini model is rejected below
+        // rather than saved as a JPEG named logo.jpg.
+        const outputFormat =
+          params.output_format ??
+          inferOutputFormatFromPath(params.output_path) ??
+          DEFAULTS.outputFormat;
 
         // Provider-specific options carry no schema default and are passed
         // through as given: the provider that owns the option applies its own
