@@ -23,4 +23,14 @@ export default defineConfig([
       "no-console": ["error", { allow: ["error", "warn"] }],
     },
   },
+  // scripts/smoke.mjs is a CLI we run by hand, not the server: stdout is its
+  // report channel, so the stdout rule above does not apply to it.
+  {
+    files: ["scripts/**/*.mjs"],
+    extends: [js.configs.recommended],
+    languageOptions: {
+      ecmaVersion: 2022,
+      globals: globals.node,
+    },
+  },
 ]);

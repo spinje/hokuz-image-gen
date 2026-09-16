@@ -258,6 +258,8 @@ npm run typecheck    # tsc --noEmit
 npm run lint         # ESLint (zero warnings allowed)
 npm test             # Vitest (no network; ~0.5 s)
 npm run check        # typecheck + lint + test — the gate CI runs on every pull request
+
+npm run build && npm run smoke   # paid live check against both providers (~10 cents)
 ```
 
 ## Project Structure
@@ -285,6 +287,7 @@ npm run check        # typecheck + lint + test — the gate CI runs on every pul
 │   │   ├── edit-image.ts     # Edit tool
 │   │   └── __tests__/
 │   └── __tests__/            # Server contract tests + in-memory MCP harness
+├── scripts/smoke.mjs         # npm run smoke: paid live check of the built server
 ├── .github/workflows/ci.yml  # PR gate: build, typecheck, lint, test
 ├── dist/                     # Compiled output (generated)
 ├── eslint.config.js

@@ -76,6 +76,7 @@ A local MCP (Model Context Protocol) server that exposes two tools, `hokuz_gener
 │   ├── agents/                 # review-* lenses + REVIEW-PROTOCOL.md (see Review Battery)
 │   ├── skills/deep-review/     # /deep-review orchestrator: dispatch lenses, evaluate, action plan
 │   └── commands/test-reflect.md # self-audit of tests you just wrote
+├── scripts/smoke.mjs           # npm run smoke: paid live check of the built server
 ├── .github/workflows/ci.yml    # PR gate: build, typecheck, lint, test
 ├── eslint.config.js, vitest.config.ts, tsconfig.json, tsconfig.test.json
 ├── README.md                   # User docs incl. hand-maintained model speed/cost tables
@@ -93,6 +94,7 @@ A local MCP (Model Context Protocol) server that exposes two tools, `hokuz_gener
 - `npm run typecheck` — `tsc -p tsconfig.test.json` (src **and** tests, no emit)
 - `npm run lint` — ESLint, `--max-warnings=0`
 - `npm test` / `npm run test:watch` — Vitest (~0.5 s, no network)
+- `npm run smoke` — the paid live check against both providers; needs `npm run build` first (see Testing)
 - `npm run check` — typecheck + lint + test. **This is the gate. Run it before calling a task done.** CI runs the same steps plus the build on every pull request.
 - `npx @modelcontextprotocol/inspector node dist/index.js` — poke the tools interactively
 - `claude mcp add hokuz-image-gen --scope local --transport stdio --env GEMINI_API_KEY="$GEMINI_API_KEY" -- node "$PWD/dist/index.js"` — register with Claude Code, then `/mcp` to confirm
@@ -165,7 +167,7 @@ Give such an option a `.default()` and every call it cannot apply to starts eith
 
 **Before a test counts as done, mutate the code it guards and read the failure count.** A test that stays green when its behaviour breaks is deleted, not kept. Restore mutations from a saved copy, never with `git checkout -- <file>` on a dirty tree.
 
-**Manual verification** after changes that touch the API path: `npm run build`, register with an MCP client, run one real generation and one real edit **per provider that changed**, and try one invalid combination (Lite + 2K, or Flare + `temperature`) to see the pre-flight error.
+**Manual verification** after changes that touch the API path: `npm run build && npm run smoke` (about 10 cents, needs both keys; it skips a provider whose key is absent and says so). `scripts/smoke.mjs` drives the built server over stdio and asserts a generate and an edit per provider, a transparent PNG on disk, and the pre-flight rejections that must cost nothing.
 
 ## Adding a Parameter or a Tool
 

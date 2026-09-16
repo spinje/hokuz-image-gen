@@ -29,9 +29,10 @@ Follow `.claude/agents/REVIEW-PROTOCOL.md` (read it first) for scope, severity, 
 
 ## Execution Vehicles
 
-1. **A Node script driving the built server over stdio** — the production path. Use the SDK's `Client` + `StdioClientTransport` pointed at `node dist/index.js` with `GEMINI_API_KEY` and/or `OPENAI_API_KEY` in `env`. Call `listTools`, then `callTool` with the attack arguments, and print the full result. `src/__tests__/harness.ts` shows the client side; swap `InMemoryTransport` for `StdioClientTransport`.
-2. **`npx @modelcontextprotocol/inspector --cli node dist/index.js --method tools/call ...`** when a one-shot call is enough.
-3. **`node -e` against `dist/providers/gemini.js` or `dist/providers/openai.js`** for provider-level promises (request shape accepted by the API, parse of a real response).
+1. **`npm run build && npm run smoke`** (`scripts/smoke.mjs`) — the ready-made rail: a generate and an edit per provider on the cheapest models, a transparent PNG, and the free pre-flight rejections, each asserted, with a total cost line. Five paid calls, about 10 cents, so it spends most of the cap above; reach for it when the change touches the shared request path, and hand-write attacks when it does not.
+2. **A Node script driving the built server over stdio** — the production path. Use the SDK's `Client` + `StdioClientTransport` pointed at `node dist/index.js` with `GEMINI_API_KEY` and/or `OPENAI_API_KEY` in `env`. Call `listTools`, then `callTool` with the attack arguments, and print the full result. `src/__tests__/harness.ts` shows the client side; swap `InMemoryTransport` for `StdioClientTransport`.
+3. **`npx @modelcontextprotocol/inspector --cli node dist/index.js --method tools/call ...`** when a one-shot call is enough.
+4. **`node -e` against `dist/providers/gemini.js` or `dist/providers/openai.js`** for provider-level promises (request shape accepted by the API, parse of a real response).
 
 Verify the file, not just the response: `file <path>` should report the requested output_format (JPEG, PNG or WebP); `stat -f %z <path>` should be non-trivial; the response's `path` must equal where the file actually is.
 
