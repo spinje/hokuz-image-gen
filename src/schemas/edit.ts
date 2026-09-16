@@ -1,5 +1,5 @@
 /**
- * Zod schemas for the edit_image tool
+ * Zod input schema for the edit_image tool
  */
 
 import { z } from "zod";
@@ -154,52 +154,3 @@ export const EditImageInputSchema = z
  * Type definition derived from the schema
  */
 export type EditImageInput = z.infer<typeof EditImageInputSchema>;
-
-/**
- * Output schema for hokuz_edit_image tool
- */
-export const EditImageOutputSchema = z.object({
-  success: z.boolean().describe("Whether the image editing succeeded"),
-  images: z
-    .array(
-      z.object({
-        path: z.string().describe("File path where the image was saved; authoritative, and different from output_path when a -2, -3 suffix was needed"),
-        format: z.enum(OUTPUT_FORMATS).describe("Image format"),
-        width: z
-          .number()
-          .optional()
-          .describe("Image width in pixels, when the provider reports it"),
-        height: z
-          .number()
-          .optional()
-          .describe("Image height in pixels, when the provider reports it"),
-      })
-    )
-    .describe("Array of edited images"),
-  description: z
-    .string()
-    .optional()
-    .describe("Model's text description of the edited image(s)"),
-  usage: z
-    .object({
-      input_tokens: z.number(),
-      output_tokens: z.number(),
-      estimated_cost_usd: z.number(),
-    })
-    .optional()
-    .describe(
-      "Token usage summed over the requests made, with a cost estimated from those counts (OpenAI models only)"
-    ),
-  warning: z
-    .string()
-    .optional()
-    .describe(
-      "Set when fewer images than requested were produced; includes the failure reason"
-    ),
-  error: z
-    .string()
-    .optional()
-    .describe("Error message if editing failed"),
-});
-
-export type EditImageOutput = z.infer<typeof EditImageOutputSchema>;

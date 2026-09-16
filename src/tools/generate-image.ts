@@ -7,24 +7,16 @@
  */
 
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
-import {
-  GenerateImageInputSchema,
-  GenerateImageOutputSchema,
-  type GenerateImageOutput,
-} from "../schemas/generate.js";
+import { GenerateImageInputSchema } from "../schemas/generate.js";
+import { ImageToolOutputSchema } from "../schemas/output.js";
 import { generateImage, validateGenerationConfig } from "../providers/index.js";
+import { inferOutputFormatFromPath } from "../services/file-utils.js";
+import type { GenerationConfig } from "../types.js";
 import {
-  inferOutputFormatFromPath,
-  resolveOutputPath,
-  saveBase64Image,
-} from "../services/file-utils.js";
-import {
-  McpError,
-  sumUsage,
-  type GeneratedImage,
-  type GenerationConfig,
-  type UsageReport,
-} from "../types.js";
+  IMAGE_TOOL_ANNOTATIONS,
+  imageToolError,
+  runImageTool,
+} from "./image-tool.js";
 import { DEFAULTS } from "../constants.js";
 
 /**
@@ -61,13 +53,8 @@ export function registerGenerateImageTool(server: McpServer): void {
       title: "Generate Image",
       description: TOOL_DESCRIPTION,
       inputSchema: GenerateImageInputSchema,
-      outputSchema: GenerateImageOutputSchema,
-      annotations: {
-        readOnlyHint: false, // Always writes the result to output_path
-        destructiveHint: false, // Never deletes or overwrites an existing file
-        idempotentHint: false, // Same prompt produces different images
-        openWorldHint: true, // Interacts with an external provider API
-      },
+      outputSchema: ImageToolOutputSchema,
+      annotations: IMAGE_TOOL_ANNOTATIONS,
     },
     async (params) => {
       try {
@@ -76,7 +63,6 @@ export function registerGenerateImageTool(server: McpServer): void {
         const model = params.model ?? DEFAULTS.model;
         const aspectRatio = params.aspect_ratio ?? DEFAULTS.aspectRatio;
         const resolution = params.resolution ?? DEFAULTS.resolution;
-        const requestedCount = params.num_images ?? DEFAULTS.numImages;
         // Explicit output_format wins; otherwise the output_path's extension
         // picks the format, so 'logo.png' on a Gemini model is rejected below
         // rather than saved as a JPEG named logo.jpg.
@@ -101,124 +87,15 @@ export function registerGenerateImageTool(server: McpServer): void {
         // Validate model options before any API call (fail fast, no downgrades)
         validateGenerationConfig(config);
 
-        // num_images is implemented via repeated independent requests, each
-        // asking for one image. Stop once we have enough.
-        const collected: GeneratedImage[] = [];
-        const descriptions: string[] = [];
-        const usages: UsageReport[] = [];
-        let successfulRequests = 0;
-        let failureReason: string | undefined;
-        for (
-          let attempt = 0;
-          collected.length < requestedCount && attempt < requestedCount;
-          attempt++
-        ) {
-          try {
-            const response = await generateImage(params.prompt, config);
-            collected.push(...response.images);
-            successfulRequests++;
-            if (response.description) descriptions.push(response.description);
-            if (response.usage) usages.push(response.usage);
-          } catch (err) {
-            // If we have no images yet, surface the error. Otherwise keep what
-            // we got and warn that fewer than requested were produced.
-            if (collected.length === 0) throw err;
-            failureReason = err instanceof Error ? err.message : String(err);
-            break;
-          }
-        }
-
-        const usage = sumUsage(usages);
-        const imagesToSave = collected.slice(0, requestedCount);
-
-        // Process the generated images - save to files
-        const outputImages: GenerateImageOutput["images"] = [];
-
-        for (let i = 0; i < imagesToSave.length; i++) {
-          const image = imagesToSave[i];
-          const filePath = await resolveOutputPath(
-            params.output_path,
-            outputFormat,
-            i
-          );
-          await saveBase64Image(image.data, filePath);
-
-          outputImages.push({
-            path: filePath,
-            format: outputFormat,
-            width: image.width,
-            height: image.height,
-          });
-        }
-
-        const description = descriptions.length
-          ? Array.from(new Set(descriptions)).join("\n---\n")
-          : undefined;
-
-        const warning =
-          outputImages.length < requestedCount
-            ? `Requested ${requestedCount} image(s) but only ${outputImages.length} were produced.` +
-              (failureReason ? ` The failed request reported: ${failureReason}` : "")
-            : undefined;
-
-        const output: GenerateImageOutput = {
-          success: true,
-          images: outputImages,
-          description,
-          usage: usage && {
-            input_tokens: usage.inputTokens,
-            output_tokens: usage.outputTokens,
-            estimated_cost_usd: usage.estimatedCostUsd,
-          },
-          warning,
-        };
-
-        // Format response text
-        const paths = outputImages
-          .map((img) =>
-            img.width && img.height
-              ? `${img.path} (${img.width}x${img.height})`
-              : img.path
-          )
-          .join("\n  ");
-        let textContent = `Successfully generated ${outputImages.length} image(s):\n  ${paths}`;
-        if (usage) {
-          // Say so when the totals cover only some of the requests, rather
-          // than letting them read as the cost of the whole call.
-          const scope =
-            usages.length < successfulRequests
-              ? ` (reported for ${usages.length} of ${successfulRequests} requests)`
-              : "";
-          textContent += `\n\nUsage${scope}: ${usage.inputTokens} input + ${usage.outputTokens} output tokens, estimated cost $${usage.estimatedCostUsd.toFixed(4)}`;
-        }
-        if (warning) {
-          textContent += `\n\nWarning: ${warning}`;
-        }
-        if (description) {
-          textContent += `\n\nDescription: ${description}`;
-        }
-
-        return {
-          content: [{ type: "text", text: textContent }],
-          structuredContent: output,
-        };
+        return await runImageTool({
+          outputFormat,
+          outputPath: params.output_path,
+          requestedCount: params.num_images ?? DEFAULTS.numImages,
+          produce: () => generateImage(params.prompt, config),
+          summary: (n) => `Successfully generated ${n} image(s):`,
+        });
       } catch (error) {
-        const errorMessage =
-          error instanceof McpError
-            ? error.message
-            : `Error: Unexpected error during image generation. ${error instanceof Error ? error.message : String(error)}`;
-
-        const output: GenerateImageOutput = {
-          success: false,
-          images: [],
-          error: errorMessage,
-        };
-
-        return {
-          content: [{ type: "text", text: errorMessage }],
-          structuredContent: output,
-          isError: true,
-        };
+        return imageToolError(error, "generation");
       }
     }
   );

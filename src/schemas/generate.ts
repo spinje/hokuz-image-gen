@@ -1,5 +1,5 @@
 /**
- * Zod schemas for the generate_image tool
+ * Zod input schema for the generate_image tool
  */
 
 import { z } from "zod";
@@ -131,52 +131,3 @@ export const GenerateImageInputSchema = z
  * Type definition derived from the schema
  */
 export type GenerateImageInput = z.infer<typeof GenerateImageInputSchema>;
-
-/**
- * Output schema for hokuz_generate_image tool
- */
-export const GenerateImageOutputSchema = z.object({
-  success: z.boolean().describe("Whether the image generation succeeded"),
-  images: z
-    .array(
-      z.object({
-        path: z.string().describe("File path where the image was saved; authoritative, and different from output_path when a -2, -3 suffix was needed"),
-        format: z.enum(OUTPUT_FORMATS).describe("Image format"),
-        width: z
-          .number()
-          .optional()
-          .describe("Image width in pixels, when the provider reports it"),
-        height: z
-          .number()
-          .optional()
-          .describe("Image height in pixels, when the provider reports it"),
-      })
-    )
-    .describe("Array of generated images"),
-  description: z
-    .string()
-    .optional()
-    .describe("Model's text description of the generated image(s)"),
-  usage: z
-    .object({
-      input_tokens: z.number(),
-      output_tokens: z.number(),
-      estimated_cost_usd: z.number(),
-    })
-    .optional()
-    .describe(
-      "Token usage summed over the requests made, with a cost estimated from those counts (OpenAI models only)"
-    ),
-  warning: z
-    .string()
-    .optional()
-    .describe(
-      "Set when fewer images than requested were produced; includes the failure reason"
-    ),
-  error: z
-    .string()
-    .optional()
-    .describe("Error message if generation failed"),
-});
-
-export type GenerateImageOutput = z.infer<typeof GenerateImageOutputSchema>;
