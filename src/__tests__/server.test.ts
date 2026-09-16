@@ -42,7 +42,7 @@ describe("published tool contract", () => {
       const items = outputProperties.images.items;
       expect(items.required.sort()).toEqual(["format", "path"]);
       expect(items.properties).not.toHaveProperty("dataUrl");
-      // Pixel size is optional because only OpenAI reports it.
+      // Pixel size stays optional: a JPEG header we cannot walk yields none.
       expect(Object.keys(items.properties).sort()).toEqual([
         "format",
         "height",
