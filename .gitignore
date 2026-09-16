@@ -45,3 +45,6 @@ image-*.webp
 
 # Working notes (plans, research); kept out of the repo on purpose
 docs/
+
+# Session handoffs; never committed
+scratchpads/
