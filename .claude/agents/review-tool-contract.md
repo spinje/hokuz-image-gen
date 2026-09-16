@@ -30,14 +30,14 @@ Follow `.claude/agents/REVIEW-PROTOCOL.md` (read it first). Lens-specifics on to
 | Published JSON Schema (enums, `default`, `required`) | derived by the MCP SDK from the Zod schema | generated — but `.default()` decides `required`; dropping it makes the field required unless it is `.optional()` (gotcha 7) |
 | Handler defaults (`params.x ?? DEFAULTS.x`) | `src/tools/generate-image.ts`, `src/tools/edit-image.ts` | hand |
 | `TOOL_DESCRIPTION` template (model guidance with speed/cost, the rules the schema cannot express, examples — deliberately **not** an Args list) | top of each tool file | hand |
-| Output Zod schema vs what the handler actually returns | `src/schemas/*.ts` vs the `output` object in each handler | hand, both sides |
+| Output Zod schema vs what the handler actually returns | `src/schemas/output.ts` vs the `output` objects in `src/tools/image-tool.ts` | hand, both sides |
 | `DEFAULTS`, `LIMITS`, `IMAGE_MODEL_CAPABILITIES` | `src/constants.ts` | hand |
 | README parameter tables, model table, cost table | `README.md` | hand |
 | `CLAUDE.md` gotchas and constants reference | `CLAUDE.md` | hand |
 | Contract tests | `src/__tests__/server.test.ts` (enums, defaults, required, output shape), request-shape `toEqual` in `src/providers/__tests__/gemini.test.ts` and `openai.test.ts` | hand |
 | Review lens files that cite the fact | `.claude/agents/review-*.md` | hand |
 
-**Two tools, one archetype.** Generate and edit share every optional parameter and the same handler shape. A change to one tool's schema, description, default handling, or response formatting almost always belongs on the other. Diff them after reading: `diff <(sed -n '/^const TOOL_DESCRIPTION/,/^`;/p' src/tools/generate-image.ts) <(sed -n '/^const TOOL_DESCRIPTION/,/^`;/p' src/tools/edit-image.ts)` is a cheap start.
+**Two tools, one archetype.** Generate and edit share every optional parameter, one output schema (`src/schemas/output.ts`) and one pipeline (`src/tools/image-tool.ts`), which is where response formatting and the failure result now live — a change there reaches both tools at once, so check it against both. What is still per tool is the `TOOL_DESCRIPTION`, the input schema, and the param → `GenerationConfig` mapping; a change to one tool's copy of those almost always belongs on the other. Diff them after reading: `diff <(sed -n '/^const TOOL_DESCRIPTION/,/^`;/p' src/tools/generate-image.ts) <(sed -n '/^const TOOL_DESCRIPTION/,/^`;/p' src/tools/edit-image.ts)` is a cheap start.
 
 **Error messages are part of the contract.** Every `McpError` message starts with `Error:` and must let an LLM fix the call: name the bad value, name the accepted values, or name the environment variable. The model-capability message is the standard to match: `Model 'X' (Label) does not support resolution 'Y'. Supported resolutions: A, B.`
 

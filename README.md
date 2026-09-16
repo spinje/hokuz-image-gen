@@ -272,8 +272,9 @@ npm run build && npm run smoke   # paid live check against both providers (~10 c
 │   ├── constants.ts          # Models, capability registry, limits, defaults
 │   ├── types.ts              # TypeScript types and McpError
 │   ├── schemas/
-│   │   ├── generate.ts       # Generate tool schema
-│   │   └── edit.ts           # Edit tool schema
+│   │   ├── generate.ts       # Generate tool input schema
+│   │   ├── edit.ts           # Edit tool input schema
+│   │   └── output.ts         # Output schema shared by both tools
 │   ├── providers/
 │   │   ├── index.ts          # Validation + dispatch on the registry's provider
 │   │   ├── gemini.ts         # Gemini Interactions API client
@@ -283,8 +284,9 @@ npm run build && npm run smoke   # paid live check against both providers (~10 c
 │   │   ├── file-utils.ts     # File operations
 │   │   └── __tests__/
 │   ├── tools/
-│   │   ├── generate-image.ts # Generate tool
-│   │   ├── edit-image.ts     # Edit tool
+│   │   ├── generate-image.ts # Generate tool: description + param mapping
+│   │   ├── edit-image.ts     # Edit tool: description + param mapping
+│   │   ├── image-tool.ts     # Pipeline shared by both tools
 │   │   └── __tests__/
 │   └── __tests__/            # Server contract tests + in-memory MCP harness
 ├── scripts/smoke.mjs         # npm run smoke: paid live check of the built server
