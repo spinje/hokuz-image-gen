@@ -11,6 +11,7 @@ import {
   ENV_VARS,
   GEMINI_PRICE_PER_IMAGE_USD,
   MIME_TYPES,
+  type ImageModel,
   type Resolution,
 } from "../constants.js";
 import {
@@ -252,7 +253,7 @@ export async function generateImage(
 
     return parseInteraction(interaction as InteractionLike, imagePriceUsd(config));
   } catch (error) {
-    return handleApiError(error);
+    return handleApiError(error, config.model);
   }
 }
 
@@ -287,59 +288,129 @@ export async function editImage(
 
     return parseInteraction(interaction as InteractionLike, imagePriceUsd(config));
   } catch (error) {
-    return handleApiError(error);
+    return handleApiError(error, config.model);
   }
 }
 
 /**
- * Handle API errors and convert to McpError
+ * The fields the SDK's error classes carry that we read. `@google/genai` throws
+ * an internal Stainless-style hierarchy it does not export (the exported
+ * `ApiError` is a different, unused class), so there is nothing to `instanceof`
+ * against and the mapping below duck-types instead.
  */
-function handleApiError(error: unknown): never {
+interface GeminiApiErrorLike {
+  status?: unknown;
+  message?: unknown;
+  body?: unknown;
+  error?: { error?: { message?: unknown } };
+}
+
+/**
+ * Google's own message for a failed request.
+ *
+ * Normally it is in the parsed body (`error.error.message`). An invalid API key
+ * is the exception: the SDK leaves the body unparsed and it is a JSON array, so
+ * that case is read from `body`. Anything else falls back to the SDK's message,
+ * whose "<status> " prefix would otherwise be repeated by our own text.
+ */
+function apiMessage(error: GeminiApiErrorLike): string {
+  const structured = error.error?.error?.message;
+  if (typeof structured === "string") return structured;
+
+  if (typeof error.body === "string") {
+    try {
+      const parsed: unknown = JSON.parse(error.body);
+      const first = Array.isArray(parsed) ? (parsed[0] as unknown) : parsed;
+      const message = (first as { error?: { message?: unknown } } | undefined)?.error?.message;
+      if (typeof message === "string") return message;
+    } catch {
+      // Not JSON; fall through to the SDK's own message.
+    }
+  }
+
+  if (typeof error.message === "string") return error.message.replace(/^\d{3} /, "");
+  return String(error);
+}
+
+/**
+ * Map a Gemini SDK error to an McpError whose message says what to do next.
+ *
+ * Classification is by HTTP status, like the OpenAI module's. The two text
+ * checks are deliberate exceptions: a rejected API key comes back as a 400 with
+ * no distinguishing code, and a safety block has no code either (no real block
+ * was triggered while capturing these shapes, so the wording is a best guess).
+ */
+function handleApiError(error: unknown, model: ImageModel): never {
   // Preserve McpErrors we raised ourselves (e.g. validation, content blocked).
   if (error instanceof McpError) {
     throw error;
   }
 
-  const errorMessage = error instanceof Error ? error.message : String(error);
+  const apiError = (error ?? {}) as GeminiApiErrorLike;
+  const message = apiMessage(apiError);
+  const status = typeof apiError.status === "number" ? apiError.status : undefined;
 
-  // Check for rate limiting
-  if (
-    errorMessage.includes("429") ||
-    errorMessage.toLowerCase().includes("rate limit")
-  ) {
+  // No status at all means the request never reached Google (connection,
+  // timeout, abort).
+  if (status === undefined) {
     throw new McpError(
-      ErrorType.API_RATE_LIMIT,
-      "Error: Gemini rate limit exceeded. Wait before retrying, lower num_images, or use an OpenAI model."
+      ErrorType.API_ERROR,
+      `Error: Gemini request failed (network): ${message}. Retry; if it persists, try an OpenAI model.`,
+      error
     );
   }
 
-  // Check for authentication errors
-  if (
-    errorMessage.includes("401") ||
-    errorMessage.includes("403") ||
-    errorMessage.toLowerCase().includes("api key")
-  ) {
+  if (status === 400) {
+    const body = typeof apiError.body === "string" ? apiError.body : "";
+    if (/api key/i.test(message) || /api key/i.test(body)) {
+      throw new McpError(
+        ErrorType.MISSING_API_KEY,
+        `Error: Gemini rejected the API key: ${message}. Check ${ENV_VARS.geminiApiKey} (or ${ENV_VARS.googleApiKey}), or choose an OpenAI model.`,
+        error
+      );
+    }
+    if (/safety|blocked/i.test(message)) {
+      throw new McpError(
+        ErrorType.CONTENT_BLOCKED,
+        `Error: Gemini's safety filters blocked this request: ${message}. Rephrase the prompt or change the input images.`,
+        error
+      );
+    }
+  }
+
+  switch (status) {
+    case 401:
+    case 403:
+      throw new McpError(
+        ErrorType.MISSING_API_KEY,
+        `Error: Gemini denied the request (${status}): ${message}. Check ${ENV_VARS.geminiApiKey} (or ${ENV_VARS.googleApiKey}) and the project's billing, or choose an OpenAI model.`,
+        error
+      );
+    case 404:
+      throw new McpError(
+        ErrorType.API_ERROR,
+        `Error: Gemini reports model '${model}' was not found (${message}). The model ID may have been retired, or this resolution is not offered for it; try another Gemini model or an OpenAI model.`,
+        error
+      );
+    case 429:
+      throw new McpError(
+        ErrorType.API_RATE_LIMIT,
+        `Error: Gemini rate limit exceeded (429): ${message}. Wait a minute and retry, lower num_images, or use an OpenAI model.`,
+        error
+      );
+  }
+
+  if (status >= 400 && status < 500) {
     throw new McpError(
-      ErrorType.MISSING_API_KEY,
-      `Error: Invalid or missing API key. Please check your ${ENV_VARS.geminiApiKey} environment variable, or choose an OpenAI model.`
+      ErrorType.API_ERROR,
+      `Error: Gemini rejected the request (${status}): ${message}. Adjust the arguments accordingly.`,
+      error
     );
   }
 
-  // Check for content safety blocks
-  if (
-    errorMessage.toLowerCase().includes("blocked") ||
-    errorMessage.toLowerCase().includes("safety")
-  ) {
-    throw new McpError(
-      ErrorType.CONTENT_BLOCKED,
-      "Error: Content was blocked by safety filters. Try modifying your prompt to be less explicit or controversial."
-    );
-  }
-
-  // Generic API error
   throw new McpError(
     ErrorType.API_ERROR,
-    `Error: API request failed. ${errorMessage}`,
+    `Error: Gemini request failed (${status}): ${message}. Retry; if it persists, try an OpenAI model.`,
     error
   );
 }

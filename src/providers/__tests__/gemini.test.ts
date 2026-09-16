@@ -279,21 +279,130 @@ describe("editImage request shape", () => {
 });
 
 describe("API error mapping", () => {
-  const cases: Array<[string, ErrorType]> = [
-    ["429 Too Many Requests", ErrorType.API_RATE_LIMIT],
-    ["Rate limit exceeded for project", ErrorType.API_RATE_LIMIT],
-    ["403 PERMISSION_DENIED", ErrorType.MISSING_API_KEY],
-    ["API key not valid", ErrorType.MISSING_API_KEY],
-    ["Response was blocked due to SAFETY", ErrorType.CONTENT_BLOCKED],
-    ["socket hang up", ErrorType.API_ERROR],
+  /**
+   * The SDK throws an internal Stainless-style hierarchy `@google/genai` does
+   * not export, so the mapping duck-types. These shapes were captured from live
+   * failing calls; `error` is the parsed body and `body` the raw one.
+   */
+  function apiError(args: {
+    message: string;
+    status?: number;
+    error?: unknown;
+    body?: string;
+  }): Error {
+    return Object.assign(new Error(args.message), {
+      status: args.status,
+      error: args.error,
+      body: args.body,
+    });
+  }
+
+  const googleBody = (message: string, code: number) => ({
+    httpMeta: {},
+    error: { message, code },
+  });
+
+  const cases: Array<[string, Error, ErrorType, string]> = [
+    [
+      "an unknown model (404)",
+      apiError({
+        message: "404 Model 'gemini-does-not-exist' not found. Did you mean one of ...",
+        status: 404,
+        error: googleBody("Model 'gemini-does-not-exist' not found. Did you mean one of ...", 404),
+      }),
+      ErrorType.API_ERROR,
+      "Error: Gemini reports model 'gemini-3.1-flash-image' was not found (Model 'gemini-does-not-exist' not found. Did you mean one of ...). The model ID may have been retired, or this resolution is not offered for it; try another Gemini model or an OpenAI model.",
+    ],
+    [
+      "an unsupported aspect_ratio value (400)",
+      apiError({
+        message: "400 The value '7:5' is not supported for 'response_format.aspect_ratio'.",
+        status: 400,
+        error: googleBody(
+          "The value '7:5' is not supported for 'response_format.aspect_ratio'. Supported values: ...",
+          400
+        ),
+      }),
+      ErrorType.API_ERROR,
+      "Error: Gemini rejected the request (400): The value '7:5' is not supported for 'response_format.aspect_ratio'. Supported values: .... Adjust the arguments accordingly.",
+    ],
+    [
+      "a resolution the model does not offer (404, not a retired ID)",
+      apiError({
+        message: "404 Requested entity was not found.",
+        status: 404,
+        error: googleBody("Requested entity was not found.", 404),
+      }),
+      ErrorType.API_ERROR,
+      "Error: Gemini reports model 'gemini-3.1-flash-image' was not found (Requested entity was not found.). The model ID may have been retired, or this resolution is not offered for it; try another Gemini model or an OpenAI model.",
+    ],
+    [
+      "an invalid API key, whose message is only in the array-shaped body (400)",
+      apiError({
+        message: '400 API error occurred: [{"error":{"code":400,...}}]',
+        status: 400,
+        // Live shape: `error` carries no message at all, and the raw body is a
+        // JSON array. Reading only `error` would lose the reason entirely.
+        error: { httpMeta: {} },
+        body: '[{"error":{"code":400,"message":"API key not valid. Please pass a valid API key.","status":"INVALID_ARGUMENT"}}]',
+      }),
+      ErrorType.MISSING_API_KEY,
+      "Error: Gemini rejected the API key: API key not valid. Please pass a valid API key.. Check GEMINI_API_KEY (or GOOGLE_API_KEY), or choose an OpenAI model.",
+    ],
+    [
+      "a safety block (400)",
+      apiError({
+        message: "400 The request was blocked by safety filters.",
+        status: 400,
+        error: googleBody("The request was blocked by safety filters.", 400),
+      }),
+      ErrorType.CONTENT_BLOCKED,
+      "Error: Gemini's safety filters blocked this request: The request was blocked by safety filters.. Rephrase the prompt or change the input images.",
+    ],
+    [
+      "a permission denial (403)",
+      apiError({
+        message: "403 Permission denied on resource project.",
+        status: 403,
+        error: googleBody("Permission denied on resource project.", 403),
+      }),
+      ErrorType.MISSING_API_KEY,
+      "Error: Gemini denied the request (403): Permission denied on resource project.. Check GEMINI_API_KEY (or GOOGLE_API_KEY) and the project's billing, or choose an OpenAI model.",
+    ],
+    [
+      "a rate limit (429)",
+      apiError({
+        message: "429 Resource has been exhausted (e.g. check quota).",
+        status: 429,
+        error: googleBody("Resource has been exhausted (e.g. check quota).", 429),
+      }),
+      ErrorType.API_RATE_LIMIT,
+      "Error: Gemini rate limit exceeded (429): Resource has been exhausted (e.g. check quota).. Wait a minute and retry, lower num_images, or use an OpenAI model.",
+    ],
+    [
+      "a server fault whose body is not JSON, leaving only the SDK's message (503)",
+      apiError({
+        message: "503 Service Unavailable",
+        status: 503,
+        // A gateway page rather than Google's JSON: the message can only come
+        // from the SDK, whose own "503 " prefix our text would otherwise repeat.
+        body: "<html><body>503 Service Unavailable</body></html>",
+      }),
+      ErrorType.API_ERROR,
+      "Error: Gemini request failed (503): Service Unavailable. Retry; if it persists, try an OpenAI model.",
+    ],
+    [
+      "a connection failure, which carries no status, error or body",
+      apiError({ message: "Unable to make request: TypeError: fetch failed" }),
+      ErrorType.API_ERROR,
+      "Error: Gemini request failed (network): Unable to make request: TypeError: fetch failed. Retry; if it persists, try an OpenAI model.",
+    ],
   ];
 
-  for (const [message, type] of cases) {
-    it(`maps "${message}" to ${type}`, async () => {
-      createMock.mockRejectedValue(new Error(message));
-      await expect(generateImage("p", baseConfig)).rejects.toThrowError(
-        expect.objectContaining({ type })
-      );
+  for (const [name, error, type, message] of cases) {
+    it(`maps ${name} to ${type}`, async () => {
+      createMock.mockRejectedValue(error);
+      await expect(generateImage("p", baseConfig)).rejects.toMatchObject({ type, message });
     });
   }
 
