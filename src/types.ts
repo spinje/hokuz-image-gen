@@ -113,7 +113,13 @@ export class McpError extends Error {
   constructor(
     public readonly type: ErrorType,
     message: string,
-    public readonly details?: unknown
+    public readonly details?: unknown,
+    /**
+     * Whether retrying the identical call could succeed. Only set where the
+     * `type` alone cannot say — in practice the provider mappers, which know the
+     * HTTP status. `RETRYABLE_BY_TYPE` in `tools/image-tool.ts` covers the rest.
+     */
+    public readonly retryable?: boolean
   ) {
     super(message);
     this.name = "McpError";

@@ -126,6 +126,8 @@ describe("image tool pipeline", () => {
         "Error: No images were generated. The content may have been blocked by safety filters. Try modifying your prompt.",
       // The McpError's own type, so the caller can act without parsing prose.
       error_type: "CONTENT_BLOCKED",
+      // Nothing about repeating this call would change the verdict.
+      retryable: false,
     });
   });
 
@@ -144,6 +146,39 @@ describe("image tool pipeline", () => {
       images: [],
       error: "Error: Unexpected error during image generation. boom",
       error_type: "UNKNOWN_ERROR",
+      // We have no idea what went wrong, so we do not invite a retry.
+      retryable: false,
+    });
+  });
+
+  it("lets a provider's own verdict override the type's default", async () => {
+    // API_ERROR is retryable by type, so a 4xx the mapper marked unretryable
+    // would otherwise be published as "try again" and be rejected again.
+    generateMock.mockRejectedValue(
+      new McpError(
+        ErrorType.API_ERROR,
+        "Error: OpenAI rejected the request: Invalid value. Adjust the arguments accordingly.",
+        undefined,
+        false
+      )
+    );
+
+    const rejected = await harness.callTool(TOOL, { prompt: "p", output_path: tmp });
+    expect(rejected.structuredContent).toMatchObject({
+      error_type: "API_ERROR",
+      retryable: false,
+    });
+
+    // Without a verdict from the mapper the table answers, and for API_ERROR
+    // (a 5xx or a dropped connection) its answer is "retry".
+    generateMock.mockRejectedValue(
+      new McpError(ErrorType.API_ERROR, "Error: Gemini request failed (network): fetch failed.")
+    );
+
+    const transient = await harness.callTool(TOOL, { prompt: "p", output_path: tmp });
+    expect(transient.structuredContent).toMatchObject({
+      error_type: "API_ERROR",
+      retryable: true,
     });
   });
 

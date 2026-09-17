@@ -292,13 +292,15 @@ function handleApiError(error: unknown, model: ImageModel): never {
       throw new McpError(
         ErrorType.API_ERROR,
         `Error: OpenAI denied access (403): ${apiMessage}. GPT Image models may require organisation verification in the OpenAI dashboard; otherwise choose a Gemini model.`,
-        error
+        error,
+        false
       );
     case 404:
       throw new McpError(
         ErrorType.API_ERROR,
         `Error: OpenAI reports model '${model}' was not found: ${apiMessage}. The model ID may have been retired; try the other OpenAI model or a Gemini model.`,
-        error
+        error,
+        false
       );
     case 429:
       throw new McpError(
@@ -312,7 +314,10 @@ function handleApiError(error: unknown, model: ImageModel): never {
     throw new McpError(
       ErrorType.API_ERROR,
       `Error: OpenAI rejected the request: ${apiMessage}. Adjust the arguments accordingly.`,
-      error
+      error,
+      // A 4xx is the request itself being wrong; the tail below, which is a 5xx
+      // or a connection failure, stays retryable.
+      false
     );
   }
 

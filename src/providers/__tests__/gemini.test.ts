@@ -476,6 +476,32 @@ describe("API error mapping", () => {
     });
   }
 
+  it("says a 4xx is not worth retrying, since the request itself is what failed", async () => {
+    // API_ERROR spans a retired model ID and a 500, so the type alone cannot
+    // tell the caller whether to try again; the status can.
+    createMock.mockRejectedValue(
+      apiError({
+        message: "404 Requested entity was not found.",
+        status: 404,
+        error: googleBody("Requested entity was not found.", 404),
+      })
+    );
+
+    await expect(generateImage("p", baseConfig)).rejects.toMatchObject({
+      type: ErrorType.API_ERROR,
+      retryable: false,
+    });
+  });
+
+  it("passes no verdict on a 5xx, leaving the type's default (retry) to stand", async () => {
+    createMock.mockRejectedValue(apiError({ message: "503 Service Unavailable", status: 503 }));
+
+    await expect(generateImage("p", baseConfig)).rejects.toSatisfy(
+      (e: unknown) =>
+        e instanceof McpError && e.type === ErrorType.API_ERROR && e.retryable === undefined
+    );
+  });
+
   it("re-throws McpErrors raised inside the request path with their original message", async () => {
     // parseInteraction throws CONTENT_BLOCKED when the response has no image.
     // Without the instanceof guard in handleApiError the heuristic would still

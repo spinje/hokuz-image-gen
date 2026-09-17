@@ -85,6 +85,10 @@ describe("published tool contract", () => {
       for (const type of Object.values(ErrorType)) {
         expect(errorTypeGuidance).toContain(type);
       }
+      // retryable answers what error_type cannot: whether the same call again
+      // could work. No default — it is absent on a success, not "false".
+      expect(outputProperties.retryable).toMatchObject({ type: "boolean" });
+      expect(outputProperties.retryable).not.toHaveProperty("default");
       expect(tool.annotations).toEqual({
         readOnlyHint: false,
         destructiveHint: false,

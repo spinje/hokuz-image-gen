@@ -221,6 +221,24 @@ export async function runImageTool({
   };
 }
 
+/**
+ * Whether a type is worth retrying when nothing about the call changes. The
+ * provider mappers override API_ERROR, the one type that spans both a 500 and
+ * a 400; this table is the answer for every other type and the fallback for an
+ * API_ERROR raised outside a mapper.
+ */
+const RETRYABLE_BY_TYPE: Record<ErrorType, boolean> = {
+  [ErrorType.MISSING_API_KEY]: false,
+  [ErrorType.INVALID_IMAGE_PATH]: false,
+  [ErrorType.IMAGE_TOO_LARGE]: false,
+  [ErrorType.API_RATE_LIMIT]: true,
+  [ErrorType.CONTENT_BLOCKED]: false,
+  [ErrorType.FILE_WRITE_ERROR]: false,
+  [ErrorType.API_ERROR]: true,
+  [ErrorType.INVALID_MODEL_OPTION]: false,
+  [ErrorType.UNKNOWN_ERROR]: false,
+};
+
 /** The uniform failure result. `activity` is "generation" or "editing". */
 export function imageToolError(
   error: unknown,
@@ -236,6 +254,10 @@ export function imageToolError(
     images: [],
     error: errorMessage,
     error_type: error instanceof McpError ? error.type : ErrorType.UNKNOWN_ERROR,
+    retryable:
+      error instanceof McpError
+        ? (error.retryable ?? RETRYABLE_BY_TYPE[error.type])
+        : false,
   };
 
   return {

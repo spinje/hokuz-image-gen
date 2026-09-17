@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeEach, vi } from "vitest";
 import { APIConnectionError, APIError } from "openai";
 import { IMAGE_MODEL_CAPABILITIES } from "../../constants.js";
-import { ErrorType, type GenerationConfig } from "../../types.js";
+import { ErrorType, McpError, type GenerationConfig } from "../../types.js";
 
 const FLARE = IMAGE_MODEL_CAPABILITIES["gpt-image-2.5-flare"];
 
@@ -343,6 +343,24 @@ describe("API error mapping", () => {
         message:
           "Error: OpenAI rejected the request: Invalid value. Adjust the arguments accordingly.",
       })
+    );
+  });
+
+  it("says a 4xx is not worth retrying and leaves the 5xx tail's verdict open", async () => {
+    // Every one of these is API_ERROR, the type that spans both a 500 worth
+    // retrying and an argument the API will reject again.
+    for (const status of [403, 400]) {
+      generateMock.mockRejectedValue(apiError(status, { message: "boom" }));
+      await expect(generateImage("p", baseConfig)).rejects.toMatchObject({
+        type: ErrorType.API_ERROR,
+        retryable: false,
+      });
+    }
+
+    generateMock.mockRejectedValue(apiError(500, { message: "boom" }));
+    await expect(generateImage("p", baseConfig)).rejects.toSatisfy(
+      (e: unknown) =>
+        e instanceof McpError && e.type === ErrorType.API_ERROR && e.retryable === undefined
     );
   });
 
