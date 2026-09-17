@@ -150,7 +150,12 @@ describe("image tool pipeline", () => {
   it("reports the provider's pixel size and sums usage across the num_images loop", async () => {
     generateMock.mockResolvedValue({
       images: [{ data: IMG, mimeType: "image/jpeg", width: 1360, height: 768 }],
-      usage: { inputTokens: 15, outputTokens: 229, estimatedCostUsd: 0.007 },
+      usage: {
+        inputTokens: 15,
+        outputTokens: 229,
+        estimatedCostUsd: 0.007,
+        costBasis: "tokens",
+      },
     });
 
     const result = await harness.callTool(TOOL, {
@@ -162,7 +167,14 @@ describe("image tool pipeline", () => {
     });
 
     expect(result.structuredContent).toMatchObject({
-      usage: { input_tokens: 30, output_tokens: 458, estimated_cost_usd: 0.014 },
+      usage: {
+        input_tokens: 30,
+        output_tokens: 458,
+        estimated_cost_usd: 0.014,
+        cost_basis: "tokens",
+        requests_made: 2,
+        requests_reported: 2,
+      },
     });
     const images = (result.structuredContent as {
       images: Array<{ width?: number; height?: number }>;
@@ -181,7 +193,12 @@ describe("image tool pipeline", () => {
     generateMock
       .mockResolvedValueOnce({
         images: [{ data: IMG, mimeType: "image/jpeg" }],
-        usage: { inputTokens: 15, outputTokens: 229, estimatedCostUsd: 0.007 },
+        usage: {
+          inputTokens: 15,
+          outputTokens: 229,
+          estimatedCostUsd: 0.007,
+          costBasis: "tokens",
+        },
       })
       .mockResolvedValueOnce(okResponse());
 
@@ -196,6 +213,71 @@ describe("image tool pipeline", () => {
     expect(firstText(result)).toContain(
       "Usage (reported for 1 of 2 requests): 15 input + 229 output tokens, estimated cost $0.0070"
     );
+    // The same scope in the structured channel: a caller reading only that one
+    // must not take the totals for the whole call's cost.
+    expect(result.structuredContent).toMatchObject({
+      usage: { requests_made: 2, requests_reported: 1 },
+    });
+  });
+
+  it("sums the counts of the requests that reported them, ignoring those that did not", async () => {
+    // Gemini prices per image, so a request can carry a cost with no counts.
+    generateMock
+      .mockResolvedValueOnce({
+        images: [{ data: IMG, mimeType: "image/jpeg" }],
+        usage: {
+          inputTokens: 9,
+          outputTokens: 1481,
+          estimatedCostUsd: 0.0625,
+          costBasis: "per_image",
+        },
+      })
+      .mockResolvedValueOnce({
+        images: [{ data: IMG, mimeType: "image/jpeg" }],
+        usage: { estimatedCostUsd: 0.0625, costBasis: "per_image" },
+      });
+
+    const result = await harness.callTool(TOOL, {
+      prompt: "p",
+      output_path: tmp,
+      num_images: 2,
+    });
+
+    expect(result.structuredContent).toMatchObject({
+      usage: {
+        input_tokens: 9,
+        output_tokens: 1481,
+        estimated_cost_usd: 0.125,
+        cost_basis: "per_image",
+        // Both requests priced their image, so the totals cover the whole call.
+        requests_made: 2,
+        requests_reported: 2,
+      },
+    });
+    expect(firstText(result)).toContain(
+      "Usage: 9 input + 1481 output tokens, estimated cost $0.1250"
+    );
+  });
+
+  it("omits a token count entirely rather than reporting 0 when no request gave one", async () => {
+    // A 0 would assert the provider charged nothing for input, which is a
+    // different claim from "the provider did not say". Both channels stay quiet.
+    generateMock.mockResolvedValue({
+      images: [{ data: IMG, mimeType: "image/jpeg" }],
+      usage: { estimatedCostUsd: 0.067, costBasis: "per_image" },
+    });
+
+    const result = await harness.callTool(TOOL, { prompt: "p", output_path: tmp });
+
+    const usage = (result.structuredContent as { usage: Record<string, unknown> }).usage;
+    expect(usage).toEqual({
+      estimated_cost_usd: 0.067,
+      cost_basis: "per_image",
+      requests_made: 1,
+      requests_reported: 1,
+    });
+    expect(firstText(result)).toContain("Usage: estimated cost $0.0670");
+    expect(firstText(result)).not.toContain("tokens");
   });
 
   it("omits usage and dimensions for a provider that reports neither", async () => {

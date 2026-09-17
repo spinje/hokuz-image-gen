@@ -131,6 +131,7 @@ function toUsageReport(usage: ImagesResponse["usage"]): UsageReport | undefined 
     inputTokens: usage.input_tokens,
     outputTokens: usage.output_tokens,
     estimatedCostUsd,
+    costBasis: "tokens" as const,
   };
 }
 

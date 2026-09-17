@@ -177,6 +177,7 @@ describe("usage and estimated cost", () => {
       inputTokens: 9,
       outputTokens: 1481,
       estimatedCostUsd: 0.0336,
+      costBasis: "per_image",
     });
 
     // One interaction can carry more than one image, and Google charges per
@@ -193,9 +194,13 @@ describe("usage and estimated cost", () => {
     expect(two.usage?.estimatedCostUsd).toBe(0.0672);
   });
 
-  it("still returns the image when the response reports no usage", () => {
+  it("still reports the per-image cost when the response reports no token counts", () => {
+    // The price comes from the model and resolution we sent, not from the
+    // response, so a missing `usage` block must not throw that cost away.
     const result = parseInteraction({ output_image: { data: IMG_A } }, 0.0336);
-    expect(result.usage).toBeUndefined();
+    expect(result.usage).toEqual({ estimatedCostUsd: 0.0336, costBasis: "per_image" });
+    expect(result.usage).not.toHaveProperty("inputTokens");
+    expect(result.usage).not.toHaveProperty("outputTokens");
     expect(result.images).toHaveLength(1);
   });
 
@@ -212,6 +217,8 @@ describe("usage and estimated cost", () => {
 
     const oneK = await generateImage("p", baseConfig);
     expect(oneK.usage?.estimatedCostUsd).toBe(0.067);
+    // Google charges per image; the counts beside it did not produce that cost.
+    expect(oneK.usage?.costBasis).toBe("per_image");
 
     const fourK = await generateImage("p", { ...baseConfig, resolution: "4K" });
     expect(fourK.usage?.estimatedCostUsd).toBe(0.151);

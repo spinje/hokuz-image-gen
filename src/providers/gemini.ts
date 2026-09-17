@@ -161,7 +161,8 @@ function jpegDimensions(buf: Buffer): { width: number; height: number } | undefi
  *
  * `imagePriceUsd` is what Google charges for one image of the requested model
  * and resolution; without it the result carries no usage rather than a cost
- * this module cannot stand behind.
+ * this module cannot stand behind. The token counts ride along when the
+ * response reports them, but they never price the image.
  */
 export function parseInteraction(
   interaction: InteractionLike,
@@ -217,17 +218,18 @@ export function parseInteraction(
 
   const { total_input_tokens: inputTokens, total_output_tokens: outputTokens } =
     interaction.usage ?? {};
+  // The price decides whether there is a report; the counts are attached when
+  // the response carried them.
   const usage =
-    typeof inputTokens === "number" &&
-    typeof outputTokens === "number" &&
-    imagePriceUsd !== undefined
-      ? {
-          inputTokens,
-          outputTokens,
+    imagePriceUsd === undefined
+      ? undefined
+      : {
+          ...(typeof inputTokens === "number" ? { inputTokens } : {}),
+          ...(typeof outputTokens === "number" ? { outputTokens } : {}),
           // Google bills per image, so the cost scales with what came back.
           estimatedCostUsd: imagePriceUsd * images.length,
-        }
-      : undefined;
+          costBasis: "per_image" as const,
+        };
 
   return { images, description, usage };
 }

@@ -34,14 +34,33 @@ export const ImageToolOutputSchema = z.object({
     .describe("Model's text description of the result, when it gave one"),
   usage: z
     .object({
-      input_tokens: z.number(),
-      output_tokens: z.number(),
-      estimated_cost_usd: z.number(),
+      input_tokens: z
+        .number()
+        .optional()
+        .describe("Prompt and input-image tokens, summed over the requests that reported them"),
+      output_tokens: z
+        .number()
+        .optional()
+        .describe("Generated-image tokens, summed over the requests that reported them"),
+      estimated_cost_usd: z
+        .number()
+        .describe("Estimated, never billed. Read cost_basis before relating it to the token counts."),
+      cost_basis: z
+        .enum(["tokens", "per_image"])
+        .describe(
+          "How estimated_cost_usd was arrived at. 'tokens': arithmetic over the counts above and a price table (OpenAI). 'per_image': Google's published price for the model and resolution (Gemini) — the counts above are real but did NOT produce this cost, and input and text tokens, a fraction of a cent, are not in it."
+        ),
+      requests_made: z
+        .number()
+        .describe("Provider requests this call made; num_images makes one per image"),
+      requests_reported: z
+        .number()
+        .describe(
+          "How many of those requests these totals cover. Lower than requests_made means the figures are a partial view of the call, not its whole cost."
+        ),
     })
     .optional()
-    .describe(
-      "Token usage summed over the requests made, with an estimated cost: from the token counts on OpenAI models, from Google's per-image price for the resolution on Gemini models (input and text tokens, a fraction of a cent, are not included)"
-    ),
+    .describe("Token usage and an estimated cost for the requests that reported them"),
   warning: z
     .string()
     .optional()

@@ -79,15 +79,29 @@ export interface ImageToolRun {
 /**
  * Add up the per-request usage reports of one tool call (num_images makes one
  * request per image). Undefined when no request reported usage.
+ *
+ * A token count is summed over the reports that carry it and omitted entirely
+ * when none does: a 0 would claim the provider charged nothing for it, which is
+ * a different statement from "the provider did not say". Every request in one
+ * call goes to one model, so they share one cost basis: the first report's.
  */
 function sumUsage(usages: UsageReport[]): UsageReport | undefined {
-  if (usages.length === 0) return undefined;
+  const [first] = usages;
+  if (!first) return undefined;
 
-  return usages.reduce((total, usage) => ({
-    inputTokens: total.inputTokens + usage.inputTokens,
-    outputTokens: total.outputTokens + usage.outputTokens,
-    estimatedCostUsd: total.estimatedCostUsd + usage.estimatedCostUsd,
-  }));
+  const sum = (count: (usage: UsageReport) => number | undefined) => {
+    const reported = usages.flatMap((usage) => count(usage) ?? []);
+    return reported.length ? reported.reduce((total, n) => total + n, 0) : undefined;
+  };
+  const inputTokens = sum((usage) => usage.inputTokens);
+  const outputTokens = sum((usage) => usage.outputTokens);
+
+  return {
+    ...(inputTokens !== undefined ? { inputTokens } : {}),
+    ...(outputTokens !== undefined ? { outputTokens } : {}),
+    estimatedCostUsd: usages.reduce((total, usage) => total + usage.estimatedCostUsd, 0),
+    costBasis: first.costBasis,
+  };
 }
 
 /** The num_images loop, saving, usage, warning, text and structured output. */
@@ -157,9 +171,14 @@ export async function runImageTool({
     images: outputImages,
     description,
     usage: usage && {
-      input_tokens: usage.inputTokens,
-      output_tokens: usage.outputTokens,
+      ...(usage.inputTokens !== undefined ? { input_tokens: usage.inputTokens } : {}),
+      ...(usage.outputTokens !== undefined ? { output_tokens: usage.outputTokens } : {}),
       estimated_cost_usd: usage.estimatedCostUsd,
+      cost_basis: usage.costBasis,
+      // The same two numbers the text line's scope clause uses, so a caller
+      // reading either channel sees the same scope.
+      requests_made: successfulRequests,
+      requests_reported: usages.length,
     },
     warning,
   };
@@ -180,7 +199,14 @@ export async function runImageTool({
       usages.length < successfulRequests
         ? ` (reported for ${usages.length} of ${successfulRequests} requests)`
         : "";
-    textContent += `\n\nUsage${scope}: ${usage.inputTokens} input + ${usage.outputTokens} output tokens, estimated cost $${usage.estimatedCostUsd.toFixed(4)}`;
+    // A cost can arrive without counts (Google prices per image), so name only
+    // the counts the provider reported rather than printing an undefined.
+    const counts = [
+      usage.inputTokens !== undefined ? `${usage.inputTokens} input` : undefined,
+      usage.outputTokens !== undefined ? `${usage.outputTokens} output` : undefined,
+    ].filter((count) => count !== undefined);
+    const tokens = counts.length ? `${counts.join(" + ")} tokens, ` : "";
+    textContent += `\n\nUsage${scope}: ${tokens}estimated cost $${usage.estimatedCostUsd.toFixed(4)}`;
   }
   if (warning) {
     textContent += `\n\nWarning: ${warning}`;

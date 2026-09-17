@@ -24,19 +24,27 @@ export interface GeneratedImage {
   height?: number;
 }
 
+/** How an `estimatedCostUsd` was arrived at. */
+export type CostBasis = "tokens" | "per_image";
+
 /**
- * Token usage and estimated cost for one provider request.
+ * The estimated cost of one provider request, with whatever token counts came
+ * with it.
  *
- * Both providers populate this. The cost is always an estimate, never a billed
- * amount, and its basis is whatever the provider charges on: OpenAI's token
- * prices (OPENAI_PRICE_PER_MILLION_TOKENS) applied to the counts it reports,
- * Google's per-image price for the requested resolution
- * (GEMINI_PRICE_PER_IMAGE_USD), whose token counts do not determine the price.
+ * A report exists whenever the cost is known, never a billed amount; the counts
+ * are the optional part, because a provider can price a request without
+ * reporting them. `costBasis` says which of the two the cost came from:
+ * "tokens" — arithmetic over the counts below and OPENAI_PRICE_PER_MILLION_TOKENS;
+ * "per_image" — GEMINI_PRICE_PER_IMAGE_USD for the model and resolution, which
+ * the counts below did not determine.
  */
 export interface UsageReport {
-  inputTokens: number;
-  outputTokens: number;
+  /** Reported by the provider; absent when it reported none. */
+  inputTokens?: number;
+  outputTokens?: number;
+  /** Always present: a report exists only when the cost is known. */
   estimatedCostUsd: number;
+  costBasis: CostBasis;
 }
 
 /**

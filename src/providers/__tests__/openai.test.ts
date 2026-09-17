@@ -226,6 +226,8 @@ describe("response parsing", () => {
     expect(response.usage?.inputTokens).toBe(1039);
     expect(response.usage?.outputTokens).toBe(229);
     expect(response.usage?.estimatedCostUsd).toBeCloseTo(0.015137, 9);
+    // The counts above are what produced that cost, unlike Gemini's per-image price.
+    expect(response.usage?.costBasis).toBe("tokens");
   });
 
   it("reports the size the provider chose for an edit sent with size 'auto'", async () => {
