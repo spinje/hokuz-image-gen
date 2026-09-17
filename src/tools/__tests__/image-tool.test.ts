@@ -207,7 +207,7 @@ describe("image tool pipeline", () => {
         output_tokens: 458,
         estimated_cost_usd: 0.014,
         cost_basis: "tokens",
-        requests_made: 2,
+        requests_succeeded: 2,
         requests_reported: 2,
       },
     });
@@ -251,7 +251,7 @@ describe("image tool pipeline", () => {
     // The same scope in the structured channel: a caller reading only that one
     // must not take the totals for the whole call's cost.
     expect(result.structuredContent).toMatchObject({
-      usage: { requests_made: 2, requests_reported: 1 },
+      usage: { requests_succeeded: 2, requests_reported: 1 },
     });
   });
 
@@ -285,7 +285,7 @@ describe("image tool pipeline", () => {
         estimated_cost_usd: 0.125,
         cost_basis: "per_image",
         // Both requests priced their image, so the totals cover the whole call.
-        requests_made: 2,
+        requests_succeeded: 2,
         requests_reported: 2,
       },
     });
@@ -308,7 +308,7 @@ describe("image tool pipeline", () => {
     expect(usage).toEqual({
       estimated_cost_usd: 0.067,
       cost_basis: "per_image",
-      requests_made: 1,
+      requests_succeeded: 1,
       requests_reported: 1,
     });
     expect(firstText(result)).toContain("Usage: estimated cost $0.0670");

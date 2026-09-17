@@ -50,13 +50,15 @@ export const ImageToolOutputSchema = z.object({
         .describe(
           "How estimated_cost_usd was arrived at. 'tokens': arithmetic over the counts above and a price table (OpenAI). 'per_image': Google's published price for the model and resolution (Gemini) — the counts above are real but did NOT produce this cost, and input and text tokens, a fraction of a cent, are not in it."
         ),
-      requests_made: z
+      requests_succeeded: z
         .number()
-        .describe("Provider requests this call made; num_images makes one per image"),
+        .describe(
+          "Provider requests that returned an image; num_images makes one request per image, and one that failed is counted by warning instead"
+        ),
       requests_reported: z
         .number()
         .describe(
-          "How many of those requests these totals cover. Lower than requests_made means the figures are a partial view of the call, not its whole cost."
+          "How many of those requests these totals cover. Lower than requests_succeeded means the figures are a partial view of the call, not its whole cost."
         ),
     })
     .optional()

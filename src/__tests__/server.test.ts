@@ -62,14 +62,14 @@ describe("published tool contract", () => {
         "estimated_cost_usd",
         "input_tokens",
         "output_tokens",
-        "requests_made",
         "requests_reported",
+        "requests_succeeded",
       ]);
       expect(usage.required.sort()).toEqual([
         "cost_basis",
         "estimated_cost_usd",
-        "requests_made",
         "requests_reported",
+        "requests_succeeded",
       ]);
       expect(outputProperties).toHaveProperty("warning");
       // error_type is how the caller picks its next step, so the published

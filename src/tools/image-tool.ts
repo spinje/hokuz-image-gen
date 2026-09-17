@@ -177,7 +177,7 @@ export async function runImageTool({
       cost_basis: usage.costBasis,
       // The same two numbers the text line's scope clause uses, so a caller
       // reading either channel sees the same scope.
-      requests_made: successfulRequests,
+      requests_succeeded: successfulRequests,
       requests_reported: usages.length,
     },
     warning,
