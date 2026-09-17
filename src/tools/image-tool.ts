@@ -206,7 +206,14 @@ export async function runImageTool({
       usage.outputTokens !== undefined ? `${usage.outputTokens} output` : undefined,
     ].filter((count) => count !== undefined);
     const tokens = counts.length ? `${counts.join(" + ")} tokens, ` : "";
-    textContent += `\n\nUsage${scope}: ${tokens}estimated cost $${usage.estimatedCostUsd.toFixed(4)}`;
+    // Name the basis here too. Counts printed next to a cost they did not
+    // produce invite exactly the arithmetic cost_basis exists to prevent, and a
+    // client that surfaces only this text would never see that field.
+    const basis =
+      usage.costBasis === "tokens"
+        ? " (from those token counts)"
+        : " (the provider's per-image price, not derived from those tokens)";
+    textContent += `\n\nUsage${scope}: ${tokens}estimated cost $${usage.estimatedCostUsd.toFixed(4)}${basis}`;
   }
   if (warning) {
     textContent += `\n\nWarning: ${warning}`;

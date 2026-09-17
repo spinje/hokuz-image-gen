@@ -110,18 +110,27 @@ export enum ErrorType {
  * Custom error class for MCP operations
  */
 export class McpError extends Error {
+  /** Whether retrying the identical call could succeed; undefined when the type decides. */
+  public readonly retryable?: boolean;
+
   constructor(
     public readonly type: ErrorType,
     message: string,
     public readonly details?: unknown,
     /**
-     * Whether retrying the identical call could succeed. Only set where the
-     * `type` alone cannot say — in practice the provider mappers, which know the
-     * HTTP status. `RETRYABLE_BY_TYPE` in `tools/image-tool.ts` covers the rest.
+     * Set `retryable` only where the `type` alone cannot say — the provider
+     * mappers, which know the HTTP status, and the remote fetch, where one type
+     * covers both a bad URL and a timeout. `RETRYABLE_BY_TYPE` in
+     * `tools/image-tool.ts` answers for every other case.
+     *
+     * It is an object rather than a fourth positional argument so that a bare
+     * `new McpError(type, message, false)` cannot quietly land on `details` and
+     * leave the verdict unset, which is the inversion this field exists to stop.
      */
-    public readonly retryable?: boolean
+    options?: { retryable?: boolean }
   ) {
     super(message);
+    this.retryable = options?.retryable;
     this.name = "McpError";
   }
 }

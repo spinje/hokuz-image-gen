@@ -479,18 +479,37 @@ describe("API error mapping", () => {
   it("says a 4xx is not worth retrying, since the request itself is what failed", async () => {
     // API_ERROR spans a retired model ID and a 500, so the type alone cannot
     // tell the caller whether to try again; the status can.
+    // 404 has its own branch; 400 is the likeliest Gemini rejection and reaches
+    // the generic 4xx branch, so both are exercised.
+    for (const status of [404, 400]) {
+      createMock.mockRejectedValue(
+        apiError({
+          message: `${status} Requested entity was not found.`,
+          status,
+          error: googleBody("Requested entity was not found.", status),
+        })
+      );
+
+      await expect(generateImage("p", baseConfig)).rejects.toMatchObject({
+        type: ErrorType.API_ERROR,
+        retryable: false,
+      });
+    }
+  });
+
+  it("leaves a 408 retryable, since a timeout can clear without the call changing", async () => {
     createMock.mockRejectedValue(
       apiError({
-        message: "404 Requested entity was not found.",
-        status: 404,
-        error: googleBody("Requested entity was not found.", 404),
+        message: "408 Request Timeout",
+        status: 408,
+        error: googleBody("Request Timeout", 408),
       })
     );
 
-    await expect(generateImage("p", baseConfig)).rejects.toMatchObject({
-      type: ErrorType.API_ERROR,
-      retryable: false,
-    });
+    await expect(generateImage("p", baseConfig)).rejects.toSatisfy(
+      (e: unknown) =>
+        e instanceof McpError && e.type === ErrorType.API_ERROR && e.retryable === undefined
+    );
   });
 
   it("passes no verdict on a 5xx, leaving the type's default (retry) to stand", async () => {

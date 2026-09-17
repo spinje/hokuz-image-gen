@@ -37,14 +37,18 @@ export const ImageToolOutputSchema = z.object({
       input_tokens: z
         .number()
         .optional()
-        .describe("Prompt and input-image tokens, summed over the requests that reported them"),
+        .describe(
+          "Prompt and input-image tokens, summed over the requests that reported them. Absent when no request's response carried a token count, which says nothing about how many were used."
+        ),
       output_tokens: z
         .number()
         .optional()
         .describe("Generated-image tokens, summed over the requests that reported them"),
       estimated_cost_usd: z
         .number()
-        .describe("Estimated, never billed. Read cost_basis before relating it to the token counts."),
+        .describe(
+          "The total for the requests_reported requests, not the price of one image. Estimated, never billed. Read cost_basis before relating it to the token counts."
+        ),
       cost_basis: z
         .enum(["tokens", "per_image"])
         .describe(
@@ -53,12 +57,12 @@ export const ImageToolOutputSchema = z.object({
       requests_succeeded: z
         .number()
         .describe(
-          "Provider requests that returned an image; num_images makes one request per image, and one that failed is counted by warning instead"
+          "Provider requests that returned an image; num_images makes one request per image. A request that failed is not counted here and is described in warning instead."
         ),
       requests_reported: z
         .number()
         .describe(
-          "How many of those requests these totals cover. Lower than requests_succeeded means the figures are a partial view of the call, not its whole cost."
+          "How many of those requests estimated_cost_usd covers. Lower than requests_succeeded means it is a partial view of the call, not its whole cost. The token counts have their own scope: each is summed only over the requests that reported it, which can be fewer still."
         ),
     })
     .optional()

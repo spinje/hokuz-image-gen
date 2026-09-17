@@ -407,7 +407,7 @@ function handleApiError(error: unknown, model: ImageModel): never {
         ErrorType.API_ERROR,
         `Error: Gemini reports model '${model}' was not found (${message}). The model ID may have been retired, or this resolution is not offered for it; try another Gemini model or an OpenAI model.`,
         error,
-        false
+        { retryable: false }
       );
     case 429:
       throw new McpError(
@@ -417,14 +417,16 @@ function handleApiError(error: unknown, model: ImageModel): never {
       );
   }
 
-  if (status !== undefined && status >= 400 && status < 500) {
+  // 408 and 409 can clear on their own, so they fall through to the retryable
+  // tail; every other 4xx is the request itself being wrong.
+  if (status !== undefined && status >= 400 && status < 500 && status !== 408 && status !== 409) {
     throw new McpError(
       ErrorType.API_ERROR,
       `Error: Gemini rejected the request (${status}): ${message}. Adjust the arguments accordingly.`,
       error,
       // Every 4xx that reaches here, 400 included, is the request itself being
-      // wrong; the 5xx and no-status tail below stays retryable.
-      false
+      // wrong; 408/409 and the 5xx and no-status tail below stay retryable.
+      { retryable: false }
     );
   }
 

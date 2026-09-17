@@ -290,14 +290,22 @@ async function fetchInputImage(
           : String(error);
     throw new McpError(
       ErrorType.INVALID_IMAGE_PATH,
-      `Error: Could not fetch image from '${imageUrl}': ${reason}. Check the URL, or download the image and pass a local path.`
+      `Error: Could not fetch image from '${imageUrl}': ${reason}. Check the URL, or download the image and pass a local path.`,
+      undefined,
+      // A timeout or a refused connection says nothing about the URL being
+      // wrong, and INVALID_IMAGE_PATH is otherwise a "fix the arguments" type.
+      { retryable: true }
     );
   }
 
   if (!response.ok) {
     throw new McpError(
       ErrorType.INVALID_IMAGE_PATH,
-      `Error: Could not fetch image from '${imageUrl}'. Server returned status ${response.status}. Check the URL, or download the image and pass a local path.`
+      `Error: Could not fetch image from '${imageUrl}'. Server returned status ${response.status}. Check the URL, or download the image and pass a local path.`,
+      undefined,
+      // The host failing or throttling is transient; a 4xx from it means the
+      // URL really is wrong.
+      { retryable: response.status >= 500 || response.status === 429 }
     );
   }
 

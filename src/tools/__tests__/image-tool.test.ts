@@ -159,7 +159,7 @@ describe("image tool pipeline", () => {
         ErrorType.API_ERROR,
         "Error: OpenAI rejected the request: Invalid value. Adjust the arguments accordingly.",
         undefined,
-        false
+        { retryable: false }
       )
     );
 
@@ -167,6 +167,17 @@ describe("image tool pipeline", () => {
     expect(rejected.structuredContent).toMatchObject({
       error_type: "API_ERROR",
       retryable: false,
+    });
+
+    // The table's other true: a rate limit clears on its own, and the schema
+    // tells the caller to wait and retry, so the verdict must agree.
+    generateMock.mockRejectedValue(
+      new McpError(ErrorType.API_RATE_LIMIT, "Error: Rate limit exceeded.")
+    );
+    const rateLimited = await harness.callTool(TOOL, { prompt: "p", output_path: tmp });
+    expect(rateLimited.structuredContent).toMatchObject({
+      error_type: "API_RATE_LIMIT",
+      retryable: true,
     });
 
     // Without a verdict from the mapper the table answers, and for API_ERROR
@@ -220,7 +231,7 @@ describe("image tool pipeline", () => {
     ]);
     expect(firstText(result)).toContain("(1360x768)");
     expect(firstText(result)).toContain(
-      "Usage: 30 input + 458 output tokens, estimated cost $0.0140"
+      "Usage: 30 input + 458 output tokens, estimated cost $0.0140 (from those token counts)"
     );
   });
 
@@ -246,7 +257,7 @@ describe("image tool pipeline", () => {
 
     expect(generateMock).toHaveBeenCalledTimes(2);
     expect(firstText(result)).toContain(
-      "Usage (reported for 1 of 2 requests): 15 input + 229 output tokens, estimated cost $0.0070"
+      "Usage (reported for 1 of 2 requests): 15 input + 229 output tokens, estimated cost $0.0070 (from those token counts)"
     );
     // The same scope in the structured channel: a caller reading only that one
     // must not take the totals for the whole call's cost.
@@ -290,7 +301,7 @@ describe("image tool pipeline", () => {
       },
     });
     expect(firstText(result)).toContain(
-      "Usage: 9 input + 1481 output tokens, estimated cost $0.1250"
+      "Usage: 9 input + 1481 output tokens, estimated cost $0.1250 (the provider's per-image price, not derived from those tokens)"
     );
   });
 
@@ -311,8 +322,13 @@ describe("image tool pipeline", () => {
       requests_succeeded: 1,
       requests_reported: 1,
     });
-    expect(firstText(result)).toContain("Usage: estimated cost $0.0670");
-    expect(firstText(result)).not.toContain("tokens");
+    expect(firstText(result)).toContain(
+      "Usage: estimated cost $0.0670 (the provider's per-image price, not derived from those tokens)"
+    );
+    // No count is named. The basis clause still says "tokens" to deny them, so
+    // match the shape a count would take rather than the bare word.
+    expect(firstText(result)).not.toMatch(/\d+ input/);
+    expect(firstText(result)).not.toMatch(/\d+ output/);
   });
 
   it("omits usage and dimensions for a provider that reports neither", async () => {
