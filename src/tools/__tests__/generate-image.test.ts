@@ -55,7 +55,7 @@ describe(TOOL, () => {
       outputFormat: DEFAULTS.outputFormat,
       quality: undefined,
       transparentBackground: undefined,
-    });
+    }, expect.any(AbortSignal));
 
     const saved = path.join(tmp, "lake.jpg");
     expect(await fs.readFile(saved)).toEqual(Buffer.from("fake-jpeg-bytes"));

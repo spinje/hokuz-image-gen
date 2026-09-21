@@ -11,7 +11,7 @@ import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { EditImageInputSchema } from "../schemas/edit.js";
 import { ImageToolOutputSchema } from "../schemas/output.js";
 import { editImage, validateGenerationConfig } from "../providers/index.js";
-import { acquireImageOperation } from "../services/image-operation.js";
+import { acquireImageOperation, throwIfImageCancelled } from "../services/image-operation.js";
 import {
   inferOutputFormatFromPath,
   loadInputImage,
@@ -59,7 +59,7 @@ export function registerEditImageTool(server: McpServer): void {
       outputSchema: ImageToolOutputSchema,
       annotations: IMAGE_TOOL_ANNOTATIONS,
     },
-    async (params) => {
+    async (params, { signal }) => {
       let release: (() => void) | undefined;
       try {
         // The SDK has already applied the schema's .default() values; these fallbacks
@@ -96,13 +96,14 @@ export function registerEditImageTool(server: McpServer): void {
         validateGenerationConfig(config, {
           inputImageCount: params.image_paths.length,
         });
+        throwIfImageCancelled(signal);
         release = acquireImageOperation();
 
         // Load the input images in order; the loader checks each one's type
         // and size against the model before reading it.
         const inputImages: InputImage[] = [];
         for (const imagePath of params.image_paths) {
-          inputImages.push(await loadInputImage(imagePath, model));
+          inputImages.push(await loadInputImage(imagePath, model, signal));
         }
 
         return await runImageTool({
@@ -110,7 +111,8 @@ export function registerEditImageTool(server: McpServer): void {
           outputPath: params.output_path,
           requestedCount: params.num_images ?? DEFAULTS.numImages,
           includePreview: params.include_preview ?? false,
-          produce: () => editImage(params.prompt, inputImages, config),
+          signal,
+          produce: () => editImage(params.prompt, inputImages, config, signal),
           summary: (n) => `Successfully edited ${params.image_paths.length} image(s) and generated ${n} result(s):`,
         });
       } catch (error) {

@@ -15,6 +15,7 @@ import {
   type Resolution,
 } from "../constants.js";
 import { createImagePreview, PreviewUnavailable } from "../services/image-preview.js";
+import { throwIfImageCancelled } from "../services/image-operation.js";
 import type { ImageToolOutput } from "../schemas/output.js";
 import { resolveOutputPath, saveBase64Image } from "../services/file-utils.js";
 import {
@@ -68,6 +69,7 @@ export interface ImageToolRun {
   outputPath: string;
   requestedCount: number;
   includePreview?: boolean;
+  signal?: AbortSignal;
   /**
    * One provider request. The pipeline calls it up to requestedCount times and
    * relies on it to throw when it produced no image: a resolved response with
@@ -112,6 +114,7 @@ export async function runImageTool({
   outputPath,
   requestedCount,
   includePreview = false,
+  signal,
   produce,
   summary,
 }: ImageToolRun): Promise<CallToolResult> {
@@ -126,16 +129,20 @@ export async function runImageTool({
     attempt++
   ) {
     try {
+      throwIfImageCancelled(signal);
       const response = await produce();
       collected.push(...response.images);
       successfulRequests++;
       if (response.description) descriptions.push(response.description);
       if (response.usage) usages.push(response.usage);
     } catch (err) {
+      const error = signal?.aborted
+        ? new McpError(ErrorType.REQUEST_CANCELLED, "Error: Image request cancelled; no further images will be requested.")
+        : err;
       // If we have no images yet, surface the error. Otherwise keep what
       // we got and warn that fewer than requested were produced.
-      if (collected.length === 0) throw err;
-      failureReason = err instanceof Error ? err.message : String(err);
+      if (collected.length === 0) throw error;
+      failureReason = error instanceof Error ? error.message : String(error);
       break;
     }
   }
@@ -165,7 +172,9 @@ export async function runImageTool({
     for (let i = 0; i < outputImages.length; i++) {
       const saved = outputImages[i];
       try {
+        throwIfImageCancelled(signal);
         const { data, ...preview } = await createImagePreview(imagesToSave[i].data, imagesToSave[i].mimeType);
+        throwIfImageCancelled(signal);
         // One summary precedes previewContent; each label precedes its image.
         saved.preview = { ...preview, content_index: previewContent.length + 2 };
         const background = preview.background === "white_and_navy"
@@ -179,7 +188,8 @@ export async function runImageTool({
             "This preview does not establish clean edges or preservation.",
         }, { type: "image", mimeType: "image/jpeg", data });
       } catch (error) {
-        const reason = error instanceof PreviewUnavailable ? error.message : "image decoding or processing failed";
+        const reason = signal?.aborted ? "request cancelled"
+          : error instanceof PreviewUnavailable ? error.message : "image decoding or processing failed";
         saved.preview_warning = `Preview unavailable: ${reason}. Original saved successfully; inspect ${saved.path} without repeating the image request.`;
       }
     }
@@ -269,6 +279,7 @@ export async function runImageTool({
  */
 const RETRYABLE_BY_TYPE: Record<ErrorType, boolean> = {
   [ErrorType.SERVER_BUSY]: true,
+  [ErrorType.REQUEST_CANCELLED]: false,
   [ErrorType.MISSING_API_KEY]: false,
   [ErrorType.INVALID_IMAGE_PATH]: false,
   [ErrorType.IMAGE_TOO_LARGE]: false,

@@ -13,6 +13,7 @@ import {
   type OutputFormat,
 } from "../constants.js";
 import { type InputImage, McpError, ErrorType } from "../types.js";
+import { throwIfImageCancelled } from "./image-operation.js";
 
 /**
  * Generate a timestamp-based filename
@@ -214,11 +215,18 @@ const FETCH_TIMEOUT_MS = 30_000;
  */
 export async function loadInputImage(
   pathOrUrl: string,
-  model: ImageModel
+  model: ImageModel,
+  signal?: AbortSignal
 ): Promise<InputImage> {
-  return isUrl(pathOrUrl)
-    ? fetchInputImage(pathOrUrl, model)
-    : readInputImage(pathOrUrl, model);
+  throwIfImageCancelled(signal);
+  try {
+    return await (isUrl(pathOrUrl)
+      ? fetchInputImage(pathOrUrl, model, signal)
+      : readInputImage(pathOrUrl, model, signal));
+  } catch (error) {
+    throwIfImageCancelled(signal);
+    throw error;
+  }
 }
 
 /** True for the schemes we fetch; anything else is treated as a file path. */
@@ -233,7 +241,8 @@ function isUrl(value: string): boolean {
 
 async function readInputImage(
   imagePath: string,
-  model: ImageModel
+  model: ImageModel,
+  signal?: AbortSignal
 ): Promise<InputImage> {
   const absolutePath = path.resolve(
     imagePath.replace(/^~/, process.env.HOME || "")
@@ -262,7 +271,7 @@ async function readInputImage(
   assertWithinSizeLimit(stats.size, imagePath, model);
 
   try {
-    const buffer = await fs.readFile(absolutePath);
+    const buffer = await fs.readFile(absolutePath, { signal });
     return { data: buffer.toString("base64"), mimeType };
   } catch (error) {
     throw new McpError(
@@ -274,12 +283,13 @@ async function readInputImage(
 
 async function fetchInputImage(
   imageUrl: string,
-  model: ImageModel
+  model: ImageModel,
+  signal?: AbortSignal
 ): Promise<InputImage> {
   let response: Response;
   try {
     response = await fetch(imageUrl, {
-      signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
+      signal: signal ? AbortSignal.any([signal, AbortSignal.timeout(FETCH_TIMEOUT_MS)]) : AbortSignal.timeout(FETCH_TIMEOUT_MS),
     });
   } catch (error) {
     const reason =

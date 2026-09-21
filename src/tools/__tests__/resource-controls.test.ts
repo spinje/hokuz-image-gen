@@ -4,6 +4,8 @@ import * as os from "os";
 import * as path from "path";
 import { connectTestClient } from "../../__tests__/harness.js";
 import type { ImagePreview } from "../../services/image-preview.js";
+import { acquireImageOperation } from "../../services/image-operation.js";
+import { runImageTool } from "../image-tool.js";
 
 const mocks = vi.hoisted(() => ({ generate: vi.fn(), edit: vi.fn(), preview: vi.fn() }));
 vi.mock("../../providers/index.js", async (original) => ({
@@ -64,5 +66,40 @@ describe("image operation admission", () => {
     expect(await a.client.callTool("hokuz_generate_image", { prompt: "p", output_path: a.output })).toMatchObject({ isError: true });
     expect(await a.client.callTool("hokuz_generate_image", { prompt: "p", output_path: a.output })).toMatchObject({ structuredContent: { success: true } });
     expect(mocks.generate).toHaveBeenCalledTimes(2);
+  });
+});
+
+describe("request cancellation", () => {
+  it("forwards MCP cancellation to the provider and releases the slot", async () => {
+    const a = await setup(); const entered = deferred<AbortSignal>();
+    mocks.generate.mockImplementation((_prompt, _config, signal: AbortSignal) => {
+      entered.resolve(signal);
+      return new Promise((_resolve, reject) => signal.addEventListener("abort", () => reject(new Error("aborted")), { once: true }));
+    });
+    const controller = new AbortController();
+    const call = a.client.client.callTool({ name: "hokuz_generate_image", arguments: { prompt: "p", output_path: a.output } }, undefined, { signal: controller.signal });
+    const rejected = expect(call).rejects.toBeDefined();
+    const providerSignal = await entered.promise;
+    expect(providerSignal.aborted).toBe(false);
+    controller.abort();
+    await rejected;
+    await vi.waitFor(() => {
+      expect(providerSignal.aborted).toBe(true);
+      const release = acquireImageOperation(); release();
+    });
+    expect(mocks.generate).toHaveBeenCalledTimes(1);
+  });
+
+  it("saves a returned paid result but stops subsequent requests and previews", async () => {
+    const a = await setup(); const controller = new AbortController();
+    const produce = vi.fn(async () => { controller.abort(); return generated; });
+    const result = await runImageTool({
+      outputFormat: "jpeg", outputPath: a.output, requestedCount: 3, includePreview: true,
+      signal: controller.signal, produce, summary: n => `Saved ${n}`,
+    });
+    expect(result.structuredContent).toMatchObject({ success: true, warning: expect.stringContaining("cancelled") });
+    expect(await fs.readFile(a.output, "utf8")).toBe("tiny fixture");
+    expect(produce).toHaveBeenCalledTimes(1);
+    expect(mocks.preview).not.toHaveBeenCalled();
   });
 });

@@ -4,6 +4,12 @@ import { ErrorType, McpError } from "../types.js";
 // than queue: waiting image calls must not accumulate input buffers in memory.
 let active = false;
 
+export function throwIfImageCancelled(signal?: AbortSignal): void {
+  if (signal?.aborted) {
+    throw new McpError(ErrorType.REQUEST_CANCELLED, "Error: Image request cancelled; no further images will be requested.");
+  }
+}
+
 export function acquireImageOperation(): () => void {
   if (active) {
     throw new McpError(

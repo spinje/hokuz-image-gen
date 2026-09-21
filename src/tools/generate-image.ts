@@ -11,7 +11,7 @@ import { GenerateImageInputSchema } from "../schemas/generate.js";
 import { ImageToolOutputSchema } from "../schemas/output.js";
 import { generateImage, validateGenerationConfig } from "../providers/index.js";
 import { inferOutputFormatFromPath } from "../services/file-utils.js";
-import { acquireImageOperation } from "../services/image-operation.js";
+import { acquireImageOperation, throwIfImageCancelled } from "../services/image-operation.js";
 import type { GenerationConfig } from "../types.js";
 import {
   IMAGE_TOOL_ANNOTATIONS,
@@ -54,7 +54,7 @@ export function registerGenerateImageTool(server: McpServer): void {
       outputSchema: ImageToolOutputSchema,
       annotations: IMAGE_TOOL_ANNOTATIONS,
     },
-    async (params) => {
+    async (params, { signal }) => {
       let release: (() => void) | undefined;
       try {
         // The SDK has already applied the schema's .default() values; these fallbacks
@@ -85,6 +85,7 @@ export function registerGenerateImageTool(server: McpServer): void {
 
         // Validate model options before any API call (fail fast, no downgrades)
         validateGenerationConfig(config);
+        throwIfImageCancelled(signal);
         release = acquireImageOperation();
 
         return await runImageTool({
@@ -92,7 +93,8 @@ export function registerGenerateImageTool(server: McpServer): void {
           outputPath: params.output_path,
           requestedCount: params.num_images ?? DEFAULTS.numImages,
           includePreview: params.include_preview ?? false,
-          produce: () => generateImage(params.prompt, config),
+          signal,
+          produce: () => generateImage(params.prompt, config, signal),
           summary: (n) => `Successfully generated ${n} image(s):`,
         });
       } catch (error) {
