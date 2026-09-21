@@ -125,7 +125,7 @@ Only `temperature` goes in `generation_config`. The Interactions request has **n
 
 ### 3. Gemini models output JPEG only; OpenAI models take the format as given
 
-`response_format.mime_type` accepts only `"image/jpeg"`; the SDK types it as that literal and the API returns HTTP 400 for anything else. That is why the registry's `outputFormats` is `["jpeg"]` for every Gemini model, and why `buildResponseFormat` can cast — validation has already rejected anything else. OpenAI models produce all of `OUTPUT_FORMATS` (`jpeg`, `png`, `webp`); the requested format is sent as `output_format` and decides both the returned image's MIME type and the saved file's extension. Never transcode: the format the provider returns is the format written. PNG files are roughly 16x the size of the same JPEG (verified live). `background: "transparent"` needs `png` or `webp` — with `jpeg` the API returns a hard 400, which is why the registry rejects that pair in-process.
+`response_format.mime_type` accepts only `"image/jpeg"`; the SDK types it as that literal and the API returns HTTP 400 for anything else. That is why the registry's `outputFormats` is `["jpeg"]` for every Gemini model, and why `buildResponseFormat` can cast — validation has already rejected anything else. OpenAI models produce all of `OUTPUT_FORMATS` (`jpeg`, `png`, `webp`); the requested format is sent as `output_format` and decides both the returned image's MIME type and the saved file's extension. Never transcode the saved original: the format the provider returns is the format written. Optional inline previews are separately labeled derived JPEGs and never written over originals. PNG files are roughly 16x the size of the same JPEG (verified live). `background: "transparent"` needs `png` or `webp` — with `jpeg` the API returns a hard 400, which is why the registry rejects that pair in-process.
 
 ### 4. stdout is the MCP protocol channel
 
@@ -318,3 +318,12 @@ Use modern TypeScript, Node ESM, and MCP SDK patterns. Proactively filter your t
 ## Project Status
 
 v1.0.0: two tools, five selectable models across two providers (Gemini and OpenAI), JPEG/PNG/WebP output, in-process capability validation, a test suite and CI gate. Enhancement work starts from here; there is no roadmap file yet.
+
+
+## Optional inline previews
+
+Both input schemas publish `include_preview: false`. This is a tool-layer option passed only to `runImageTool`, never `GenerationConfig` or a provider. The pipeline saves all requested originals before deriving previews via `services/image-preview.ts`; the existing requested-count slice also caps preview count. Original bytes, paths, MIME/format, dimensions, usage and partial-generation `warning` remain authoritative.
+
+The helper dynamically imports optional `sharp` only for enabled calls. An already-built server can generate/edit without it; source builds, typechecking and tests require the package installed, so development uses a normal install. It accepts byte-signature-checked JPEG/PNG/WebP, 32 MiB compressed input, 25 million pixels, 16,384-pixel edges, one frame and unsigned 8-bit channels. Each 512×512-bounded panel preserves aspect without upscaling/cropping; nonopaque images get white-left/navy-right panels, opaque images one panel. JPEG output is capped at 200 KiB per saved image. Output pipelines have a 3-second processing timeout, excluding native queue time. Original statistics and metadata do not honor that timeout; their work is bounded by input bytes/pixels. These are preview limits, not provider limits or a process-wide memory/deadline guarantee.
+
+`images[].preview` points to its `content` image block and carries original alpha-channel presence and pixel min/max before resizing/compositing. No channel means effective opacity 255–255. Channel presence or PNG format alone does not prove transparent pixels; extrema do not certify clean edges or preservation. Non-8-bit/multiframe inputs get no preview rather than misleading normalized statistics. Any preview/import/processing failure becomes per-image `preview_warning` plus text, never a paid-call failure or retry. Default-off calls do no decoder work and keep their old response shape. Preview base64 belongs only in `ImageContent.data`; clients using `functions.exec` must forward it via `image(block)` instead of stringifying it.

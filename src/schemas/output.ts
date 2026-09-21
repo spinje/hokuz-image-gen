@@ -15,6 +15,18 @@ export const ImageToolOutputSchema = z.object({
   images: z
     .array(
       z.object({
+        preview: z.object({
+          content_index: z.number().int().min(0).describe("Zero-based index of this image's derived JPEG block in content"),
+          width: z.number().int().positive().max(1024).describe("Derived preview width in pixels, not the saved image width"),
+          height: z.number().int().positive().max(512).describe("Derived preview height in pixels, not the saved image height"),
+          background: z.enum(["original", "white_and_navy"]).describe("original: opaque image; white_and_navy: the same image composited on white left and navy right"),
+          alpha: z.object({
+            has_channel: z.boolean().describe("Whether the original decoded image has an alpha channel; a channel alone does not prove transparency"),
+            min: z.number().int().min(0).max(255).describe("Minimum original 8-bit alpha; 0 is fully transparent, 255 fully opaque. 255 when there is no alpha channel"),
+            max: z.number().int().min(0).max(255).describe("Maximum original 8-bit alpha; 0 is fully transparent, 255 fully opaque. 255 when there is no alpha channel"),
+          }).describe("Alpha measurements before resizing/compositing; not a clean-cutout or preservation guarantee"),
+        }).optional().describe("Present only when include_preview produced an inline derived JPEG; the saved original remains authoritative"),
+        preview_warning: z.string().optional().describe("Requested preview unavailable; the original was saved successfully. Inspect that file rather than repeating the paid image request"),
         path: z.string().describe("File path where the image was saved; authoritative, and different from output_path when a -2, -3 suffix was needed"),
         format: z.enum(OUTPUT_FORMATS).describe("Image format"),
         width: z

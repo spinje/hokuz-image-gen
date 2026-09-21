@@ -4,13 +4,14 @@
  * SDK's output-schema validation exactly as a production client would.
  */
 
+import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import { createServer } from "../server.js";
 
 export interface ToolCallResult {
   isError?: boolean;
-  content: Array<{ type: string; text?: string }>;
+  content: CallToolResult["content"];
   structuredContent?: Record<string, unknown>;
 }
 
@@ -39,5 +40,6 @@ export async function connectTestClient(): Promise<{
 
 /** Text of the first content block, for assertions on the human-readable reply. */
 export function firstText(result: ToolCallResult): string {
-  return result.content[0]?.text ?? "";
+  const first = result.content[0];
+  return first?.type === "text" ? first.text : "";
 }

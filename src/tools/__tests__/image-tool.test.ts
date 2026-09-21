@@ -11,6 +11,9 @@ import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import * as fs from "fs/promises";
 import * as os from "os";
 import * as path from "path";
+import sharp from "sharp";
+import * as previews from "../../services/image-preview.js";
+import type { ImageToolOutput } from "../../schemas/output.js";
 import { ErrorType, McpError } from "../../types.js";
 
 const { generateMock } = vi.hoisted(() => ({ generateMock: vi.fn() }));
@@ -33,6 +36,7 @@ let tmp: string;
 let harness: Awaited<ReturnType<typeof connectTestClient>>;
 
 beforeEach(async () => {
+  vi.restoreAllMocks();
   generateMock.mockReset();
   tmp = await fs.mkdtemp(path.join(os.tmpdir(), "hokuz-pipeline-"));
   harness = await connectTestClient();
@@ -344,5 +348,93 @@ describe("image tool pipeline", () => {
     });
     expect(firstText(result)).not.toContain("Usage:");
     expect(firstText(result)).toContain("Successfully generated 1 image(s)");
+  });
+});
+
+
+describe("inline previews through MCP", () => {
+  it("keeps default and false calls original-only, and bounds an enabled JPEG without changing provider config", async () => {
+    const bytes = await sharp({ create: { width: 1024, height: 256, channels: 3, background: "blue" } }).jpeg().toBuffer();
+    generateMock.mockResolvedValue({ images: [{ data: bytes.toString("base64"), mimeType: "image/jpeg", width: 1024, height: 256 }], usage: { estimatedCostUsd: 0.067, costBasis: "per_image" } });
+    const decoder = vi.spyOn(previews, "createImagePreview");
+    for (const option of [{}, { include_preview: false }]) {
+      const result = await harness.callTool(TOOL, { prompt: "p", output_path: path.join(tmp, "out.jpg"), ...option });
+      expect(result.isError).toBeFalsy();
+      expect(result.content).toHaveLength(1);
+      const output = result.structuredContent as ImageToolOutput;
+      expect(output.images[0]).toEqual({ path: path.join(tmp, option.include_preview === false ? "out-2.jpg" : "out.jpg"), format: "jpeg", width: 1024, height: 256 });
+      expect(await fs.readFile(output.images[0].path)).toEqual(bytes);
+    }
+    expect(decoder).not.toHaveBeenCalled();
+    const result = await harness.callTool(TOOL, { prompt: "p", output_path: path.join(tmp, "out.jpg"), include_preview: true });
+    expect(decoder).toHaveBeenCalledTimes(1);
+    expect(generateMock).toHaveBeenCalledTimes(3);
+    expect(generateMock.mock.calls[2][1]).toEqual({ model: "gemini-3.1-flash-image", aspectRatio: "1:1", resolution: "1K", outputFormat: "jpeg", temperature: undefined, quality: undefined, transparentBackground: undefined });
+    const output = result.structuredContent as ImageToolOutput;
+    expect(output).toMatchObject({ success: true, images: [{ path: path.join(tmp, "out-3.jpg"), format: "jpeg", width: 1024, height: 256, preview: { content_index: 2, width: 512, height: 128, background: "original", alpha: { has_channel: false, min: 255, max: 255 } } }], usage: { estimated_cost_usd: 0.067, requests_succeeded: 1, requests_reported: 1 } });
+    expect(await fs.readFile(output.images[0].path)).toEqual(bytes);
+    const block = result.content[output.images[0].preview!.content_index];
+    expect(block.type).toBe("image");
+    if (block.type !== "image") throw new Error("missing image");
+    expect(block.mimeType).toBe("image/jpeg");
+    const inline = Buffer.from(block.data, "base64");
+    expect(inline.length).toBeLessThanOrEqual(200 * 1024);
+    expect(await sharp(inline).metadata()).toMatchObject({ format: "jpeg", width: 512, height: 128 });
+    expect(JSON.stringify(output)).not.toContain(block.data);
+    expect(result.content.filter(b => b.type === "text").map(b => b.text).join(" ")).toContain("Derived JPEG preview");
+    expect(result.content.filter(b => b.type === "text").map(b => b.text).join(" ")).not.toContain(block.data);
+  });
+
+  it("preserves paid partial success and its warning when preview processing fails", async () => {
+    generateMock.mockResolvedValueOnce({ images: [{ data: IMG, mimeType: "image/jpeg", width: 1024, height: 1024 }], usage: { estimatedCostUsd: 0.067, costBasis: "per_image" } }).mockRejectedValueOnce(new McpError(ErrorType.API_RATE_LIMIT, "Error: Rate limit exceeded."));
+    const result = await harness.callTool(TOOL, { prompt: "p", output_path: path.join(tmp, "partial.jpg"), num_images: 2, include_preview: true });
+    expect(result.isError).toBeFalsy();
+    expect(generateMock).toHaveBeenCalledTimes(2);
+    const output = result.structuredContent as ImageToolOutput;
+    expect(output).toMatchObject({ success: true, images: [{ path: path.join(tmp, "partial.jpg"), format: "jpeg", width: 1024, height: 1024 }], usage: { estimated_cost_usd: 0.067, requests_succeeded: 1, requests_reported: 1 }, warning: "Requested 2 image(s) but only 1 were produced. The failed request reported: Error: Rate limit exceeded." });
+    expect(await fs.readFile(output.images[0].path)).toEqual(Buffer.from("fake-jpeg-bytes"));
+    expect(output.images[0].preview_warning).toBe(`Preview unavailable: unsupported image signature or MIME type. Original saved successfully; inspect ${output.images[0].path} without repeating the image request.`);
+    expect(firstText(result)).toContain(output.warning);
+    expect(firstText(result)).toContain(output.images[0].preview_warning);
+    expect(result.content).toHaveLength(1);
+  });
+
+  it("saves every original before previews and maps later successes after a failed preview", async () => {
+    const bytes = await sharp({ create: { width: 8, height: 8, channels: 4, background: { r: 255, g: 0, b: 0, alpha: 0.5 } } }).png().toBuffer();
+    generateMock.mockResolvedValue({ images: [{ data: bytes.toString("base64"), mimeType: "image/png", width: 8, height: 8 }, { data: bytes.toString("base64"), mimeType: "image/png", width: 8, height: 8 }] });
+    let filesAtFirstPreview: string[] | undefined;
+    vi.spyOn(previews, "createImagePreview").mockImplementationOnce(async () => {
+      filesAtFirstPreview = (await fs.readdir(tmp)).sort();
+      throw new Error("arbitrary native details must not leak");
+    });
+    const result = await harness.callTool(TOOL, { prompt: "p", model: "gpt-image-2.5-flare", output_path: path.join(tmp, "out.png"), num_images: 2, include_preview: true });
+    expect(filesAtFirstPreview).toEqual(["out-2.png", "out.png"]);
+    expect(generateMock).toHaveBeenCalledTimes(1);
+    expect(result.isError).toBeFalsy();
+    const output = result.structuredContent as ImageToolOutput;
+    expect(output.images).toHaveLength(2);
+    expect(output.images[0].preview_warning).toContain("image decoding or processing failed");
+    expect(output.images[1].preview).toMatchObject({ content_index: 2, width: 16, height: 8, alpha: { has_channel: true, min: 128, max: 128 } });
+    expect(result.content[2].type).toBe("image");
+    expect(result.content[1]).toMatchObject({ type: "text", text: expect.stringContaining(output.images[1].path) });
+    expect(firstText(result)).toContain(output.images[0].preview_warning);
+    expect(firstText(result)).not.toContain("arbitrary native details");
+    for (const saved of output.images) expect(await fs.readFile(saved.path)).toEqual(bytes);
+  });
+
+  it("contains an unavailable optional decoder after saving a successful result", async () => {
+    const bytes = await sharp({ create: { width: 1, height: 1, channels: 3, background: "red" } }).jpeg().toBuffer();
+    generateMock.mockResolvedValue({ images: [{ data: bytes.toString("base64"), mimeType: "image/jpeg" }] });
+    vi.doMock("sharp", () => { throw new Error("native binding cannot load"); });
+    try {
+      const result = await harness.callTool(TOOL, { prompt: "p", output_path: path.join(tmp, "no-decoder.jpg"), include_preview: true });
+      expect(result.isError).toBeFalsy();
+      const output = result.structuredContent as ImageToolOutput;
+      expect(output.success).toBe(true);
+      expect(output.images[0].preview_warning).toContain("optional image decoder unavailable");
+      expect(firstText(result)).toContain(output.images[0].preview_warning);
+      expect(await fs.readFile(output.images[0].path)).toEqual(bytes);
+      expect(generateMock).toHaveBeenCalledTimes(1);
+    } finally { vi.doUnmock("sharp"); }
   });
 });

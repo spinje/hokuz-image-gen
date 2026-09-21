@@ -14,6 +14,7 @@ import {
   type OutputFormat,
   type Resolution,
 } from "../constants.js";
+import { createImagePreview, PreviewUnavailable } from "../services/image-preview.js";
 import type { ImageToolOutput } from "../schemas/output.js";
 import { resolveOutputPath, saveBase64Image } from "../services/file-utils.js";
 import {
@@ -66,6 +67,7 @@ export interface ImageToolRun {
   outputFormat: OutputFormat;
   outputPath: string;
   requestedCount: number;
+  includePreview?: boolean;
   /**
    * One provider request. The pipeline calls it up to requestedCount times and
    * relies on it to throw when it produced no image: a resolved response with
@@ -109,6 +111,7 @@ export async function runImageTool({
   outputFormat,
   outputPath,
   requestedCount,
+  includePreview = false,
   produce,
   summary,
 }: ImageToolRun): Promise<CallToolResult> {
@@ -154,6 +157,32 @@ export async function runImageTool({
       width: image.width,
       height: image.height,
     });
+  }
+
+  // Save all originals first. Preview failure must never lose a paid result.
+  const previewContent: CallToolResult["content"] = [];
+  if (includePreview) {
+    for (let i = 0; i < outputImages.length; i++) {
+      const saved = outputImages[i];
+      try {
+        const { data, ...preview } = await createImagePreview(imagesToSave[i].data, imagesToSave[i].mimeType);
+        // One summary precedes previewContent; each label precedes its image.
+        saved.preview = { ...preview, content_index: previewContent.length + 2 };
+        const background = preview.background === "white_and_navy"
+          ? "White background left; navy right."
+          : "Original opaque appearance.";
+        previewContent.push({
+          type: "text",
+          text: `Derived JPEG preview for ${saved.path} (${preview.width}x${preview.height}). ${background} ` +
+            `Original alpha: channel ${preview.alpha.has_channel ? "present" : "absent"}, min ${preview.alpha.min}, max ${preview.alpha.max} ` +
+            "(0 transparent; 255 opaque). Saved original unchanged; inspect the original for fine detail. " +
+            "This preview does not establish clean edges or preservation.",
+        }, { type: "image", mimeType: "image/jpeg", data });
+      } catch (error) {
+        const reason = error instanceof PreviewUnavailable ? error.message : "image decoding or processing failed";
+        saved.preview_warning = `Preview unavailable: ${reason}. Original saved successfully; inspect ${saved.path} without repeating the image request.`;
+      }
+    }
   }
 
   const description = descriptions.length
@@ -222,8 +251,12 @@ export async function runImageTool({
     textContent += `\n\nDescription: ${description}`;
   }
 
+  for (const image of outputImages) {
+    if (image.preview_warning) textContent += `\n\n${image.preview_warning}`;
+  }
+
   return {
-    content: [{ type: "text", text: textContent }],
+    content: [{ type: "text", text: textContent }, ...previewContent],
     structuredContent: output,
   };
 }

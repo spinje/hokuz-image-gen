@@ -126,6 +126,12 @@ export const EditImageInputSchema = z
           "false is accepted on every model. Default: false (opaque)."
       ),
 
+    include_preview: z.boolean().default(false).describe(
+      "Include a bounded derived JPEG preview in the tool result for clients that display MCP images. " +
+      "Transparent pixels are shown on white and navy backgrounds; alpha extrema describe the original " +
+      "8-bit pixels. Adds local processing and image payload, never another provider request. Default: false."
+    ),
+
     num_images: z
       .number()
       .int("Number of images must be a whole number")
