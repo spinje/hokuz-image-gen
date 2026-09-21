@@ -120,6 +120,8 @@ export const LIMITS = {
 
 /** Environment variable names for configuration */
 export const ENV_VARS = {
+  /** Optional output directory policy; relative output paths use this root. */
+  outputRoot: "HOKUZ_OUTPUT_ROOT",
   /** Fallback Gemini API key environment variable (accepted for compatibility) */
   googleApiKey: "GOOGLE_API_KEY",
   /** Preferred Gemini API key environment variable; checked first */

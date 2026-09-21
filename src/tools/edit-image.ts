@@ -12,6 +12,7 @@ import { EditImageInputSchema } from "../schemas/edit.js";
 import { ImageToolOutputSchema } from "../schemas/output.js";
 import { editImage, validateGenerationConfig } from "../providers/index.js";
 import { acquireImageOperation, throwIfImageCancelled } from "../services/image-operation.js";
+import { resolveOutputDestination } from "../services/path-policy.js";
 import {
   inferOutputFormatFromPath,
   loadInputImage,
@@ -98,6 +99,7 @@ export function registerEditImageTool(server: McpServer): void {
         });
         throwIfImageCancelled(signal);
         release = acquireImageOperation();
+        await resolveOutputDestination(params.output_path);
 
         // Load the input images in order; the loader checks each one's type
         // and size against the model before reading it.

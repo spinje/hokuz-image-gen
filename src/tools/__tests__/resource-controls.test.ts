@@ -35,9 +35,20 @@ afterEach(async () => {
   for (const client of clients.splice(0)) await client.close();
   for (const dir of directories.splice(0)) await fs.rm(dir, { recursive: true, force: true });
   vi.resetAllMocks();
+  vi.unstubAllEnvs();
 });
 
 describe("image operation admission", () => {
+  it("rejects an out-of-root destination before any provider call", async () => {
+    const a = await setup(); const b = await setup();
+    vi.stubEnv("HOKUZ_OUTPUT_ROOT", path.dirname(a.output));
+    mocks.generate.mockResolvedValue(generated);
+    const rejected = await a.client.callTool("hokuz_generate_image", { prompt: "p", output_path: b.output });
+    expect(rejected).toMatchObject({ isError: true, structuredContent: { error_type: "FILE_WRITE_ERROR" } });
+    expect(mocks.generate).not.toHaveBeenCalled();
+    expect(await a.client.callTool("hokuz_generate_image", { prompt: "p", output_path: a.output })).toMatchObject({ structuredContent: { success: true } });
+    expect(mocks.generate).toHaveBeenCalledTimes(1);
+  });
   it("holds the shared slot through preview work and rejects edit before reading its input", async () => {
     const a = await setup(); const b = await setup();
     mocks.generate.mockResolvedValue(generated);

@@ -53,7 +53,7 @@ export const EditImageInputSchema = z
       .string()
       .min(1, "Output path is required")
       .describe(
-        "Where to save the edited image. A trailing slash, or a path that is already a directory, " +
+        "Where to save the edited image. If HOKUZ_OUTPUT_ROOT is configured, paths must stay within it and relative paths start there. A trailing slash, or a path that is already a directory, " +
           "means a timestamped file inside it; anything else is the file to write. When output_format " +
           "is omitted this path's extension chooses the format, so a .png or .webp path needs an " +
           "OpenAI model; when output_format is set, the extension is replaced to match it. An existing " +

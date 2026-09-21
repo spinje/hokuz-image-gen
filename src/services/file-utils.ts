@@ -15,6 +15,7 @@ import {
 import { type InputImage, McpError, ErrorType } from "../types.js";
 import { throwIfImageCancelled } from "./image-operation.js";
 import { fetchRemoteImage } from "./remote-image.js";
+import { expandHomePath, resolveOutputDestination } from "./path-policy.js";
 
 /**
  * Generate a timestamp-based filename
@@ -83,7 +84,7 @@ export function inferOutputFormatFromPath(
 
 /** Resolve directory intent and extension; only the exclusive write claims a name. */
 async function outputTarget(outputPath: string, format: OutputFormat) {
-  const absolutePath = path.resolve(outputPath.replace(/^~/, process.env.HOME || ""));
+  const absolutePath = await resolveOutputDestination(outputPath);
   const extension = FILE_EXTENSIONS[format];
   if (/[\\/]$/.test(outputPath) || await isDirectory(absolutePath)) {
     await ensureDirectory(absolutePath);
@@ -182,9 +183,7 @@ async function readInputImage(
   model: ImageModel,
   signal?: AbortSignal
 ): Promise<InputImage> {
-  const absolutePath = path.resolve(
-    imagePath.replace(/^~/, process.env.HOME || "")
-  );
+  const absolutePath = path.resolve(expandHomePath(imagePath));
 
   const extension = path.extname(absolutePath).toLowerCase();
   const mimeType = INPUT_MIME_BY_EXTENSION[extension];

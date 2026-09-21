@@ -207,6 +207,8 @@ One singleton `OpenAI` client from `OPENAI_API_KEY`. Both calls send `{ model, p
 
 ## File Utility Patterns
 
+`services/path-policy.ts` expands only `~`/`~/` (with an account-home fallback), and optionally enforces `ENV_VARS.outputRoot` / `HOKUZ_OUTPUT_ROOT`. The configured root must be an existing absolute directory. Relative outputs start there. Resolve existing ancestors/symlinks before containment checks; reject outside/dangling targets and invalid roots. Both handlers preflight before paid work; saving repeats the check. This is a path policy, not protection against hostile concurrent directory replacement or a sandbox for other tools.
+
 `inferOutputFormatFromPath(outputPath)` reads `.jpg`/`.jpeg`/`.png`/`.webp` (case-insensitive) and returns undefined for anything else. The format a handler uses is `params.output_format ?? inferOutputFormatFromPath(params.output_path) ?? DEFAULTS.outputFormat`, and the saved file always carries that format's extension.
 
 `saveBase64Image(data, outputPath, format, index)` atomically claims and writes the returned path:

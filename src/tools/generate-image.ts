@@ -12,6 +12,7 @@ import { ImageToolOutputSchema } from "../schemas/output.js";
 import { generateImage, validateGenerationConfig } from "../providers/index.js";
 import { inferOutputFormatFromPath } from "../services/file-utils.js";
 import { acquireImageOperation, throwIfImageCancelled } from "../services/image-operation.js";
+import { resolveOutputDestination } from "../services/path-policy.js";
 import type { GenerationConfig } from "../types.js";
 import {
   IMAGE_TOOL_ANNOTATIONS,
@@ -87,6 +88,7 @@ export function registerGenerateImageTool(server: McpServer): void {
         validateGenerationConfig(config);
         throwIfImageCancelled(signal);
         release = acquireImageOperation();
+        await resolveOutputDestination(params.output_path);
 
         return await runImageTool({
           outputFormat,

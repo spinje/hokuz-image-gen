@@ -254,6 +254,10 @@ output_path: ~/restored/
 
 ## Local resource and file controls
 
+Optionally set `HOKUZ_OUTPUT_ROOT` to an existing absolute directory. Relative output paths then start in that directory; absolute paths, traversal and symlink targets outside it are rejected before provider work and checked again when saving. An empty or invalid root is rejected. Without this setting, output paths retain their existing behavior. `~` and `~/` expand to the current user's home (using the account home if `HOME` is unset); `~otheruser` is not expanded.
+
+The output-root setting controls this MCP's writes. It is not an OS sandbox for other tools or a defense against a separate local process replacing directories between checks. Untrusted participant sessions still need filesystem permissions/sandboxing that cover all their tools.
+
 Each server process admits one generate/edit call at a time, including input loading, saving and previews. Overlapping calls return `SERVER_BUSY` before loading inputs or contacting a provider; wait for the active call to finish before retrying. Calls are not queued. This limit is shared across the two tools, but does not limit how many server processes a client starts.
 
 Saved filenames are claimed with exclusive creation, including when different processes write to the same directory. Collisions try the next suffix without repeating the provider request, with a maximum of 10,000 candidate names. Other write failures stop immediately.
