@@ -229,7 +229,7 @@ Only EEXIST retries the next name; at most 10,000 candidates are attempted.
 - **Allowlist**: `getUnsupportedInputImageMessage` against the model's `inputMimeTypes`.
 - **Size**, against the model's `maxInputImageBytes` (Gemini 7 MB, OpenAI 50 MB). Local: `fs.stat().size`, before `readFile`. URL: `content-length` before the body, then a running byte count while the body streams, cancelling the read once the limit is passed — a server that omits or under-reports `content-length` cannot make us buffer an unbounded body.
 
-Remote fetches carry a 30 s `AbortSignal.timeout`.
+Remote fetches use `services/remote-image.ts`: public HTTP(S) destinations only, checked in the socket lookup callback (not a separate DNS preflight), and each redirect revalidated with a five-hop limit. All returned DNS addresses must pass the conservative public-address policy. Direct connections use the original Host/TLS identity, no pooled agent/proxy and identity content encoding. Rejected bodies are cancelled/destroyed. The caller cancellation signal and one 30 s timeout span all hops and body reading.
 
 ## Error Handling
 

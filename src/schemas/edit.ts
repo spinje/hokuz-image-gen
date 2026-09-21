@@ -42,7 +42,7 @@ export const EditImageInputSchema = z
         `Maximum ${LIMITS.maxInputImages} input images allowed`
       )
       .describe(
-        "Array of local file paths or URLs to source images. Gemini models: up to 14 images, 7 MB " +
+        "Array of local file paths or public HTTP(S) image URLs; private network destinations and redirects to them are rejected. Gemini models: up to 14 images, 7 MB " +
           "each (jpeg/png/webp/gif/heic/heif). OpenAI models: up to 16 images, 50 MB each, jpeg/png/webp " +
           "only (gif/heic are rejected before the API call). Order matters: 'first image'/'second " +
           "image' in the prompt refer to this order. For style transfer, provide the content image " +

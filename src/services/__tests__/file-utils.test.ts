@@ -9,6 +9,10 @@ import { ErrorType } from "../../types.js";
 // uncalled is how the tests below observe that.
 const { readFileSpy } = vi.hoisted(() => ({ readFileSpy: vi.fn() }));
 
+// Transport policy has its own DNS/socket/redirect seam tests. These tests
+// exercise MIME/size/body handling with canned Responses, never live fetches.
+vi.mock("../remote-image.js", () => ({ fetchRemoteImage: (url: string, init: RequestInit) => fetch(url, init) }));
+
 vi.mock("fs/promises", async (importOriginal) => {
   const actual = await importOriginal<typeof import("fs/promises")>();
   readFileSpy.mockImplementation(actual.readFile);

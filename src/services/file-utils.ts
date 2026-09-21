@@ -14,6 +14,7 @@ import {
 } from "../constants.js";
 import { type InputImage, McpError, ErrorType } from "../types.js";
 import { throwIfImageCancelled } from "./image-operation.js";
+import { fetchRemoteImage } from "./remote-image.js";
 
 /**
  * Generate a timestamp-based filename
@@ -225,10 +226,11 @@ async function fetchInputImage(
 ): Promise<InputImage> {
   let response: Response;
   try {
-    response = await fetch(imageUrl, {
+    response = await fetchRemoteImage(imageUrl, {
       signal: signal ? AbortSignal.any([signal, AbortSignal.timeout(FETCH_TIMEOUT_MS)]) : AbortSignal.timeout(FETCH_TIMEOUT_MS),
     });
   } catch (error) {
+    if (error instanceof McpError) throw error;
     const reason =
       error instanceof Error && error.name === "TimeoutError"
         ? `it did not respond within ${FETCH_TIMEOUT_MS / 1000} seconds`
@@ -245,40 +247,45 @@ async function fetchInputImage(
     );
   }
 
-  if (!response.ok) {
-    throw new McpError(
-      ErrorType.INVALID_IMAGE_PATH,
-      `Error: Could not fetch image from '${imageUrl}'. Server returned status ${response.status}. Check the URL, or download the image and pass a local path.`,
-      undefined,
-      // The host failing or throttling is transient; a 4xx from it means the
-      // URL really is wrong.
-      { retryable: response.status >= 500 || response.status === 429 }
-    );
-  }
+  try {
+    if (!response.ok) {
+      throw new McpError(
+        ErrorType.INVALID_IMAGE_PATH,
+        `Error: Could not fetch image from '${imageUrl}'. Server returned status ${response.status}. Check the URL, or download the image and pass a local path.`,
+        undefined,
+        // The host failing or throttling is transient; a 4xx from it means the
+        // URL really is wrong.
+        { retryable: response.status >= 500 || response.status === 429 }
+      );
+    }
 
-  // "image/jpeg; charset=utf-8" and "IMAGE/JPEG" are the same type as far as
-  // the allowlist is concerned.
-  const mimeType = response.headers
-    .get("content-type")
-    ?.split(";")[0]
-    .trim()
-    .toLowerCase();
-  if (!mimeType) {
-    throw unknownTypeError(
-      imageUrl,
-      model,
-      "because the server did not report a content-type"
-    );
-  }
-  assertModelAcceptsType(imageUrl, mimeType, model);
+    // "image/jpeg; charset=utf-8" and "IMAGE/JPEG" are the same type as far as
+    // the allowlist is concerned.
+    const mimeType = response.headers
+      .get("content-type")
+      ?.split(";")[0]
+      .trim()
+      .toLowerCase();
+    if (!mimeType) {
+      throw unknownTypeError(
+        imageUrl,
+        model,
+        "because the server did not report a content-type"
+      );
+    }
+    assertModelAcceptsType(imageUrl, mimeType, model);
 
-  const declaredLength = Number(response.headers.get("content-length"));
-  if (declaredLength > 0) {
-    assertWithinSizeLimit(declaredLength, imageUrl, model);
-  }
+    const declaredLength = Number(response.headers.get("content-length"));
+    if (declaredLength > 0) {
+      assertWithinSizeLimit(declaredLength, imageUrl, model);
+    }
 
-  const buffer = await readBodyWithinLimit(response, imageUrl, model);
-  return { data: buffer.toString("base64"), mimeType };
+    const buffer = await readBodyWithinLimit(response, imageUrl, model);
+    return { data: buffer.toString("base64"), mimeType };
+  } catch (error) {
+    await response.body?.cancel().catch(() => undefined);
+    throw error;
+  }
 }
 
 /**
@@ -303,19 +310,24 @@ async function readBodyWithinLimit(
   const chunks: Buffer[] = [];
   let received = 0;
 
-  for (;;) {
-    const { done, value } = await reader.read();
-    if (done) break;
+  try {
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
 
-    received += value.length;
-    if (received > limit) {
-      await reader.cancel();
-      assertWithinSizeLimit(received, source, model);
+      received += value.length;
+      if (received > limit) {
+        await reader.cancel();
+        assertWithinSizeLimit(received, source, model);
+      }
+      chunks.push(Buffer.from(value));
     }
-    chunks.push(Buffer.from(value));
-  }
 
-  return Buffer.concat(chunks);
+    return Buffer.concat(chunks);
+  } finally {
+    await reader.cancel().catch(() => undefined);
+    reader.releaseLock();
+  }
 }
 
 /**
