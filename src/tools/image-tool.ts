@@ -268,6 +268,7 @@ export async function runImageTool({
  * API_ERROR raised outside a mapper.
  */
 const RETRYABLE_BY_TYPE: Record<ErrorType, boolean> = {
+  [ErrorType.SERVER_BUSY]: true,
   [ErrorType.MISSING_API_KEY]: false,
   [ErrorType.INVALID_IMAGE_PATH]: false,
   [ErrorType.IMAGE_TOO_LARGE]: false,

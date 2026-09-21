@@ -254,6 +254,8 @@ output_path: ~/restored/
 
 ## Optional inline previews
 
+Each server process admits one generate/edit call at a time, including input loading, saving and previews. Overlapping calls return `SERVER_BUSY` before loading inputs or contacting a provider; wait for the active call to finish before retrying. Calls are not queued. This limit is shared across the two tools, but does not limit how many server processes a client starts.
+
 Set `include_preview: true` on either tool to inspect a reduced image in a client that supports MCP image content. The saved file remains the original provider bytes; its returned path, format, dimensions and cost are unchanged. Previews are derived JPEGs, never replacements for transparent originals. Nonopaque images appear twice, on white (left) and navy (right); opaque images appear once. Fine text, exact layouts and edge quality can still require opening the original.
 
 `images[].preview` identifies the image block by its zero-based `content_index` and reports preview dimensions and original 8-bit alpha extrema. `has_channel` alone does not prove transparency: an opaque PNG can have an alpha channel. A minimum below 255 means some nonopaque pixels; 0 means at least one fully transparent pixel. No alpha channel is reported as effective opacity 255–255. These measurements do not establish a clean cutout or preservation of the reference.

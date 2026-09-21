@@ -11,6 +11,7 @@ import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { EditImageInputSchema } from "../schemas/edit.js";
 import { ImageToolOutputSchema } from "../schemas/output.js";
 import { editImage, validateGenerationConfig } from "../providers/index.js";
+import { acquireImageOperation } from "../services/image-operation.js";
 import {
   inferOutputFormatFromPath,
   loadInputImage,
@@ -32,6 +33,7 @@ const TOOL_DESCRIPTION = `Edit images with text instructions using Google's Nano
 ${MODEL_GUIDE}
 
 Rules the schema cannot express:
+- Only one image call runs at a time per server process. SERVER_BUSY means wait for the active call to finish before retrying; no inputs were loaded or provider request started for the rejected call.
 - include_preview is optional and off by default. When true, results may include a reduced JPEG preview; nonopaque images are shown on white (left) and navy (right). The saved original is unchanged. Preview alpha measurements describe original pixels, not whether the image is a clean cutout. If preview processing is unavailable or exceeds its bounds, the image call still succeeds with a preview_warning; inspect the saved file instead of regenerating it. Clients must support MCP image content to display previews.
 - image_paths: local paths or URLs, in the order the prompt refers to them ("first image"). Gemini models: up to 14 images, 7 MB each, jpeg/png/webp/gif/heic/heif. OpenAI models: up to 16, 50 MB each, jpeg/png/webp only. A reference image costs ~$0.01 on OpenAI and a fraction of a cent on Gemini, so prefer gemini-3.1-flash-image for compositions with 4+ references. Each image is checked for type and size before any API call; the first bad one fails the whole call.
 - aspect_ratio "auto" (the default): Gemini omits the ratio from the request and applies resolution (1K unless set). OpenAI lets the provider choose the output size; resolution must be omitted (an explicit resolution with auto is rejected). Set an explicit ratio to request a target shape. Generative edits on either provider can change composition and details; auto does not guarantee original framing or pixel-identical preservation. Inspect the saved result for changes beyond the requested edit.
@@ -58,6 +60,7 @@ export function registerEditImageTool(server: McpServer): void {
       annotations: IMAGE_TOOL_ANNOTATIONS,
     },
     async (params) => {
+      let release: (() => void) | undefined;
       try {
         // The SDK has already applied the schema's .default() values; these fallbacks
         // are defence in depth only. Optionality is decided by .default() in the schema.
@@ -93,6 +96,7 @@ export function registerEditImageTool(server: McpServer): void {
         validateGenerationConfig(config, {
           inputImageCount: params.image_paths.length,
         });
+        release = acquireImageOperation();
 
         // Load the input images in order; the loader checks each one's type
         // and size against the model before reading it.
@@ -111,6 +115,8 @@ export function registerEditImageTool(server: McpServer): void {
         });
       } catch (error) {
         return imageToolError(error, "editing");
+      } finally {
+        release?.();
       }
     }
   );

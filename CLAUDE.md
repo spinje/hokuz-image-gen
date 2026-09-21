@@ -322,6 +322,8 @@ v1.0.0: two tools, five selectable models across two providers (Gemini and OpenA
 
 ## Optional inline previews
 
+`services/image-operation.ts` admits one active image call per process, shared by both tools. Acquire after configuration validation and before input loading/provider work; always release in the handler's `finally`. Overlap returns retryable `SERVER_BUSY` without a queue. This does not constrain other processes.
+
 Both input schemas publish `include_preview: false`. This is a tool-layer option passed only to `runImageTool`, never `GenerationConfig` or a provider. The pipeline saves all requested originals before deriving previews via `services/image-preview.ts`; the existing requested-count slice also caps preview count. Original bytes, paths, MIME/format, dimensions, usage and partial-generation `warning` remain authoritative.
 
 The helper dynamically imports optional `sharp` only for enabled calls. An already-built server can generate/edit without it; source builds, typechecking and tests require the package installed, so development uses a normal install. It accepts byte-signature-checked JPEG/PNG/WebP, 32 MiB compressed input, 25 million pixels, 16,384-pixel edges, one frame and unsigned 8-bit channels. Each 512×512-bounded panel preserves aspect without upscaling/cropping; nonopaque images get white-left/navy-right panels, opaque images one panel. JPEG output is capped at 200 KiB per saved image. Output pipelines have a 3-second processing timeout, excluding native queue time. Original statistics and metadata do not honor that timeout; their work is bounded by input bytes/pixels. These are preview limits, not provider limits or a process-wide memory/deadline guarantee.

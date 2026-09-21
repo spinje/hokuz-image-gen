@@ -93,13 +93,13 @@ export const ImageToolOutputSchema = z.object({
     .enum(ErrorType)
     .optional()
     .describe(
-      "Why the call failed, for choosing the next step. INVALID_MODEL_OPTION, INVALID_IMAGE_PATH, IMAGE_TOO_LARGE: fix the arguments. CONTENT_BLOCKED: rephrase the prompt or change the input images. API_RATE_LIMIT: wait, then retry. MISSING_API_KEY: the provider's key is missing, invalid or denied; use the other provider. API_ERROR: the provider failed the request; read retryable rather than guessing from the message. FILE_WRITE_ERROR: fix output_path. UNKNOWN_ERROR: unexpected."
+      "Why the call failed, for choosing the next step. SERVER_BUSY: another image call is active; wait for it to finish before retrying. INVALID_MODEL_OPTION, INVALID_IMAGE_PATH, IMAGE_TOO_LARGE: fix the arguments. CONTENT_BLOCKED: rephrase the prompt or change the input images. API_RATE_LIMIT: wait, then retry. MISSING_API_KEY: the provider's key is missing, invalid or denied; use the other provider. API_ERROR: the provider failed the request; read retryable rather than guessing from the message. FILE_WRITE_ERROR: fix output_path. UNKNOWN_ERROR: unexpected."
     ),
   retryable: z
     .boolean()
     .optional()
     .describe(
-      "Whether repeating the identical call could succeed. false means it cannot: change the arguments, the prompt, or the server's configuration first. Wait before retrying when error_type is API_RATE_LIMIT."
+      "Whether repeating the identical call could succeed. false means it cannot: change the arguments, the prompt, or the server's configuration first. Wait before retrying API_RATE_LIMIT; for SERVER_BUSY, wait for the active image call to finish."
     ),
 });
 

@@ -95,6 +95,7 @@ export interface InputImage {
  * Error types for better error handling
  */
 export enum ErrorType {
+  SERVER_BUSY = "SERVER_BUSY",
   MISSING_API_KEY = "MISSING_API_KEY",
   INVALID_IMAGE_PATH = "INVALID_IMAGE_PATH",
   IMAGE_TOO_LARGE = "IMAGE_TOO_LARGE",
