@@ -58,7 +58,7 @@ export interface GenerationConfig {
   model: ImageModel;
   /** Omitted (undefined) means "auto" — let the model choose the ratio. */
   aspectRatio?: AspectRatio;
-  /** Omitted (undefined) means the provider applies DEFAULTS.resolution. */
+  /** Omitted uses DEFAULTS.resolution except OpenAI auto, where the provider chooses size. */
   resolution?: Resolution;
   outputFormat: OutputFormat;
   /** Gemini only; undefined on models that do not accept it. */

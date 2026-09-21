@@ -42,7 +42,7 @@ const RESOLUTION_PIXEL_AREA: Record<Resolution, number> = {
  * Derive the `size` request value from the public aspect ratio + resolution.
  *
  * Both edges are rounded to a multiple of 16, which the API requires. Without
- * an aspect ratio (edit "auto") the provider picks a size near the input's.
+ * an aspect ratio (edit "auto") the provider chooses the output size.
  */
 export function openaiSize(config: GenerationConfig): string {
   if (!config.aspectRatio) return "auto";

@@ -87,8 +87,8 @@ function getClient(): GoogleGenAI {
  *
  * - `mime_type` is "image/jpeg". These models output JPEG only; the API
  *   rejects any other value (verified live: "image/png" returns a 400).
- * - `aspect_ratio` is only included when defined (edit "auto" omits it so the
- *   model preserves the input image's native ratio).
+ * - `aspect_ratio` is only included when defined (edit "auto" leaves the
+ *   ratio to the model).
  * - a config without a resolution gets this provider's default.
  */
 function buildResponseFormat(config: GenerationConfig) {

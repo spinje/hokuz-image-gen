@@ -56,7 +56,7 @@ export const GenerateImageInputSchema = z
       .enum(ASPECT_RATIOS)
       .default(DEFAULTS.aspectRatio)
       .describe(
-        `Aspect ratio. Options: ${ASPECT_RATIOS.join(", ")}. The extreme ratios (1:4, 4:1, 1:8, 8:1) are ` +
+        `Target aspect ratio; actual pixel dimensions can differ. Options: ${ASPECT_RATIOS.join(", ")}. The extreme ratios (1:4, 4:1, 1:8, 8:1) are ` +
           "supported only by gemini-3.1-flash-image; OpenAI models accept the other ten. " +
           `Default: ${DEFAULTS.aspectRatio}`
       ),
@@ -67,8 +67,9 @@ export const GenerateImageInputSchema = z
       .describe(
         `Output resolution. Options: ${RESOLUTIONS.join(", ")}. Gemini: Flash is 0.5K-4K and the only ` +
           "model with 0.5K, Lite is 1K only, Pro is 1K/2K/4K. " +
-          "OpenAI models: 1K (~1 megapixel) or 2K (~4 megapixels) only; exact pixel size is derived from " +
-          `aspect_ratio and returned in the result. Default: ${DEFAULTS.resolution}`
+          "OpenAI models: 1K (~1 megapixel) or 2K (~4 megapixels) only; requested dimensions are derived from " +
+          "aspect_ratio and rounded to multiples of 16. For exact layouts, check returned width/height " +
+          `when available, or inspect the saved file. Default: ${DEFAULTS.resolution}`
       ),
 
     // No .default(): see gotcha 7. With one, the handler could not tell an

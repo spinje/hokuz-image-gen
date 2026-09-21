@@ -76,8 +76,9 @@ export const EditImageInputSchema = z
       .enum(EDIT_ASPECT_RATIOS)
       .default("auto")
       .describe(
-        `Aspect ratio. Options: auto, ${ASPECT_RATIOS.join(", ")}. 'auto' (default) keeps the input's ` +
-          "framing on Gemini and lets OpenAI choose the size. The extreme ratios (1:4, 4:1, 1:8, 8:1) are " +
+        `Target aspect ratio; actual pixel dimensions can differ. Options: auto, ${ASPECT_RATIOS.join(", ")}. ` +
+          "'auto' (default) omits the ratio on Gemini and lets OpenAI choose the size; neither guarantees " +
+          "the original framing. The extreme ratios (1:4, 4:1, 1:8, 8:1) are " +
           "supported only by gemini-3.1-flash-image; OpenAI models accept the other ten. Default: auto"
       ),
 
@@ -88,10 +89,11 @@ export const EditImageInputSchema = z
       .optional()
       .describe(
         `Output resolution: ${RESOLUTIONS.join(", ")} per model (Flash 0.5K-4K; Lite 1K only; Pro ` +
-          "1K/2K/4K; OpenAI 1K/2K). Gemini models re-render the edit at this resolution, 1K when " +
-          "omitted, so set 2K or 4K to keep a large input's detail. OpenAI models reject it while " +
-          "aspect_ratio is 'auto' (the default), because the provider then chooses the size itself; " +
-          "with an explicit aspect_ratio they accept it and apply 1K when omitted."
+          "1K/2K/4K; OpenAI 1K/2K). Gemini models request this resolution, 1K when omitted, including " +
+          "with aspect_ratio 'auto'; higher resolution does not guarantee retention of input detail. " +
+          "OpenAI models reject it while aspect_ratio is 'auto' (the default), because the provider " +
+          "then chooses the size itself; with an explicit aspect_ratio they accept it and apply 1K " +
+          "when omitted. For exact layouts, check returned width/height when available, or inspect the saved file."
       ),
 
     // No .default(): see gotcha 7. With one, the handler could not tell an
