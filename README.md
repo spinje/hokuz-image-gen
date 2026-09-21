@@ -151,6 +151,8 @@ The server runs via stdio transport. You usually do not need to run this command
 
 ## Tools
 
+For callers using `functions.exec` and `ALL_TOOLS`, the optional [discovery guide](guides/caller-discovery.md) shows how to inspect the needed tool without printing overlapping metadata. Give the guide to the caller explicitly; installing this server does not apply it automatically.
+
 ### hokuz_generate_image
 
 Generate images from text prompts.
