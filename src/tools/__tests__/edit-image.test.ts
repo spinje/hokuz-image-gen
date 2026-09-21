@@ -258,6 +258,6 @@ it("forwards include_preview only to the shared pipeline while keeping edit inpu
   expect(editMock).toHaveBeenCalledExactlyOnceWith("p", [
     { data: Buffer.from("second-image").toString("base64"), mimeType: "image/webp" },
     { data: Buffer.from("first-image").toString("base64"), mimeType: "image/png" },
-  ], { model: DEFAULTS.model, aspectRatio: undefined, resolution: undefined, outputFormat: "jpeg", temperature: undefined, quality: undefined, transparentBackground: undefined });
+  ], { model: DEFAULTS.model, aspectRatio: undefined, resolution: undefined, outputFormat: "jpeg", temperature: undefined, quality: undefined, transparentBackground: undefined }, expect.any(AbortSignal));
   expect(await fs.readFile(path.join(tmp, "preview.jpg"))).toEqual(bytes);
 });
