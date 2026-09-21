@@ -209,7 +209,7 @@ One singleton `OpenAI` client from `OPENAI_API_KEY`. Both calls send `{ model, p
 
 `inferOutputFormatFromPath(outputPath)` reads `.jpg`/`.jpeg`/`.png`/`.webp` (case-insensitive) and returns undefined for anything else. The format a handler uses is `params.output_format ?? inferOutputFormatFromPath(params.output_path) ?? DEFAULTS.outputFormat`, and the saved file always carries that format's extension.
 
-`resolveOutputPath(outputPath, format, index)`:
+`saveBase64Image(data, outputPath, format, index)` atomically claims and writes the returned path:
 
 ```
 "~/images/" or an existing directory  → directory mode: create if missing,
@@ -218,8 +218,9 @@ One singleton `OpenAI` client from `OPENAI_API_KEY`. Both calls send `{ model, p
 "~/images/foo"                         → file mode: extension appended → foo.jpg (jpeg)
 A TRAILING SEPARATOR always means directory, even if it does not exist yet.
 index ≥ 1 appends -2, -3, … in both modes, and so does an existing file: the
-resolved name is the first one not on disk, so a saved image never overwrites
-one (which is what `destructiveHint: false` claims).
+saved name is claimed with exclusive creation (`wx`), so concurrent writers
+cannot overwrite one another (which is what `destructiveHint: false` claims).
+Only EEXIST retries the next name; at most 10,000 candidates are attempted.
 ```
 
 `loadInputImage(pathOrUrl, model)` is the only way an edit input enters the process. It checks **type → allowlist → size → read** and stops at the first failure, so the bytes of an image the model would reject are never read:

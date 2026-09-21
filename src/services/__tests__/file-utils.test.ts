@@ -15,9 +15,13 @@ vi.mock("fs/promises", async (importOriginal) => {
   return { ...actual, readFile: readFileSpy };
 });
 
-const { inferOutputFormatFromPath, loadInputImage, resolveOutputPath } = await import(
+const { inferOutputFormatFromPath, loadInputImage, saveBase64Image } = await import(
   "../file-utils.js"
 );
+
+// Naming cases also exercise the real exclusive write with a tiny byte fixture.
+const save = (output: string, format: typeof OUTPUT_FORMATS[number], index = 0) =>
+  saveBase64Image(Buffer.from("image bytes").toString("base64"), output, format, index);
 
 const GEMINI = "gemini-3.1-flash-image" as const;
 const OPENAI = "gpt-image-2.5-flare" as const;
@@ -50,6 +54,7 @@ beforeEach(async () => {
 });
 
 afterEach(async () => {
+  vi.restoreAllMocks();
   vi.unstubAllEnvs();
   vi.unstubAllGlobals();
   await fs.rm(tmp, { recursive: true, force: true });
@@ -57,67 +62,87 @@ afterEach(async () => {
 
 const TIMESTAMPED = /^image-\d{4}-\d{2}-\d{2}-\d{6}-\d{3}\.jpg$/;
 
-describe("resolveOutputPath", () => {
+describe("saveBase64Image naming", () => {
+  it("claims distinct filenames for concurrent writers without replacing existing bytes", async () => {
+    const requested = path.join(tmp, "race.png");
+    await fs.writeFile(requested, "irreplaceable original");
+    const a = Buffer.from("first paid image"); const b = Buffer.from("second paid image");
+    const saved = await Promise.all([a, b].map(bytes => saveBase64Image(bytes.toString("base64"), requested, "png")));
+    expect(new Set(saved).size).toBe(2);
+    expect(saved.sort()).toEqual([path.join(tmp, "race-2.png"), path.join(tmp, "race-3.png")]);
+    expect(await fs.readFile(requested, "utf8")).toBe("irreplaceable original");
+    const contents = await Promise.all(saved.map(name => fs.readFile(name, "utf8")));
+    expect(contents.sort()).toEqual([a.toString(), b.toString()].sort());
+  });
+
+  it("bounds name collisions and does not retry unrelated write failures", async () => {
+    const write = vi.spyOn(fs, "writeFile").mockRejectedValue(Object.assign(new Error("exists"), { code: "EEXIST" }));
+    await expect(save(path.join(tmp, "full.jpg"), "jpeg", 2)).rejects.toMatchObject({ type: ErrorType.FILE_WRITE_ERROR, message: expect.stringContaining("10000 attempts") });
+    expect(write).toHaveBeenCalledTimes(10_000);
+    write.mockClear().mockRejectedValue(Object.assign(new Error("denied"), { code: "EACCES" }));
+    await expect(save(path.join(tmp, "denied.jpg"), "jpeg")).rejects.toMatchObject({ type: ErrorType.FILE_WRITE_ERROR, message: expect.stringContaining("Could not write") });
+    expect(write).toHaveBeenCalledTimes(1);
+  });
   it("treats an existing directory as a directory and generates a timestamped name", async () => {
-    const resolved = await resolveOutputPath(tmp, "jpeg");
+    const resolved = await save(tmp, "jpeg");
     expect(path.dirname(resolved)).toBe(tmp);
     expect(path.basename(resolved)).toMatch(TIMESTAMPED);
   });
 
   it("treats a trailing separator as a directory even when it does not exist yet", async () => {
     const dir = path.join(tmp, "new-dir");
-    const resolved = await resolveOutputPath(`${dir}/`, "jpeg");
+    const resolved = await save(`${dir}/`, "jpeg");
     expect(path.dirname(resolved)).toBe(dir);
     expect(path.basename(resolved)).toMatch(TIMESTAMPED);
     expect((await fs.stat(dir)).isDirectory()).toBe(true);
   });
 
   it.each(OUTPUT_FORMATS)("replaces a foreign extension with the %s extension", async (format) => {
-    const resolved = await resolveOutputPath(path.join(tmp, "foo.txt"), format);
+    const resolved = await save(path.join(tmp, "foo.txt"), format);
     expect(resolved).toBe(path.join(tmp, `foo${FILE_EXTENSIONS[format]}`));
   });
 
   it("appends the extension when the file path has none", async () => {
-    const resolved = await resolveOutputPath(path.join(tmp, "foo"), "jpeg");
+    const resolved = await save(path.join(tmp, "foo"), "jpeg");
     expect(resolved).toBe(path.join(tmp, "foo.jpg"));
   });
 
   it("creates a missing parent directory in file mode", async () => {
-    const resolved = await resolveOutputPath(path.join(tmp, "a", "b", "foo.jpg"), "jpeg");
+    const resolved = await save(path.join(tmp, "a", "b", "foo.jpg"), "jpeg");
     expect(resolved).toBe(path.join(tmp, "a", "b", "foo.jpg"));
     expect((await fs.stat(path.join(tmp, "a", "b"))).isDirectory()).toBe(true);
   });
 
   it("suffixes -2, -3 from the second image onward in file mode", async () => {
     const base = path.join(tmp, "foo.jpg");
-    expect(await resolveOutputPath(base, "jpeg", 0)).toBe(path.join(tmp, "foo.jpg"));
-    expect(await resolveOutputPath(base, "jpeg", 1)).toBe(path.join(tmp, "foo-2.jpg"));
-    expect(await resolveOutputPath(base, "jpeg", 2)).toBe(path.join(tmp, "foo-3.jpg"));
+    expect(await save(base, "jpeg", 0)).toBe(path.join(tmp, "foo.jpg"));
+    expect(await save(base, "jpeg", 1)).toBe(path.join(tmp, "foo-2.jpg"));
+    expect(await save(base, "jpeg", 2)).toBe(path.join(tmp, "foo-3.jpg"));
   });
 
   it("suffixes the index in directory mode too, so same-millisecond images cannot collide", async () => {
     // num_images > 1 into a directory resolves each path within the same
     // millisecond in practice; the index suffix is the only thing keeping
     // them distinct.
-    const first = path.basename(await resolveOutputPath(tmp, "jpeg", 0));
-    const second = path.basename(await resolveOutputPath(tmp, "jpeg", 1));
+    const first = path.basename(await save(tmp, "jpeg", 0));
+    const second = path.basename(await save(tmp, "jpeg", 1));
     expect(first).toMatch(TIMESTAMPED);
     expect(second).toMatch(/^image-\d{4}-\d{2}-\d{2}-\d{6}-\d{3}-2\.jpg$/);
   });
 
   it("expands a leading ~ to HOME", async () => {
     vi.stubEnv("HOME", tmp);
-    const resolved = await resolveOutputPath("~/pics/foo.jpg", "jpeg");
+    const resolved = await save("~/pics/foo.jpg", "jpeg");
     expect(resolved).toBe(path.join(tmp, "pics", "foo.jpg"));
   });
 
   it("never overwrites an existing file: -2, then -3", async () => {
     const base = path.join(tmp, "foo.jpg");
     await fs.writeFile(base, "already here");
-    expect(await resolveOutputPath(base, "jpeg")).toBe(path.join(tmp, "foo-2.jpg"));
+    expect(await save(base, "jpeg")).toBe(path.join(tmp, "foo-2.jpg"));
 
     await fs.writeFile(path.join(tmp, "foo-2.jpg"), "also here");
-    expect(await resolveOutputPath(base, "jpeg")).toBe(path.join(tmp, "foo-3.jpg"));
+    expect(await save(base, "jpeg")).toBe(path.join(tmp, "foo-3.jpg"));
 
     // The bytes of the file that was already there are untouched.
     expect(await fs.readFile(base, "utf8")).toBe("already here");
@@ -127,11 +152,11 @@ describe("resolveOutputPath", () => {
     const base = path.join(tmp, "foo.jpg");
     await fs.writeFile(base, "already here");
 
-    const first = await resolveOutputPath(base, "jpeg", 0);
+    const first = await save(base, "jpeg", 0);
     expect(first).toBe(path.join(tmp, "foo-2.jpg"));
     await fs.writeFile(first, "image 1");
 
-    expect(await resolveOutputPath(base, "jpeg", 1)).toBe(path.join(tmp, "foo-3.jpg"));
+    expect(await save(base, "jpeg", 1)).toBe(path.join(tmp, "foo-3.jpg"));
   });
 
   it("skips a taken name in directory mode, so two images of the same millisecond cannot collide", async () => {
@@ -139,10 +164,10 @@ describe("resolveOutputPath", () => {
     // second call ask for the name the first one took.
     vi.useFakeTimers();
     try {
-      const first = await resolveOutputPath(tmp, "jpeg");
+      const first = await save(tmp, "jpeg");
       await fs.writeFile(first, "image 1");
 
-      const second = await resolveOutputPath(tmp, "jpeg");
+      const second = await save(tmp, "jpeg");
       expect(path.basename(second)).toBe(
         path.basename(first).replace(/\.jpg$/, "-2.jpg")
       );

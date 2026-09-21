@@ -17,7 +17,7 @@ import {
 import { createImagePreview, PreviewUnavailable } from "../services/image-preview.js";
 import { throwIfImageCancelled } from "../services/image-operation.js";
 import type { ImageToolOutput } from "../schemas/output.js";
-import { resolveOutputPath, saveBase64Image } from "../services/file-utils.js";
+import { saveBase64Image } from "../services/file-utils.js";
 import {
   ErrorType,
   McpError,
@@ -155,8 +155,7 @@ export async function runImageTool({
 
   for (let i = 0; i < imagesToSave.length; i++) {
     const image = imagesToSave[i];
-    const filePath = await resolveOutputPath(outputPath, outputFormat, i);
-    await saveBase64Image(image.data, filePath);
+    const filePath = await saveBase64Image(image.data, outputPath, outputFormat, i);
 
     outputImages.push({
       path: filePath,

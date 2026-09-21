@@ -256,6 +256,8 @@ output_path: ~/restored/
 
 Each server process admits one generate/edit call at a time, including input loading, saving and previews. Overlapping calls return `SERVER_BUSY` before loading inputs or contacting a provider; wait for the active call to finish before retrying. Calls are not queued. This limit is shared across the two tools, but does not limit how many server processes a client starts.
 
+Saved filenames are claimed with exclusive creation, including when different processes write to the same directory. Collisions try the next suffix without repeating the provider request, with a maximum of 10,000 candidate names. Other write failures stop immediately.
+
 Client cancellation is forwarded to provider requests and input reads, and stops subsequent image requests and previews. Already-returned provider images are still saved. Cancellation does not guarantee that the provider has stopped or refunded an in-flight request. A native preview already running must finish before the active-call slot is released; cancellation does not terminate native decoding. `REQUEST_CANCELLED` is not automatically retryable.
 
 Set `include_preview: true` on either tool to inspect a reduced image in a client that supports MCP image content. The saved file remains the original provider bytes; its returned path, format, dimensions and cost are unchanged. Previews are derived JPEGs, never replacements for transparent originals. Nonopaque images appear twice, on white (left) and navy (right); opaque images appear once. Fine text, exact layouts and edge quality can still require opening the original.

@@ -48,18 +48,6 @@ async function isDirectory(filePath: string): Promise<boolean> {
 }
 
 /**
- * Check if a path exists
- */
-async function pathExists(filePath: string): Promise<boolean> {
-  try {
-    await fs.access(filePath);
-    return true;
-  } catch {
-    return false;
-  }
-}
-
-/**
  * Ensure a directory exists, creating it if necessary
  */
 async function ensureDirectory(dirPath: string): Promise<void> {
@@ -92,103 +80,52 @@ export function inferOutputFormatFromPath(
   return OUTPUT_FORMAT_BY_EXTENSION[path.extname(outputPath).toLowerCase()];
 }
 
-/**
- * Resolve the output path for saving an image
- *
- * @param outputPath - User-provided path (file or directory)
- * @param format - Output format (jpeg, png or webp)
- * @param index - Image index for multiple images (0-based)
- * @returns Resolved absolute file path
- */
-export async function resolveOutputPath(
-  outputPath: string,
-  format: OutputFormat,
-  index: number = 0
-): Promise<string> {
-  // Expand home directory
-  const expandedPath = outputPath.replace(/^~/, process.env.HOME || "");
-  const absolutePath = path.resolve(expandedPath);
-
+/** Resolve directory intent and extension; only the exclusive write claims a name. */
+async function outputTarget(outputPath: string, format: OutputFormat) {
+  const absolutePath = path.resolve(outputPath.replace(/^~/, process.env.HOME || ""));
   const extension = FILE_EXTENSIONS[format];
-
-  // Treat as a directory when the path already is one, OR when the user signals
-  // directory intent with a trailing separator (path.resolve strips it, so we
-  // check the original string). A directory that does not exist yet is created.
-  const endsWithSeparator = /[\\/]$/.test(outputPath);
-  if (endsWithSeparator || (await isDirectory(absolutePath))) {
+  if (/[\\/]$/.test(outputPath) || await isDirectory(absolutePath)) {
     await ensureDirectory(absolutePath);
-    return nextFreeName(
-      absolutePath,
-      generateTimestampFilename(),
-      extension,
-      index
-    );
+    return { dir: absolutePath, baseName: generateTimestampFilename(), extension };
   }
-
-  // Check if parent directory exists
-  const parentDir = path.dirname(absolutePath);
-  if (!(await pathExists(parentDir))) {
-    // Try to create the parent directory
-    await ensureDirectory(parentDir);
-  }
-
-  // If it's a file path. Any existing extension is replaced so the saved file
-  // extension always matches the resolved output format.
-  const ext = path.extname(absolutePath);
-  const baseName = ext
-    ? path.basename(absolutePath, ext)
-    : path.basename(absolutePath);
-
-  return nextFreeName(parentDir, baseName, extension, index);
+  const dir = path.dirname(absolutePath);
+  await ensureDirectory(dir);
+  return { dir, baseName: path.basename(absolutePath, path.extname(absolutePath)), extension };
 }
 
-/**
- * The first name in `dir` that is not taken: `base.ext`, then `base-2.ext`,
- * `base-3.ext`, and so on. `index` (0-based) is where the search starts, so
- * the images of one num_images call keep their order, and an existing file
- * pushes every later one along rather than being overwritten.
- */
-async function nextFreeName(
-  dir: string,
-  baseName: string,
-  extension: string,
-  index: number
-): Promise<string> {
-  for (let n = index; ; n++) {
-    const candidate = path.join(
-      dir,
-      `${baseName}${n > 0 ? `-${n + 1}` : ""}${extension}`
-    );
-    if (!(await pathExists(candidate))) return candidate;
-  }
-}
+const MAX_NAME_ATTEMPTS = 10_000;
 
 /**
- * Save base64-encoded image data to a file
- *
- * @param base64Data - Base64-encoded image data
- * @param outputPath - Resolved output file path
- * @returns Size of the saved file in bytes
+ * Claim and write one unused filename, returning the path actually saved.
+ * Exclusive creation also protects against other server processes and dangling
+ * symlinks. A collision retries the filename, never the paid provider request.
  */
 export async function saveBase64Image(
   base64Data: string,
-  outputPath: string
-): Promise<number> {
-  try {
-    // Decode base64 to buffer
-    const buffer = Buffer.from(base64Data, "base64");
-
-    // Write to file
-    await fs.writeFile(outputPath, buffer);
-
-    return buffer.length;
-  } catch (error) {
-    throw new McpError(
-      ErrorType.FILE_WRITE_ERROR,
-      `Error: Could not write to '${outputPath}'. Check that the directory exists and you have write permissions.`,
-      error
-    );
+  outputPath: string,
+  format: OutputFormat,
+  index = 0
+): Promise<string> {
+  const { dir, baseName, extension } = await outputTarget(outputPath, format);
+  const buffer = Buffer.from(base64Data, "base64");
+  for (let n = index; n < index + MAX_NAME_ATTEMPTS; n++) {
+    const candidate = path.join(dir, `${baseName}${n > 0 ? `-${n + 1}` : ""}${extension}`);
+    try {
+      await fs.writeFile(candidate, buffer, { flag: "wx" });
+      return candidate;
+    } catch (error) {
+      if (error && typeof error === "object" && "code" in error && error.code === "EEXIST") continue;
+      throw new McpError(
+        ErrorType.FILE_WRITE_ERROR,
+        `Error: Could not write to '${candidate}'. Check directory permissions and available disk space.`,
+        error
+      );
+    }
   }
+  throw new McpError(
+    ErrorType.FILE_WRITE_ERROR,
+    `Error: Could not find a free filename near '${baseName}${extension}' after ${MAX_NAME_ATTEMPTS} attempts. Choose a different output_path.`
+  );
 }
 
 /** Input MIME type per file extension. */
