@@ -112,6 +112,8 @@ export const LIMITS = {
    * has. The per-model limit is `maxInputImages` in the registry.
    */
   maxInputImages: 16,
+  /** Local aggregate edit-input budget, independent of provider per-image caps. */
+  maxTotalInputImageBytes: 128 * 1024 * 1024,
   /** Minimum temperature */
   minTemperature: 0.0,
   /** Maximum temperature */

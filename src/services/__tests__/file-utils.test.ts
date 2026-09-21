@@ -5,9 +5,9 @@ import * as path from "path";
 import { FILE_EXTENSIONS, OUTPUT_FORMATS } from "../../constants.js";
 import { ErrorType } from "../../types.js";
 
-// The loader must reject a file on its metadata alone; `readFile` staying
+// The loader must reject a file on its metadata alone; `open` staying
 // uncalled is how the tests below observe that.
-const { readFileSpy } = vi.hoisted(() => ({ readFileSpy: vi.fn() }));
+const { openSpy } = vi.hoisted(() => ({ openSpy: vi.fn() }));
 
 // Transport policy has its own DNS/socket/redirect seam tests. These tests
 // exercise MIME/size/body handling with canned Responses, never live fetches.
@@ -15,8 +15,8 @@ vi.mock("../remote-image.js", () => ({ fetchRemoteImage: (url: string, init: Req
 
 vi.mock("fs/promises", async (importOriginal) => {
   const actual = await importOriginal<typeof import("fs/promises")>();
-  readFileSpy.mockImplementation(actual.readFile);
-  return { ...actual, readFile: readFileSpy };
+  openSpy.mockImplementation(actual.open);
+  return { ...actual, open: openSpy };
 });
 
 const { inferOutputFormatFromPath, loadInputImage, saveBase64Image } = await import(
@@ -53,7 +53,7 @@ function chunkedBody(chunks: Buffer[]): ReadableStream<Uint8Array> {
 let tmp: string;
 
 beforeEach(async () => {
-  readFileSpy.mockClear();
+  openSpy.mockClear();
   tmp = await fs.mkdtemp(path.join(os.tmpdir(), "hokuz-test-"));
 });
 
@@ -196,6 +196,56 @@ describe("inferOutputFormatFromPath", () => {
 });
 
 describe("loadInputImage", () => {
+  it("rejects metadata above the remaining budget before opening the local file", async () => {
+    const source = path.join(tmp, "budget.png"); await fs.writeFile(source, "12345");
+    await expect(loadInputImage(source, OPENAI, undefined, 4)).rejects.toMatchObject({ type: ErrorType.IMAGE_TOO_LARGE });
+    expect(openSpy).not.toHaveBeenCalled();
+    expect(await loadInputImage(source, OPENAI, undefined, 5)).toMatchObject({ data: Buffer.from("12345").toString("base64") });
+    expect(openSpy).toHaveBeenCalledTimes(1);
+  });
+
+  it("bounds actual local bytes when the file grows after both size checks", async () => {
+    const source = path.join(tmp, "growing.png"); await fs.writeFile(source, "123");
+    const actualOpen = openSpy.getMockImplementation()!;
+    let closed = false;
+    openSpy.mockImplementationOnce(async (...args) => {
+      const handle = await actualOpen(...args);
+      const stat = handle.stat.bind(handle); const close = handle.close.bind(handle);
+      vi.spyOn(handle, "stat").mockImplementationOnce(async () => {
+        const result = await stat(); await fs.appendFile(source, "45"); return result;
+      });
+      vi.spyOn(handle, "close").mockImplementation(async () => { await close(); closed = true; });
+      return handle;
+    });
+    await expect(loadInputImage(source, OPENAI, undefined, 4)).rejects.toMatchObject({ type: ErrorType.IMAGE_TOO_LARGE });
+    expect(closed).toBe(true);
+    expect(await fs.readFile(source, "utf8")).toBe("12345");
+  });
+
+  it("enforces the remaining budget while streaming a URL and cancels rejected bodies", async () => {
+    const cancelled = vi.fn();
+    stubFetch(new Response(new ReadableStream({
+      start(controller) { controller.enqueue(Buffer.from("123")); controller.enqueue(Buffer.from("45")); controller.enqueue(Buffer.from("6")); controller.close(); },
+      cancel: cancelled,
+    }), { headers: { "content-type": "image/png" } }));
+    await expect(loadInputImage("https://example.com/budget.png", OPENAI, undefined, 4)).rejects.toMatchObject({ type: ErrorType.IMAGE_TOO_LARGE });
+    expect(cancelled).toHaveBeenCalledTimes(1);
+  });
+
+  it("observes cancellation after opening a file before reading its bytes", async () => {
+    const source = path.join(tmp, "cancelled.png"); await fs.writeFile(source, "123");
+    const controller = new AbortController(); const actualOpen = openSpy.getMockImplementation()!;
+    let readCalls = () => -1;
+    openSpy.mockImplementationOnce(async (...args) => {
+      const handle = await actualOpen(...args); const stat = handle.stat.bind(handle);
+      const read = vi.spyOn(handle, "read"); readCalls = () => read.mock.calls.length;
+      vi.spyOn(handle, "stat").mockImplementationOnce(async () => { const result = await stat(); controller.abort(); return result; });
+      return handle;
+    });
+    await expect(loadInputImage(source, OPENAI, controller.signal)).rejects.toMatchObject({ type: ErrorType.REQUEST_CANCELLED });
+    expect(openSpy).toHaveBeenCalledTimes(1);
+    expect(readCalls()).toBe(0);
+  });
   it("rejects a file whose extension names no image type, without reading it", async () => {
     // Neither path exists: a "not found" here would mean the type check ran
     // after the disk was touched.
@@ -213,7 +263,7 @@ describe("loadInputImage", () => {
         message: expect.stringContaining("from its extension '(none)'"),
       })
     );
-    expect(readFileSpy).not.toHaveBeenCalled();
+    expect(openSpy).not.toHaveBeenCalled();
   });
 
   it("rejects a type the model does not accept before reading the bytes", async () => {
@@ -226,14 +276,14 @@ describe("loadInputImage", () => {
         message: expect.stringContaining("does not accept image/gif input"),
       })
     );
-    expect(readFileSpy).not.toHaveBeenCalled();
+    expect(openSpy).not.toHaveBeenCalled();
 
     // A Gemini model takes the same file, so the rejection was the allowlist.
     expect(await loadInputImage(gif, GEMINI)).toEqual({
       data: Buffer.from("gif-bytes").toString("base64"),
       mimeType: "image/gif",
     });
-    expect(readFileSpy).toHaveBeenCalledTimes(1);
+    expect(openSpy).toHaveBeenCalledTimes(1);
   });
 
   it("rejects a local file over the model's limit without reading it", async () => {
@@ -246,7 +296,7 @@ describe("loadInputImage", () => {
         message: `Error: Image at '${big}' is 7.00MB, above the 7MB limit for 'gemini-3.1-flash-image' (Nano Banana 2). Resize it, or use an OpenAI model (50MB limit).`,
       })
     );
-    expect(readFileSpy).not.toHaveBeenCalled();
+    expect(openSpy).not.toHaveBeenCalled();
 
     // The same file is well within an OpenAI model's 50MB limit.
     const image = await loadInputImage(big, OPENAI);

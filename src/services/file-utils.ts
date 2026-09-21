@@ -3,10 +3,11 @@
  */
 
 import * as fs from "fs/promises";
-import type { Stats } from "fs";
+import { constants as fsConstants, type Stats } from "fs";
 import * as path from "path";
 import {
   FILE_EXTENSIONS,
+  LIMITS,
   IMAGE_MODEL_CAPABILITIES,
   getUnsupportedInputImageMessage,
   type ImageModel,
@@ -155,13 +156,14 @@ const FETCH_TIMEOUT_MS = 30_000;
 export async function loadInputImage(
   pathOrUrl: string,
   model: ImageModel,
-  signal?: AbortSignal
+  signal?: AbortSignal,
+  remainingBytes = LIMITS.maxTotalInputImageBytes
 ): Promise<InputImage> {
   throwIfImageCancelled(signal);
   try {
     return await (isUrl(pathOrUrl)
-      ? fetchInputImage(pathOrUrl, model, signal)
-      : readInputImage(pathOrUrl, model, signal));
+      ? fetchInputImage(pathOrUrl, model, signal, remainingBytes)
+      : readInputImage(pathOrUrl, model, signal, remainingBytes));
   } catch (error) {
     throwIfImageCancelled(signal);
     throw error;
@@ -181,7 +183,8 @@ function isUrl(value: string): boolean {
 async function readInputImage(
   imagePath: string,
   model: ImageModel,
-  signal?: AbortSignal
+  signal: AbortSignal | undefined,
+  remainingBytes: number
 ): Promise<InputImage> {
   const absolutePath = path.resolve(expandHomePath(imagePath));
 
@@ -205,12 +208,13 @@ async function readInputImage(
       `Error: Image file not found at '${imagePath}'. Ensure the path is correct and the file exists.`
     );
   }
-  assertWithinSizeLimit(stats.size, imagePath, model);
+  assertRegularInput(stats, imagePath, model, remainingBytes);
 
   try {
-    const buffer = await fs.readFile(absolutePath, { signal });
+    const buffer = await readLocalWithinLimit(absolutePath, model, signal, remainingBytes);
     return { data: buffer.toString("base64"), mimeType };
   } catch (error) {
+    if (error instanceof McpError) throw error;
     throw new McpError(
       ErrorType.INVALID_IMAGE_PATH,
       `Error: Could not read image file at '${imagePath}'. ${error instanceof Error ? error.message : String(error)}. Check the file's permissions.`
@@ -218,10 +222,42 @@ async function readInputImage(
   }
 }
 
+function assertRegularInput(stats: Stats, source: string, model: ImageModel, remainingBytes: number): void {
+  if (!stats.isFile()) throw new McpError(ErrorType.INVALID_IMAGE_PATH, `Error: Input '${source}' must be a regular file.`);
+  assertWithinSizeLimit(stats.size, source, model, remainingBytes);
+}
+
+/** Cap the actual read too: a file can grow or be replaced after path stat. */
+async function readLocalWithinLimit(source: string, model: ImageModel, signal: AbortSignal | undefined, remainingBytes: number): Promise<Buffer> {
+  throwIfImageCancelled(signal);
+  // NONBLOCK prevents a replacement FIFO from blocking open; fstat then rejects
+  // non-files. Regular-file reads are bounded and cancellation checked per chunk.
+  const handle = await fs.open(source, fsConstants.O_RDONLY | fsConstants.O_NONBLOCK);
+  try {
+    assertRegularInput(await handle.stat(), source, model, remainingBytes);
+    const limit = Math.min(IMAGE_MODEL_CAPABILITIES[model].maxInputImageBytes, remainingBytes);
+    const chunks: Buffer[] = [];
+    let received = 0;
+    for (;;) {
+      throwIfImageCancelled(signal);
+      const chunk = Buffer.allocUnsafe(Math.min(64 * 1024, limit - received + 1));
+      const { bytesRead } = await handle.read(chunk, 0, chunk.length, null);
+      if (!bytesRead) break;
+      received += bytesRead;
+      assertWithinSizeLimit(received, source, model, remainingBytes);
+      chunks.push(chunk.subarray(0, bytesRead));
+    }
+    return Buffer.concat(chunks, received);
+  } finally {
+    await handle.close();
+  }
+}
+
 async function fetchInputImage(
   imageUrl: string,
   model: ImageModel,
-  signal?: AbortSignal
+  signal: AbortSignal | undefined,
+  remainingBytes: number
 ): Promise<InputImage> {
   let response: Response;
   try {
@@ -276,10 +312,10 @@ async function fetchInputImage(
 
     const declaredLength = Number(response.headers.get("content-length"));
     if (declaredLength > 0) {
-      assertWithinSizeLimit(declaredLength, imageUrl, model);
+      assertWithinSizeLimit(declaredLength, imageUrl, model, remainingBytes);
     }
 
-    const buffer = await readBodyWithinLimit(response, imageUrl, model);
+    const buffer = await readBodyWithinLimit(response, imageUrl, model, remainingBytes);
     return { data: buffer.toString("base64"), mimeType };
   } catch (error) {
     await response.body?.cancel().catch(() => undefined);
@@ -295,7 +331,8 @@ async function fetchInputImage(
 async function readBodyWithinLimit(
   response: Response,
   source: string,
-  model: ImageModel
+  model: ImageModel,
+  remainingBytes: number
 ): Promise<Buffer> {
   if (!response.body) {
     throw new McpError(
@@ -304,7 +341,6 @@ async function readBodyWithinLimit(
     );
   }
 
-  const limit = IMAGE_MODEL_CAPABILITIES[model].maxInputImageBytes;
   const reader = response.body.getReader();
   const chunks: Buffer[] = [];
   let received = 0;
@@ -315,10 +351,7 @@ async function readBodyWithinLimit(
       if (done) break;
 
       received += value.length;
-      if (received > limit) {
-        await reader.cancel();
-        assertWithinSizeLimit(received, source, model);
-      }
+      assertWithinSizeLimit(received, source, model, remainingBytes);
       chunks.push(Buffer.from(value));
     }
 
@@ -367,10 +400,19 @@ function assertModelAcceptsType(
 function assertWithinSizeLimit(
   bytes: number,
   source: string,
-  model: ImageModel
+  model: ImageModel,
+  remainingBytes: number
 ): void {
   const caps = IMAGE_MODEL_CAPABILITIES[model];
-  if (bytes <= caps.maxInputImageBytes) return;
+  if (bytes <= caps.maxInputImageBytes) {
+    if (bytes > remainingBytes) {
+      throw new McpError(
+        ErrorType.IMAGE_TOO_LARGE,
+        `Error: Image '${source}' exceeds the remaining combined input budget. All reference images in one edit must fit within ${LIMITS.maxTotalInputImageBytes / MB} MiB. Reduce their total size or number.`
+      );
+    }
+    return;
+  }
 
   const largestLimit = Math.max(
     ...Object.values(IMAGE_MODEL_CAPABILITIES).map(
