@@ -1,5 +1,6 @@
 /** Bounded, disposable previews. Never writes or replaces provider image bytes. */
 import type { ImageToolOutput } from "../schemas/output.js";
+import { throwIfImageCancelled } from "./image-operation.js";
 
 const MAX_INPUT_BYTES = 32 * 1024 * 1024;
 const MAX_INPUT_PIXELS = 25_000_000;
@@ -13,7 +14,8 @@ export type ImagePreview = Omit<PreviewMetadata, "content_index"> & { data: stri
 /** Only these controlled reasons reach callers; native error text stays private. */
 export class PreviewUnavailable extends Error {}
 
-export async function createImagePreview(data: string, mimeType: string): Promise<ImagePreview> {
+export async function createImagePreview(data: string, mimeType: string, signal?: AbortSignal): Promise<ImagePreview> {
+  throwIfImageCancelled(signal);
   if (data.length > 4 * Math.ceil(MAX_INPUT_BYTES / 3)) {
     throw new PreviewUnavailable("input exceeds the 32 MiB preview limit");
   }
@@ -47,6 +49,8 @@ export async function createImagePreview(data: string, mimeType: string): Promis
   const sharp = await import("sharp").then((module) => module.default).catch(() => {
     throw new PreviewUnavailable("optional image decoder unavailable");
   });
+  // A running native stage must settle; cancellation stops the next stage.
+  throwIfImageCancelled(signal);
   const source = () => sharp(input, {
     limitInputPixels: MAX_INPUT_PIXELS,
     limitInputChannels: 4,
@@ -54,6 +58,7 @@ export async function createImagePreview(data: string, mimeType: string): Promis
     pages: 1,
   }).timeout({ seconds: 3 });
   const metadata = await source().metadata();
+  throwIfImageCancelled(signal);
   if (metadata.format !== format || metadata.depth !== "uchar" || (metadata.pages ?? 1) !== 1) {
     throw new PreviewUnavailable("preview supports single-frame 8-bit JPEG, PNG and WebP only");
   }
@@ -65,6 +70,7 @@ export async function createImagePreview(data: string, mimeType: string): Promis
   // stats reads original pixels, regardless of later resize/composite operations.
   // The final channel is alpha for both gray+alpha and RGB+alpha input.
   const alphaStats = metadata.hasAlpha ? (await source().stats()).channels.at(-1) : undefined;
+  throwIfImageCancelled(signal);
   if (metadata.hasAlpha && !alphaStats) throw new PreviewUnavailable("alpha inspection unavailable");
   const alpha = {
     has_channel: metadata.hasAlpha,
@@ -75,13 +81,16 @@ export async function createImagePreview(data: string, mimeType: string): Promis
   const thumb = await source().rotate().resize({
     width: PANEL_EDGE, height: PANEL_EDGE, fit: "inside", withoutEnlargement: true,
   }).toColourspace("srgb").ensureAlpha().raw().toBuffer({ resolveWithObject: true });
+  throwIfImageCancelled(signal);
   const raw = { width: thumb.info.width, height: thumb.info.height, channels: 4 as const };
   const panel = (background: string) => sharp(thumb.data, { raw })
     .flatten({ background }).timeout({ seconds: 3 });
   let encoded;
   if (transparent) {
     const white = await panel("#ffffff").raw().toBuffer();
+    throwIfImageCancelled(signal);
     const navy = await panel("#14283c").raw().toBuffer();
+    throwIfImageCancelled(signal);
     const panelRaw = { ...raw, channels: 3 as const };
     encoded = await sharp({ create: {
       width: raw.width * 2, height: raw.height, channels: 3, background: "#ffffff",
@@ -92,6 +101,7 @@ export async function createImagePreview(data: string, mimeType: string): Promis
   } else {
     encoded = await panel("#ffffff").jpeg({ quality: 75 }).toBuffer({ resolveWithObject: true });
   }
+  throwIfImageCancelled(signal);
   if (encoded.data.length > MAX_OUTPUT_BYTES) {
     throw new PreviewUnavailable("derived JPEG exceeds the 200 KiB preview limit");
   }

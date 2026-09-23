@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { createImagePreview } from "../image-preview.js";
+import { ErrorType } from "../../types.js";
 
 // Exercise our control flow without loading a native decoder or large images.
 const decoder = vi.hoisted(() => ({
@@ -23,6 +24,74 @@ beforeEach(() => {
   decoder.metadata.mockResolvedValue(metadata);
   decoder.stats.mockResolvedValue({ channels: [{ min: 0, max: 255 }] });
   decoder.toBuffer.mockResolvedValue(encoded);
+});
+
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  const promise = new Promise<T>(r => { resolve = r; });
+  return { promise, resolve };
+}
+
+describe("preview stage cancellation", () => {
+  it("rejects cancellation before inspecting input", async () => {
+    const controller = new AbortController(); controller.abort();
+    await expect(createImagePreview("invalid", "image/jpeg", controller.signal)).rejects.toMatchObject({ type: ErrorType.REQUEST_CANCELLED });
+    expect(decoder.open).not.toHaveBeenCalled();
+    await expect(createImagePreview(input, "image/jpeg")).resolves.toMatchObject({ background: "original" });
+    expect(decoder.open).toHaveBeenCalled();
+  });
+
+  it("checks cancellation after awaiting the decoder import", async () => {
+    const controller = new AbortController();
+    const result = createImagePreview(input, "image/jpeg", controller.signal);
+    controller.abort();
+    await expect(result).rejects.toMatchObject({ type: ErrorType.REQUEST_CANCELLED });
+    expect(decoder.open).not.toHaveBeenCalled();
+    await expect(createImagePreview(input, "image/jpeg")).resolves.toMatchObject({ background: "original" });
+    expect(decoder.open).toHaveBeenCalled();
+  });
+
+  const stages = ["metadata", "statistics", "thumbnail", "white panel", "navy panel", "encoding"];
+  it.each(stages.map((stage, index) => [stage, index] as const))("waits for active %s then stops subsequent work", async (_stage, index) => {
+    const entered = deferred<void>(); const finish = deferred<void>();
+    const completed: string[] = [];
+    const values = [
+      { ...metadata, hasAlpha: true }, { channels: [{ min: 0, max: 255 }] },
+      encoded, Buffer.from("white"), Buffer.from("navy"), encoded,
+    ];
+    const run = (i: number) => async () => {
+      completed.push(stages[i]);
+      if (i === index) { entered.resolve(); await finish.promise; }
+      return values[i];
+    };
+    decoder.metadata.mockImplementationOnce(run(0));
+    decoder.stats.mockImplementationOnce(run(1));
+    for (let i = 2; i < stages.length; i++) decoder.toBuffer.mockImplementationOnce(run(i));
+    const controller = new AbortController();
+    const result = createImagePreview(input, "image/jpeg", controller.signal);
+    let settled = false;
+    void result.then(() => { settled = true; }, () => { settled = true; });
+    const rejected = expect(result).rejects.toMatchObject({ type: ErrorType.REQUEST_CANCELLED });
+    await entered.promise;
+    controller.abort();
+    await Promise.resolve();
+    expect(settled).toBe(false);
+    finish.resolve();
+    await rejected;
+    expect(completed).toEqual(stages.slice(0, index + 1));
+  });
+
+  it("finishes all transparent preview stages without cancellation", async () => {
+    decoder.metadata.mockResolvedValue({ ...metadata, hasAlpha: true });
+    decoder.toBuffer.mockResolvedValueOnce(encoded).mockResolvedValueOnce(Buffer.from("white"))
+      .mockResolvedValueOnce(Buffer.from("navy")).mockResolvedValueOnce(encoded);
+    await expect(createImagePreview(input, "image/jpeg", new AbortController().signal)).resolves.toMatchObject({
+      background: "white_and_navy", alpha: { has_channel: true, min: 0, max: 255 },
+    });
+    expect(decoder.metadata).toHaveBeenCalledTimes(1);
+    expect(decoder.stats).toHaveBeenCalledTimes(1);
+    expect(decoder.toBuffer).toHaveBeenCalledTimes(4);
+  });
 });
 
 describe("preview dimension limits", () => {

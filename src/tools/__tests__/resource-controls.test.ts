@@ -81,6 +81,35 @@ describe("image operation admission", () => {
 });
 
 describe("request cancellation", () => {
+  it("forwards cancellation into an active preview while retaining the slot and saved original", async () => {
+    const a = await setup(); const entered = deferred<AbortSignal>(); const finish = deferred<ImagePreview>();
+    mocks.generate.mockResolvedValue(generated);
+    mocks.preview.mockImplementation((_data, _mime, signal: AbortSignal) => {
+      entered.resolve(signal);
+      return finish.promise; // A running native stage cannot be interrupted by JS.
+    });
+    const controller = new AbortController();
+    const call = a.client.client.callTool({ name: "hokuz_generate_image", arguments: {
+      prompt: "p", output_path: a.output, include_preview: true,
+    } }, undefined, { signal: controller.signal });
+    const rejected = expect(call).rejects.toBeDefined();
+    const previewSignal = await entered.promise;
+    try {
+      expect(previewSignal.aborted).toBe(false);
+      expect(await fs.readFile(a.output, "utf8")).toBe("tiny fixture");
+      controller.abort();
+      await rejected;
+      await vi.waitFor(() => expect(previewSignal.aborted).toBe(true));
+      expect(acquireImageOperation).toThrow("already processing");
+    } finally {
+      controller.abort();
+      finish.resolve({ data: "YQ==", width: 1, height: 1, background: "original", alpha: { has_channel: false, min: 255, max: 255 } });
+    }
+    await vi.waitFor(() => { const release = acquireImageOperation(); release(); });
+    expect(mocks.generate).toHaveBeenCalledTimes(1);
+    expect(mocks.preview).toHaveBeenCalledTimes(1);
+  });
+
   it("forwards MCP cancellation to the provider and releases the slot", async () => {
     const a = await setup(); const entered = deferred<AbortSignal>();
     mocks.generate.mockImplementation((_prompt, _config, signal: AbortSignal) => {

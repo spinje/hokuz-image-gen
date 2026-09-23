@@ -172,7 +172,7 @@ export async function runImageTool({
       const saved = outputImages[i];
       try {
         throwIfImageCancelled(signal);
-        const { data, ...preview } = await createImagePreview(imagesToSave[i].data, imagesToSave[i].mimeType);
+        const { data, ...preview } = await createImagePreview(imagesToSave[i].data, imagesToSave[i].mimeType, signal);
         throwIfImageCancelled(signal);
         // One summary precedes previewContent; each label precedes its image.
         saved.preview = { ...preview, content_index: previewContent.length + 2 };
