@@ -64,14 +64,14 @@ describe("published tool contract", () => {
         "estimated_cost_usd",
         "input_tokens",
         "output_tokens",
+        "requests_completed",
         "requests_reported",
-        "requests_succeeded",
       ]);
       expect(usage.required.sort()).toEqual([
         "cost_basis",
         "estimated_cost_usd",
+        "requests_completed",
         "requests_reported",
-        "requests_succeeded",
       ]);
       expect(outputProperties.status).toMatchObject({ enum: ["complete", "partial", "failed"] });
       const issue = outputProperties.issue as { properties: Record<string, unknown>; required: string[] };

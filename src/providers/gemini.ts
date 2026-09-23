@@ -55,7 +55,7 @@ export function hasApiKey(): boolean {
 /**
  * Get the API key, or explain which variable to set.
  */
-function getApiKey(): string {
+export function getApiKey(): string {
   const apiKey = resolveApiKey();
 
   if (!apiKey) {
@@ -108,7 +108,6 @@ function buildResponseFormat(config: GenerationConfig) {
  * consume. Kept local to avoid depending on non-exported SDK type aliases.
  */
 export interface InteractionLike {
-  status?: string;
   output_text?: string;
   usage?: { total_input_tokens?: number; total_output_tokens?: number };
   output_image?: { data?: string; mime_type?: string };
@@ -120,7 +119,6 @@ export interface InteractionLike {
       data?: string;
       mime_type?: string;
     }>;
-    error?: { message?: string };
   }>;
 }
 
@@ -212,14 +210,6 @@ export function parseInteraction(
     addText(interaction.output_text);
   }
 
-  if (images.length === 0) {
-    throw new ToolError(
-      ErrorType.API_ERROR,
-      "Gemini returned no usable image; the reason was not reported.",
-      "If another paid attempt is acceptable, submit a new request. Changing the prompt is not known to be necessary; the original request may still incur a charge."
-    );
-  }
-
   const { total_input_tokens: inputTokens, total_output_tokens: outputTokens } =
     interaction.usage ?? {};
   // The price decides whether there is a report; the counts are attached when
@@ -258,18 +248,18 @@ export async function generateImage(
   throwIfImageCancelled(signal);
   const client = getClient();
 
+  let interaction: InteractionLike;
   try {
-    const interaction = await client.interactions.create({
+    interaction = await client.interactions.create({
       model: config.model,
       input: prompt,
       response_format: buildResponseFormat(config),
       generation_config: { temperature: config.temperature ?? DEFAULTS.temperature },
     }, { signal, maxRetries: 0 });
-
-    return parseInteraction(interaction as InteractionLike, imagePriceUsd(config));
   } catch (error) {
-    return handleApiError(error, config.model, signal);
+    handleApiError(error, config.model, signal);
   }
+  return parseInteraction(interaction, imagePriceUsd(config));
 }
 
 /**
@@ -284,29 +274,29 @@ export async function editImage(
   throwIfImageCancelled(signal);
   const client = getClient();
 
-  try {
-    // Input images first (preserving order for "first image" / "second image"
-    // references), then the editing instruction.
-    const input = [
-      ...inputImages.map((image) => ({
-        type: "image" as const,
-        mime_type: image.mimeType,
-        data: image.data,
-      })),
-      { type: "text" as const, text: prompt },
-    ];
+  // Input images first (preserving order for "first image" / "second image"
+  // references), then the editing instruction.
+  const input = [
+    ...inputImages.map((image) => ({
+      type: "image" as const,
+      mime_type: image.mimeType,
+      data: image.data,
+    })),
+    { type: "text" as const, text: prompt },
+  ];
 
-    const interaction = await client.interactions.create({
+  let interaction: InteractionLike;
+  try {
+    interaction = await client.interactions.create({
       model: config.model,
       input,
       response_format: buildResponseFormat(config),
       generation_config: { temperature: config.temperature ?? DEFAULTS.temperature },
     }, { signal, maxRetries: 0 });
-
-    return parseInteraction(interaction as InteractionLike, imagePriceUsd(config));
   } catch (error) {
-    return handleApiError(error, config.model, signal);
+    handleApiError(error, config.model, signal);
   }
+  return parseInteraction(interaction, imagePriceUsd(config));
 }
 
 /**
@@ -367,7 +357,6 @@ function resolveStatus(error: GeminiApiErrorLike): number | undefined {
 
 /** Keep the Gemini-specific response shapes here; share recovery policy. */
 function handleApiError(error: unknown, model: ImageModel, signal?: AbortSignal): never {
-  if (error instanceof ToolError) throw error;
   const apiError = (error ?? {}) as GeminiApiErrorLike;
   const reason = apiMessage(apiError);
   const status = resolveStatus(apiError);

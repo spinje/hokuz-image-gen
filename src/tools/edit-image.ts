@@ -10,7 +10,7 @@
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { EditImageInputSchema } from "../schemas/edit.js";
 import { ImageToolOutputSchema } from "../schemas/output.js";
-import { editImage, validateGenerationConfig } from "../providers/index.js";
+import { editImage, validateGenerationConfig, requireProviderKey } from "../providers/index.js";
 import { acquireImageOperation, throwIfImageCancelled } from "../services/image-operation.js";
 import { resolveOutputDestination } from "../services/path-policy.js";
 import {
@@ -62,6 +62,7 @@ export function registerEditImageTool(server: McpServer): void {
     },
     async (params, { signal }) => {
       let release: (() => void) | undefined;
+      let pipelineStarted = false;
       try {
         // The SDK has already applied the schema's .default() values; these fallbacks
         // are defence in depth only. Optionality is decided by .default() in the schema.
@@ -98,6 +99,7 @@ export function registerEditImageTool(server: McpServer): void {
           inputImageCount: params.image_paths.length,
         });
         throwIfImageCancelled(signal);
+        requireProviderKey(model);
         release = acquireImageOperation();
         await resolveOutputDestination(params.output_path);
 
@@ -111,6 +113,7 @@ export function registerEditImageTool(server: McpServer): void {
           inputImages.push(image);
         }
 
+        pipelineStarted = true;
         return await runImageTool({
           outputFormat,
           outputPath: params.output_path,
@@ -120,7 +123,7 @@ export function registerEditImageTool(server: McpServer): void {
           produce: () => editImage(params.prompt, inputImages, config, signal),
         });
       } catch (error) {
-        return imageToolError(error);
+        return imageToolError(error, !pipelineStarted);
       } finally {
         release?.();
       }

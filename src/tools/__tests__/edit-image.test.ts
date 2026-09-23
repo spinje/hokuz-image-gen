@@ -9,7 +9,7 @@ const { editMock } = vi.hoisted(() => ({ editMock: vi.fn() }));
 
 vi.mock("../../providers/index.js", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../../providers/index.js")>();
-  return { ...actual, editImage: editMock };
+  return { ...actual, requireProviderKey: vi.fn(), editImage: editMock };
 });
 
 const { connectTestClient, firstText } = await import("../../__tests__/harness.js");

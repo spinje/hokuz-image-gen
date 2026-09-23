@@ -67,7 +67,7 @@ export function hasApiKey(): boolean {
 /**
  * Get the OpenAI API key, or explain which model cannot be used without it.
  */
-function getApiKey(model: ImageModel): string {
+export function getApiKey(model: ImageModel): string {
   const apiKey = process.env[ENV_VARS.openaiApiKey];
 
   if (!apiKey) {
@@ -155,11 +155,14 @@ export function parseImagesResponse(
   // A format we did not ask for would be saved under the requested extension
   // and misreported in `images[].format`, so refuse it instead.
   if (response.output_format && response.output_format !== config.outputFormat) {
-    throw new ToolError(
-      ErrorType.API_ERROR,
-      `OpenAI returned ${response.output_format} instead of the requested ${config.outputFormat}; this response could not be used.`,
-      "Report the unexpected format. If another paid attempt is acceptable, submit a new request; the original request may still incur a charge."
-    );
+    return {
+      images: [], usage: toUsageReport(response.usage),
+      issue: {
+        code: ErrorType.API_ERROR,
+        message: `OpenAI returned ${response.output_format} instead of the requested ${config.outputFormat}; this response could not be used.`,
+        next_step: "Report the unexpected format. If another paid attempt is acceptable, submit a new request; the original request may still incur a charge.",
+      },
+    };
   }
 
   const mimeType = MIME_TYPES[config.outputFormat];
@@ -170,14 +173,6 @@ export function parseImagesResponse(
     if (image.b64_json) {
       images.push({ data: image.b64_json, mimeType, width, height });
     }
-  }
-
-  if (images.length === 0) {
-    throw new ToolError(
-      ErrorType.API_ERROR,
-      "OpenAI returned no usable image; the reason was not reported.",
-      "If another paid attempt is acceptable, submit a new request. Changing the prompt is not known to be necessary; the original request may still incur a charge."
-    );
   }
 
   return { images, usage: toUsageReport(response.usage) };
@@ -250,7 +245,6 @@ export async function editImage(
 
 /** Translate explicit provider evidence; never infer delivery from a missing status. */
 function handleApiError(error: unknown, model: ImageModel, signal?: AbortSignal): never {
-  if (error instanceof ToolError) throw error;
   const apiError = error instanceof APIError ? error : undefined;
   throw providerRequestError("OpenAI", model, {
     status: apiError?.status,

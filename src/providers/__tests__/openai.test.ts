@@ -276,31 +276,19 @@ describe("response parsing", () => {
     expect(response.usage).toBeUndefined();
   });
 
-  it("refuses an image in a format other than the one requested", async () => {
-    generateMock.mockResolvedValue(okResponse({ output_format: "png" }));
-
-    await expect(generateImage("p", baseConfig)).rejects.toThrowError(
-      expect.objectContaining({
-        issue: expect.objectContaining({ code: ErrorType.API_ERROR }),
-        message:
-          "OpenAI returned png instead of the requested jpeg; this response could not be used.",
-      })
-    );
-
-    // The format it was asked for comes back as an image, not an error.
-    generateMock.mockResolvedValue(okResponse({ output_format: "jpeg" }));
-    expect((await generateImage("p", baseConfig)).images).toHaveLength(1);
+  it("refuses an unexpected format but preserves the returned usage", async () => {
+    generateMock.mockResolvedValue(okResponse({ output_format: "png", usage: {
+      input_tokens: 12, output_tokens: 20, input_tokens_details: { text_tokens: 2, image_tokens: 10 },
+    } }));
+    await expect(generateImage("p", baseConfig)).resolves.toMatchObject({
+      images: [], issue: { code: ErrorType.API_ERROR, message: expect.stringContaining("png instead of the requested jpeg") },
+      usage: { inputTokens: 12, outputTokens: 20, estimatedCostUsd: 0.00069 },
+    });
   });
 
-  it("raises API_ERROR when the response carries no image", async () => {
+  it("returns a completed response without images for the pipeline to explain", async () => {
     generateMock.mockResolvedValue(okResponse({ data: [] }));
-
-    await expect(generateImage("p", baseConfig)).rejects.toThrowError(
-      expect.objectContaining({
-        issue: expect.objectContaining({ code: ErrorType.API_ERROR }),
-        message: "OpenAI returned no usable image; the reason was not reported.",
-      })
-    );
+    await expect(generateImage("p", baseConfig)).resolves.toEqual({ images: [], usage: undefined });
   });
 });
 
@@ -350,6 +338,17 @@ describe("API error mapping", () => {
     expect(error).toBeInstanceOf(ToolError);
     expect(JSON.stringify((error as ToolError).issue)).not.toContain("details");
     expect(generateMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("preserves a confirmed rejection even when cancellation races with it", async () => {
+    const controller = new AbortController();
+    generateMock.mockImplementation(() => {
+      controller.abort();
+      throw apiError(400, { code: "moderation_blocked", message: "Rejected by moderation" });
+    });
+    await expect(generateImage("p", baseConfig, controller.signal)).rejects.toMatchObject({ issue: {
+      code: ErrorType.CONTENT_BLOCKED, message: expect.stringContaining("moderation blocked"),
+    } });
   });
 
   it("distinguishes cancellation in flight from a request that never started", async () => {

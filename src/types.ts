@@ -73,7 +73,9 @@ export interface GenerationConfig {
  * Result of one provider request
  */
 export interface ImageResponse {
-  /** Array of generated images */
+  /** A completed response that cannot be used (for example, an unexpected format). */
+  issue?: ToolIssue;
+  /** Array of generated images; may be empty even when the provider responded. */
   images: GeneratedImage[];
   /** Text description from the model (if any) */
   description?: string;

@@ -97,10 +97,10 @@ describe("parseInteraction", () => {
     expect(result.description).toBe("fallback");
   });
 
-  it("reports no image without inferring a moderation block", () => {
-    expect(() => parseInteraction({ output_text: "refused" })).toThrowError(
-      expect.objectContaining({ issue: expect.objectContaining({ code: ErrorType.API_ERROR }) })
-    );
+  it("preserves model text when no image is present", () => {
+    expect(parseInteraction({ output_text: "Please clarify the requested image" })).toEqual({
+      images: [], description: "Please clarify the requested image", usage: undefined,
+    });
   });
 });
 
@@ -495,12 +495,11 @@ describe("API error mapping", () => {
     expect(createMock.mock.calls[0][1]).toMatchObject({ maxRetries: 0 });
   });
 
-  it("does not infer moderation when a completed response has no image", async () => {
-    createMock.mockResolvedValue({ output_text: "no image" });
-    await expect(generateImage("p", baseConfig)).rejects.toMatchObject({ issue: {
-      code: ErrorType.API_ERROR, message: "Gemini returned no usable image; the reason was not reported.",
-      next_step: expect.stringContaining("Changing the prompt is not known to be necessary"),
-    } });
+  it("returns text-only responses to the pipeline without inferring moderation", async () => {
+    createMock.mockResolvedValue({ output_text: "Please clarify", usage: { total_input_tokens: 10, total_output_tokens: 5 } });
+    await expect(generateImage("p", baseConfig)).resolves.toMatchObject({
+      images: [], description: "Please clarify", usage: { inputTokens: 10, outputTokens: 5, costBasis: "per_image" },
+    });
   });
 
   it("does not mistake a non-moderation block for content moderation", async () => {

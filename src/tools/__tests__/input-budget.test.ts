@@ -10,7 +10,7 @@ vi.mock("../../constants.js", async original => {
   return { ...actual, LIMITS: { ...actual.LIMITS, maxTotalInputImageBytes: 8 } };
 });
 vi.mock("../../providers/index.js", async original => ({
-  ...await original<typeof import("../../providers/index.js")>(), editImage: edit,
+  ...await original<typeof import("../../providers/index.js")>(), requireProviderKey: vi.fn(), editImage: edit,
 }));
 vi.mock("../../services/image-preview.js", () => ({
   createImagePreview: () => { throw new Error("decoder must not run"); }, PreviewUnavailable: class extends Error {},

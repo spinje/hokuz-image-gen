@@ -8,7 +8,7 @@ const { generateMock } = vi.hoisted(() => ({ generateMock: vi.fn() }));
 
 vi.mock("../../providers/index.js", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../../providers/index.js")>();
-  return { ...actual, generateImage: generateMock };
+  return { ...actual, requireProviderKey: vi.fn(), generateImage: generateMock };
 });
 
 const { connectTestClient, firstText } = await import("../../__tests__/harness.js");

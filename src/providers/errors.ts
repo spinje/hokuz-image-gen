@@ -14,7 +14,7 @@ export function providerRequestError(
   provider: string, model: string, failure: RequestFailure, cause: unknown,
 ): ToolError {
   const { status, reason } = failure;
-  if (failure.cancelled) {
+  if (failure.cancelled && status === undefined) {
     return new ToolError(ErrorType.REQUEST_CANCELLED,
       `${provider} generation was cancelled while awaiting a response. Completion and billing could not be confirmed.`,
       "Do not automatically retry a cancelled request. Cancellation does not guarantee that generation stopped or that charges were refunded.", cause);

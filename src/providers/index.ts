@@ -53,6 +53,7 @@ export interface ProviderModule {
   label: string;
   /** Whether this provider's API key is set; never throws. */
   hasApiKey(): boolean;
+  getApiKey(model: ImageModel): string;
   generateImage(prompt: string, config: GenerationConfig, signal?: AbortSignal): Promise<ImageResponse>;
   editImage(
     prompt: string,
@@ -66,6 +67,11 @@ const PROVIDERS: Record<Provider, ProviderModule> = { google: gemini, openai };
 
 function providerFor(model: ImageModel): ProviderModule {
   return PROVIDERS[IMAGE_MODEL_CAPABILITIES[model].provider];
+}
+
+/** Check local configuration before loading potentially large edit inputs. */
+export function requireProviderKey(model: ImageModel): void {
+  providerFor(model).getApiKey(model);
 }
 
 /** Human-readable name of a provider. */

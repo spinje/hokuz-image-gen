@@ -20,7 +20,7 @@ const { generateMock } = vi.hoisted(() => ({ generateMock: vi.fn() }));
 
 vi.mock("../../providers/index.js", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../../providers/index.js")>();
-  return { ...actual, generateImage: generateMock };
+  return { ...actual, requireProviderKey: vi.fn(), generateImage: generateMock };
 });
 
 const { connectTestClient, firstText } = await import("../../__tests__/harness.js");
@@ -153,7 +153,7 @@ describe("image tool pipeline", () => {
         output_tokens: 458,
         estimated_cost_usd: 0.014,
         cost_basis: "tokens",
-        requests_succeeded: 2,
+        requests_completed: 2,
         requests_reported: 2,
       },
     });
@@ -166,7 +166,7 @@ describe("image tool pipeline", () => {
     ]);
     expect(firstText(result)).toContain("(1360x768)");
     expect(firstText(result)).toContain(
-      "Usage (reported for 2 of 2 requests that returned images): 30 input + 458 output tokens, estimated cost $0.0140 (from those token counts)"
+      "Usage (reported for 2 of 2 completed requests): 30 input + 458 output tokens, estimated cost $0.0140 (from those token counts)"
     );
   });
 
@@ -192,12 +192,12 @@ describe("image tool pipeline", () => {
 
     expect(generateMock).toHaveBeenCalledTimes(2);
     expect(firstText(result)).toContain(
-      "Usage (reported for 1 of 2 requests that returned images): 15 input + 229 output tokens, estimated cost $0.0070 (from those token counts)"
+      "Usage (reported for 1 of 2 completed requests): 15 input + 229 output tokens, estimated cost $0.0070 (from those token counts)"
     );
     // The same scope in the structured channel: a caller reading only that one
     // must not take the totals for the whole call's cost.
     expect(result.structuredContent).toMatchObject({
-      usage: { requests_succeeded: 2, requests_reported: 1 },
+      usage: { requests_completed: 2, requests_reported: 1 },
     });
   });
 
@@ -231,12 +231,12 @@ describe("image tool pipeline", () => {
         estimated_cost_usd: 0.125,
         cost_basis: "per_image",
         // Both requests priced their image, so the totals cover the whole call.
-        requests_succeeded: 2,
+        requests_completed: 2,
         requests_reported: 2,
       },
     });
     expect(firstText(result)).toContain(
-      "Usage (reported for 2 of 2 requests that returned images): 9 input + 1481 output tokens, estimated cost $0.1250 (the provider's per-image price, not derived from those tokens)"
+      "Usage (reported for 2 of 2 completed requests): 9 input + 1481 output tokens, estimated cost $0.1250 (the provider's per-image price, not derived from those tokens)"
     );
   });
 
@@ -254,11 +254,11 @@ describe("image tool pipeline", () => {
     expect(usage).toEqual({
       estimated_cost_usd: 0.067,
       cost_basis: "per_image",
-      requests_succeeded: 1,
+      requests_completed: 1,
       requests_reported: 1,
     });
     expect(firstText(result)).toContain(
-      "Usage (reported for 1 of 1 requests that returned images): estimated cost $0.0670 (the provider's per-image price, not derived from those tokens)"
+      "Usage (reported for 1 of 1 completed requests): estimated cost $0.0670 (the provider's per-image price, not derived from those tokens)"
     );
     // No count is named. The basis clause still says "tokens" to deny them, so
     // match the shape a count would take rather than the bare word.
@@ -278,7 +278,7 @@ describe("image tool pipeline", () => {
       images: [{ path: expect.any(String), format: "jpeg" }],
     });
     expect(firstText(result)).not.toContain("Usage (");
-    expect(firstText(result)).toContain("Successfully generated 1 image(s)");
+    expect(firstText(result)).toContain("complete: 1 of 1 requested image(s) saved.");
   });
 });
 
@@ -302,7 +302,7 @@ describe("inline previews through MCP", () => {
     expect(generateMock).toHaveBeenCalledTimes(3);
     expect(generateMock.mock.calls[2][1]).toEqual({ model: "gemini-3.1-flash-image", aspectRatio: "1:1", resolution: "1K", outputFormat: "jpeg", temperature: undefined, quality: undefined, transparentBackground: undefined });
     const output = result.structuredContent as ImageToolOutput;
-    expect(output).toMatchObject({ status: "complete", images: [{ path: path.join(tmp, "out-3.jpg"), format: "jpeg", width: 1024, height: 256, preview: { content_index: 2, width: 512, height: 128, background: "original", alpha: { has_channel: false, min: 255, max: 255 } } }], usage: { estimated_cost_usd: 0.067, requests_succeeded: 1, requests_reported: 1 } });
+    expect(output).toMatchObject({ status: "complete", images: [{ path: path.join(tmp, "out-3.jpg"), format: "jpeg", width: 1024, height: 256, preview: { content_index: 2, width: 512, height: 128, background: "original", alpha: { has_channel: false, min: 255, max: 255 } } }], usage: { estimated_cost_usd: 0.067, requests_completed: 1, requests_reported: 1 } });
     expect(await fs.readFile(output.images[0].path)).toEqual(bytes);
     const block = result.content[output.images[0].preview!.content_index];
     expect(block.type).toBe("image");
@@ -322,7 +322,7 @@ describe("inline previews through MCP", () => {
     expect(result.isError).toBeFalsy();
     expect(generateMock).toHaveBeenCalledTimes(2);
     const output = result.structuredContent as ImageToolOutput;
-    expect(output).toMatchObject({ status: "partial", images: [{ path: path.join(tmp, "partial.jpg"), format: "jpeg", width: 1024, height: 1024 }], usage: { estimated_cost_usd: 0.067, requests_succeeded: 1, requests_reported: 1 }, issue: { code: "API_RATE_LIMIT", message: "Rate limit exceeded." } });
+    expect(output).toMatchObject({ status: "partial", images: [{ path: path.join(tmp, "partial.jpg"), format: "jpeg", width: 1024, height: 1024 }], usage: { estimated_cost_usd: 0.067, requests_completed: 1, requests_reported: 1 }, issue: { code: "API_RATE_LIMIT", message: "Rate limit exceeded." } });
     expect(await fs.readFile(output.images[0].path)).toEqual(Buffer.from("fake-jpeg-bytes"));
     expect(output.images[0].preview_warning).toBe(`Preview unavailable: unsupported image signature or MIME type. Original saved successfully; inspect ${output.images[0].path} without repeating the image request.`);
     expect(firstText(result)).toContain(output.issue!.message);

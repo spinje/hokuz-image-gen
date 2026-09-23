@@ -194,9 +194,9 @@ aspect_ratio: 3:4
 
 `images[].path` is authoritative. `width`/`height` describe the saved image when available; preview dimensions are separate. A preview failure leaves the original usable and adds `preview_warning`.
 
-`usage` contains optional `input_tokens`/`output_tokens`, `estimated_cost_usd`, `cost_basis`, `requests_succeeded`, and `requests_reported`. Estimates cover only reported responses, including images returned but not saved; charges for failed or interrupted requests are not included. `cost_basis` is `tokens` for OpenAI or `per_image` for Gemini. Missing token counts are omitted, not zero. `requests_reported` below `requests_succeeded` means the estimate covers only some requests that returned images.
+`usage` contains optional `input_tokens`/`output_tokens`, `estimated_cost_usd`, `cost_basis`, `requests_completed`, and `requests_reported`. Estimates cover only reported responses, including responses without usable images or whose images could not be saved. Unreported charges may apply, including for failed or interrupted requests. `cost_basis` is `tokens` for OpenAI or `per_image` for Gemini. Missing token counts are omitted, not zero. `requests_reported` below `requests_completed` means the estimate covers only some completed requests.
 
-Version 2 replaces `success`, `warning`, `error`, `error_type`, and `retryable` with `status` and `issue`. MCP `isError` is true for failed delivery; partial delivery retains usable images and an issue.
+Version 2 replaces `success`, `warning`, `error`, `error_type`, and `retryable` with `status` and `issue`, and renames `usage.requests_succeeded` to `usage.requests_completed` to include responses without usable images. MCP `isError` is true for failed delivery; partial delivery retains usable images and an issue.
 
 ### hokuz_edit_image
 
@@ -293,68 +293,13 @@ For the source layout and contributor guidance, see [CLAUDE.md](CLAUDE.md#projec
 
 ## Troubleshooting
 
-### "No provider API key found" (the server will not start)
-Set `GEMINI_API_KEY` (or `GOOGLE_API_KEY`) and/or `OPENAI_API_KEY` in your environment or MCP client configuration. At least one is required.
+For partial or failed delivery, read `issue.message` and `issue.next_step`. Keep the files listed in `images`; another request creates new images and can incur additional charges.
 
-### "GEMINI_API_KEY is not set" / "OPENAI_API_KEY is not set, so '…' cannot be used"
-The server started with the other provider's key. Either set the named variable, or choose a model from the provider whose key is present.
-
-### "Model … does not support resolution/aspect ratio …"
-The requested option is not valid for the chosen model, and the request is rejected before any API call. Check the [Models](#models) table — for example, Lite is `1K` only, Pro does not support the extreme aspect ratios, only Flash supports `0.5K` and `1:4`/`4:1`/`1:8`/`8:1`, and OpenAI models accept `1K`/`2K` and the ten base ratios. Either switch models or pick a supported value.
-
-### "Model … does not support output_format 'png'"
-Gemini models produce JPEG only. Use `gpt-image-2.5-flare` or `gpt-image-2.5-sunburst` for `png`/`webp`, or ask for `jpeg`. An `output_path` ending in `.png` or `.webp` asks for that format just as `output_format` does, so `~/images/logo.png` on a Gemini model is rejected rather than saved as a JPEG.
-
-### "transparent_background requires output_format 'png' or 'webp'"
-JPEG has no alpha channel, and the OpenAI API rejects that combination outright. Set `output_format` to `png` or `webp`, or drop `transparent_background`.
-
-### "Model … does not support transparent_background"
-Transparency is an OpenAI-only option. Use `gpt-image-2.5-flare` or `gpt-image-2.5-sunburst` with `output_format` `png` or `webp`.
-
-### "Model … accepts at most 14 input images"
-Gemini models take 14 reference images, OpenAI models 16. Remove images, or switch to an OpenAI model. The count is checked before any image is read.
-
-### "Model … does not accept image/gif input"
-OpenAI models accept jpeg, png and webp only; GIF and HEIC are rejected before the API call. Convert the image, or use a Gemini model, which accepts both.
-
-### "Model … does not accept 'quality'" / "does not accept 'temperature'"
-`quality` is OpenAI-only and `temperature` is Gemini-only. Omit the option, or switch to a model of the other provider. Neither has a schema default; each provider applies its own default when its option is omitted.
-
-### "Model … cannot apply resolution … when aspect_ratio is 'auto'"
-On OpenAI models the pixel size is derived from `aspect_ratio`, and `auto` (the `hokuz_edit_image` default) hands the choice to the provider, so a `resolution` could not be honoured. Set an `aspect_ratio` to request a target shape and resolution, or omit `resolution`. Gemini models apply `resolution` whatever the ratio.
-
-### "OpenAI denied access (403)"
-GPT Image models may require organisation verification in the [OpenAI dashboard](https://platform.openai.com/settings/organization/general). Until that clears, use a Gemini model.
-
-### "OpenAI's content moderation blocked this request"
-The prompt or an input image tripped OpenAI's moderation. The message names the stage and categories; rephrase the prompt or change the inputs.
-
-### "No images were generated" / "Gemini's safety filters blocked this request"
-The server currently classifies both a Gemini response with no image and an explicit safety rejection as `CONTENT_BLOCKED`. A missing image alone does not establish that moderation caused it; inspect the returned message.
-
-### "Gemini rejected the API key"
-Google answers an invalid key with a 400 rather than a 401. Check `GEMINI_API_KEY` (or `GOOGLE_API_KEY`) in the MCP server's environment — get a key at [AI Studio](https://aistudio.google.com/) — or use an OpenAI model.
-
-### "Gemini denied the request (403)"
-The request was denied: check the project's billing and API enablement in the Google Cloud console, or use an OpenAI model.
-
-### "Gemini reports model '…' was not found"
-A 404 means either the model ID has been retired or the requested resolution is not offered for it. Verify the ID against the [models list](https://ai.google.dev/gemini-api/docs/models), try another Gemini model, or use an OpenAI model.
-
-### "Rate limit exceeded"
-Wait before retrying. Limits depend on the provider, model and account tier.
-
-### "Image file not found"
-Verify the image path is correct. Use absolute paths or paths relative to home (`~/`).
-
-### "Image at … is …MB, above the …MB limit for '…'"
-Each input image must fit the selected model's limit: 7 MB on Gemini models, 50 MB on OpenAI models. Combined references must also fit the 128 MiB local input budget. Declared sizes are checked before buffering, and actual local/remote reads are capped too. Resize the image, or use an OpenAI model.
-
-### "Cannot determine the image type of …"
-Local inputs are typed by their file extension, URLs by the response's `content-type` header. When neither says what the file is, the request stops rather than guessing — a guess would hide exactly the files the format check exists to catch. Rename the file to its real extension (`.jpg`, `.png`, `.webp`, `.gif`, `.heic`, `.heif`), or, for a URL that serves no `content-type`, download the image and pass a local path.
-
-### "Could not fetch image from …"
-The server could not read the URL: a non-OK status, a connection failure, or no response within 30 seconds. Check the URL, or download the image and pass a local path.
+- **Credentials or access:** the server operator must configure the selected provider's key and account access. Do not pass API keys in tool arguments.
+- **Unsupported arguments:** use the accepted values named in the issue and the [Models](#models) table. Capability mismatches are rejected before generation.
+- **No usable image:** inspect any returned model response. An empty image response alone does not establish a moderation block.
+- **Input download or file failure:** correct the indicated path, permissions, format or size. A URL must serve a public image with an appropriate content-type; downloading it and passing a local image file is another option.
+- **Unknown completion:** an interrupted request may have completed at the provider. There is no automatic retry or later retrieval through this tool.
 
 ## License
 

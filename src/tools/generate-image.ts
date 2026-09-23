@@ -9,7 +9,7 @@
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { GenerateImageInputSchema } from "../schemas/generate.js";
 import { ImageToolOutputSchema } from "../schemas/output.js";
-import { generateImage, validateGenerationConfig } from "../providers/index.js";
+import { generateImage, validateGenerationConfig, requireProviderKey } from "../providers/index.js";
 import { inferOutputFormatFromPath } from "../services/file-utils.js";
 import { acquireImageOperation, throwIfImageCancelled } from "../services/image-operation.js";
 import { resolveOutputDestination } from "../services/path-policy.js";
@@ -57,6 +57,7 @@ export function registerGenerateImageTool(server: McpServer): void {
     },
     async (params, { signal }) => {
       let release: (() => void) | undefined;
+      let pipelineStarted = false;
       try {
         // The SDK has already applied the schema's .default() values; these fallbacks
         // are defence in depth only. Optionality is decided by .default() in the schema.
@@ -87,9 +88,11 @@ export function registerGenerateImageTool(server: McpServer): void {
         // Validate model options before any API call (fail fast, no downgrades)
         validateGenerationConfig(config);
         throwIfImageCancelled(signal);
+        requireProviderKey(model);
         release = acquireImageOperation();
         await resolveOutputDestination(params.output_path);
 
+        pipelineStarted = true;
         return await runImageTool({
           outputFormat,
           outputPath: params.output_path,
@@ -99,7 +102,7 @@ export function registerGenerateImageTool(server: McpServer): void {
           produce: () => generateImage(params.prompt, config, signal),
         });
       } catch (error) {
-        return imageToolError(error);
+        return imageToolError(error, !pipelineStarted);
       } finally {
         release?.();
       }

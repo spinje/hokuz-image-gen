@@ -9,7 +9,7 @@ import { runImageTool } from "../image-tool.js";
 
 const mocks = vi.hoisted(() => ({ generate: vi.fn(), edit: vi.fn(), preview: vi.fn() }));
 vi.mock("../../providers/index.js", async (original) => ({
-  ...await original<typeof import("../../providers/index.js")>(),
+  ...await original<typeof import("../../providers/index.js")>(), requireProviderKey: vi.fn(),
   generateImage: mocks.generate, editImage: mocks.edit,
 }));
 // No native decoder is loaded in this suite.

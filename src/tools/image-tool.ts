@@ -111,7 +111,7 @@ export async function runImageTool({
   const previewInputs: GeneratedImage[] = [];
   const descriptions: string[] = [];
   const usages: UsageReport[] = [];
-  let successfulRequests = 0;
+  let completedRequests = 0;
   let issue: ToolIssue | undefined;
 
   while (outputImages.length < requestedCount) {
@@ -119,18 +119,21 @@ export async function runImageTool({
     try {
       throwIfImageCancelled(signal);
       response = await produce();
-      if (!response.images.length) {
-        throw new ToolError(ErrorType.API_ERROR,
-          "The provider returned no usable image; the reason was not reported.",
-          "If another paid attempt is acceptable, submit a new request. Changing the prompt is not known to be necessary.");
-      }
     } catch (error) {
       issue = issueFromError(error);
       break;
     }
-    successfulRequests++;
+    completedRequests++;
     if (response.description) descriptions.push(response.description);
     if (response.usage) usages.push(response.usage);
+    if (!response.images.length) {
+      issue = response.issue ?? {
+        code: ErrorType.API_ERROR,
+        message: "The provider returned no usable image.",
+        next_step: "Read any model response for context. If another paid attempt is appropriate, submit a new request; the original request may still incur a charge.",
+      };
+      break;
+    }
     const images = response.images.slice(0, requestedCount - outputImages.length);
     let savedFromResponse = 0;
     try {
@@ -195,7 +198,7 @@ export async function runImageTool({
       ...(usage.outputTokens !== undefined && { output_tokens: usage.outputTokens }),
       estimated_cost_usd: usage.estimatedCostUsd,
       cost_basis: usage.costBasis,
-      requests_succeeded: successfulRequests,
+      requests_completed: completedRequests,
       requests_reported: usages.length,
     } }),
   }, previewContent, requestedCount);
@@ -221,9 +224,9 @@ function formatImageResult(
     ].filter((count) => count !== undefined);
     const tokens = counts.length ? `${counts.join(" + ")} tokens, ` : "";
     const basis = usage.cost_basis === "tokens" ? "from those token counts" : "the provider's per-image price, not derived from those tokens";
-    lines.push(`\nUsage (reported for ${usage.requests_reported} of ${usage.requests_succeeded} requests that returned images): ${tokens}estimated cost $${usage.estimated_cost_usd.toFixed(4)} (${basis}). Charges for failed or interrupted requests are not included.`);
+    lines.push(`\nUsage (reported for ${usage.requests_reported} of ${usage.requests_completed} completed requests): ${tokens}estimated cost $${usage.estimated_cost_usd.toFixed(4)} (${basis}). Only reported usage is included; unreported charges may apply.`);
   }
-  if (output.description) lines.push(`\nDescription: ${output.description}`);
+  if (output.description) lines.push(`\nModel response: ${output.description}`);
   for (const image of images) if (image.preview_warning) lines.push(`\n${image.preview_warning}`);
   return {
     content: [{ type: "text", text: lines.join("\n") }, ...previewContent],
@@ -235,16 +238,19 @@ function formatImageResult(
 function issueFromError(error: unknown): ToolIssue {
   return error instanceof ToolError ? error.issue : {
     code: ErrorType.UNKNOWN_ERROR,
-    message: "An unexpected error prevented completion. The outcome of the interrupted operation could not be confirmed.",
-    next_step: "Keep any saved images. Do not automatically repeat the call; report the problem before trying again.",
+    message: "An unexpected error prevented completion; the interrupted operation's outcome could not be confirmed.",
+    next_step: "Do not automatically repeat the call; report the problem before trying again.",
   };
 }
 
-/** Handler failures occur before the shared generation pipeline starts. */
-export function imageToolError(error: unknown): CallToolResult {
+/** The handler knows whether generation was ruled out by preflight. */
+export function imageToolError(error: unknown, beforeGeneration: boolean): CallToolResult {
   const issue = issueFromError(error);
   return formatImageResult({
     status: "failed", images: [],
-    issue: error instanceof ToolError ? { ...issue, message: `${issue.message} Generation did not start.` } : issue,
+    issue: beforeGeneration ? {
+      ...issue,
+      message: `${error instanceof ToolError ? issue.message : "An unexpected error prevented the call from starting."} Generation did not start.`,
+    } : issue,
   });
 }

@@ -45,7 +45,7 @@ export const ImageToolOutputSchema = z.object({
   description: z
     .string()
     .optional()
-    .describe("Model's text description of the result, when it gave one"),
+    .describe("Model response text, when present, including responses that contained no image"),
   usage: z
     .object({
       input_tokens: z
@@ -57,7 +57,7 @@ export const ImageToolOutputSchema = z.object({
       output_tokens: z
         .number()
         .optional()
-        .describe("Generated-image tokens, summed over the requests that reported them"),
+        .describe("Output tokens reported by the provider, summed across responses that reported them"),
       estimated_cost_usd: z
         .number()
         .describe(
@@ -68,15 +68,15 @@ export const ImageToolOutputSchema = z.object({
         .describe(
           "How estimated_cost_usd was arrived at. 'tokens': arithmetic over the counts above and a price table (OpenAI). 'per_image': Google's published price for the model and resolution (Gemini) — the counts above are real but did NOT produce this cost, and input and text tokens, a fraction of a cent, are not in it."
         ),
-      requests_succeeded: z
+      requests_completed: z
         .number()
         .describe(
-          "Provider requests that returned an image; num_images makes one request per image. A request that failed is not counted here. Saving can fail after a request succeeds."
+          "Provider requests that returned a completed response, including responses without usable images or whose images could not be saved. Request failures are excluded."
         ),
       requests_reported: z
         .number()
         .describe(
-          "How many of those requests estimated_cost_usd covers. Lower than requests_succeeded means it is a partial view of the call, not its whole cost. Failed or interrupted requests can incur charges that are not included. The token counts have their own scope: each is summed only over the requests that reported it, which can be fewer still."
+          "How many completed responses estimated_cost_usd covers. Lower than requests_completed means it is a partial view of the call, not its whole cost. Unreported charges may apply, including for failed or interrupted requests. The token counts have their own scope: each is summed only over the requests that reported it, which can be fewer still."
         ),
     })
     .optional()
