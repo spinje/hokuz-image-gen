@@ -73,7 +73,7 @@ export interface GenerationConfig {
  * Result of one provider request
  */
 export interface ImageResponse {
-  /** A completed response that cannot be used (for example, an unexpected format). */
+  /** An unusable completed response (for example, an unexpected format); images must be empty. */
   issue?: ToolIssue;
   /** Array of generated images; may be empty even when the provider responded. */
   images: GeneratedImage[];

@@ -189,8 +189,7 @@ export async function generateImage(
   throwIfImageCancelled(signal);
   const client = getClient(config.model);
 
-  // Only the SDK call is mapped by handleApiError; parsing raises its own
-  // ToolErrors and must not be relabelled as a request failure.
+  // Only the SDK call is mapped by handleApiError.
   let response: ImagesResponse;
   try {
     response = await client.images.generate({

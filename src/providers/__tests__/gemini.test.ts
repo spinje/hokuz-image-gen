@@ -498,7 +498,7 @@ describe("API error mapping", () => {
   it("returns text-only responses to the pipeline without inferring moderation", async () => {
     createMock.mockResolvedValue({ output_text: "Please clarify", usage: { total_input_tokens: 10, total_output_tokens: 5 } });
     await expect(generateImage("p", baseConfig)).resolves.toMatchObject({
-      images: [], description: "Please clarify", usage: { inputTokens: 10, outputTokens: 5, costBasis: "per_image" },
+      images: [], description: "Please clarify", usage: { inputTokens: 10, outputTokens: 5, estimatedCostUsd: 0, costBasis: "per_image" },
     });
   });
 

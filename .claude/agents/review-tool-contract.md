@@ -53,7 +53,7 @@ Does the change alter what `listTools` returns — a new field, a changed `requi
 Does the output Zod schema describe what the handler actually returns, no more and no less? Optional fields that are never populated, and populated fields missing from the schema, are both findings (the SDK validates `structuredContent` on success — a missing field fails the call).
 
 ### 4. Error Messages the Caller Can Act On
-For every new or changed error path: literal text? Does it name what was wrong and what would be right? Does it leak internals (stack frames, SDK class names, absolute paths the user did not supply, the API key)? Is it returned as `isError: true` with matching `structuredContent.error`?
+For every new or changed error path: literal text? Does it name what was wrong and what would be right? Does it leak internals (stack frames, SDK class names, absolute paths the user did not supply, the API key)? Do `status`, `issue`, text and saved paths agree? Only failed delivery sets `isError: true`; partial delivery keeps usable files and recovery advice.
 
 ### 5. Sibling and Consumer Sweep
 For every changed pattern, enumerate consumers using the map above and read each one's CURRENT state — do not trust "updated everywhere" claims in the diff. The compiler catches renamed imports; it does not catch a stale description, a stale README row, or a lens file citing the old limit.
