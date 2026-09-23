@@ -42,9 +42,10 @@ export const EditImageInputSchema = z
         `Maximum ${LIMITS.maxInputImages} input images allowed`
       )
       .describe(
-        "Array of local file paths or URLs to source images. Gemini models: up to 14 images, 7 MB " +
+        "Array of local file paths or public HTTP(S) image URLs; private network destinations and redirects to them are rejected. Gemini models: up to 14 images, 7 MB " +
           "each (jpeg/png/webp/gif/heic/heif). OpenAI models: up to 16 images, 50 MB each, jpeg/png/webp " +
-          "only (gif/heic are rejected before the API call). Order matters: 'first image'/'second " +
+          `only (gif/heic are rejected before the API call). Local combined limit: ${LIMITS.maxTotalInputImageBytes / (1024 * 1024)} MiB per edit. ` +
+          "Order matters: 'first image'/'second " +
           "image' in the prompt refer to this order. For style transfer, provide the content image " +
           "first, then the style reference. '~' is expanded; a URL must be publicly reachable."
       ),
@@ -53,7 +54,7 @@ export const EditImageInputSchema = z
       .string()
       .min(1, "Output path is required")
       .describe(
-        "Where to save the edited image. A trailing slash, or a path that is already a directory, " +
+        "Where to save the edited image. If HOKUZ_OUTPUT_ROOT is configured, paths must stay within it and relative paths start there. A trailing slash, or a path that is already a directory, " +
           "means a timestamped file inside it; anything else is the file to write. When output_format " +
           "is omitted this path's extension chooses the format, so a .png or .webp path needs an " +
           "OpenAI model; when output_format is set, the extension is replaced to match it. An existing " +
@@ -76,8 +77,9 @@ export const EditImageInputSchema = z
       .enum(EDIT_ASPECT_RATIOS)
       .default("auto")
       .describe(
-        `Aspect ratio. Options: auto, ${ASPECT_RATIOS.join(", ")}. 'auto' (default) keeps the input's ` +
-          "framing on Gemini and lets OpenAI choose the size. The extreme ratios (1:4, 4:1, 1:8, 8:1) are " +
+        `Target aspect ratio; actual pixel dimensions can differ. Options: auto, ${ASPECT_RATIOS.join(", ")}. ` +
+          "'auto' (default) omits the ratio on Gemini and lets OpenAI choose the size; neither guarantees " +
+          "the original framing. The extreme ratios (1:4, 4:1, 1:8, 8:1) are " +
           "supported only by gemini-3.1-flash-image; OpenAI models accept the other ten. Default: auto"
       ),
 
@@ -88,10 +90,11 @@ export const EditImageInputSchema = z
       .optional()
       .describe(
         `Output resolution: ${RESOLUTIONS.join(", ")} per model (Flash 0.5K-4K; Lite 1K only; Pro ` +
-          "1K/2K/4K; OpenAI 1K/2K). Gemini models re-render the edit at this resolution, 1K when " +
-          "omitted, so set 2K or 4K to keep a large input's detail. OpenAI models reject it while " +
-          "aspect_ratio is 'auto' (the default), because the provider then chooses the size itself; " +
-          "with an explicit aspect_ratio they accept it and apply 1K when omitted."
+          "1K/2K/4K; OpenAI 1K/2K). Gemini models request this resolution, 1K when omitted, including " +
+          "with aspect_ratio 'auto'; higher resolution does not guarantee retention of input detail. " +
+          "OpenAI models reject it while aspect_ratio is 'auto' (the default), because the provider " +
+          "then chooses the size itself; with an explicit aspect_ratio they accept it and apply 1K " +
+          "when omitted. For exact layouts, check returned width/height when available, or inspect the saved file."
       ),
 
     // No .default(): see gotcha 7. With one, the handler could not tell an
@@ -123,6 +126,12 @@ export const EditImageInputSchema = z
         "OpenAI models only; requires output_format png or webp (or a .png/.webp output_path). " +
           "false is accepted on every model. Default: false (opaque)."
       ),
+
+    include_preview: z.boolean().default(false).describe(
+      "Include a bounded derived JPEG preview in the tool result for clients that display MCP images. " +
+      "Transparent pixels are shown on white and navy backgrounds; alpha extrema describe the original " +
+      "8-bit pixels. Adds local processing and image payload, never another provider request. Default: false."
+    ),
 
     num_images: z
       .number()

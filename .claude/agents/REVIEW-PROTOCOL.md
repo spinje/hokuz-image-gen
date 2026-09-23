@@ -24,7 +24,7 @@ Signal over noise: a flood of speculative findings teaches the deploying agent t
 
 - **Lock files and build output** (`package-lock.json`, `dist/`). A lockfile change is a *signal* of a dependency change, not code to critique.
 - **Anything ESLint, `tsc`, or CI already enforces mechanically.** Mention at most once if it blocks merge.
-- **Recorded project decisions** in `CLAUDE.md`: JPEG-only output without transcoding, no safety-settings configuration, `num_images` as repeated requests, `auto` meaning "omit aspect_ratio", metadata-only capability flags. Don't re-litigate; flag only when the change makes a recorded decision materially worse — and say which.
+- **Recorded project decisions** in `CLAUDE.md`: JPEG-only output without transcoding, no safety-settings configuration, `num_images` as repeated requests, `auto` meaning "omit aspect_ratio" on Gemini or `size: "auto"` on OpenAI, metadata-only capability flags. Don't re-litigate; flag only when the change makes a recorded decision materially worse — and say which.
 - **Faithful copies of the established archetype.** The two tools deliberately mirror each other (defaults → validate → loop → save → format). Code that follows that shape is convention; deviation FROM it is the finding.
 - **Pre-existing issues the change doesn't touch or depend on.** (Consumers of a changed pattern ARE change-anchored — the tool-contract lens is exempt for those.)
 - **Theoretical risks without a concrete failure story.** If you can't state input → code path → wrong outcome for THIS server, it's not a finding.

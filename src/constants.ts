@@ -112,6 +112,8 @@ export const LIMITS = {
    * has. The per-model limit is `maxInputImages` in the registry.
    */
   maxInputImages: 16,
+  /** Local aggregate edit-input budget, independent of provider per-image caps. */
+  maxTotalInputImageBytes: 128 * 1024 * 1024,
   /** Minimum temperature */
   minTemperature: 0.0,
   /** Maximum temperature */
@@ -120,6 +122,8 @@ export const LIMITS = {
 
 /** Environment variable names for configuration */
 export const ENV_VARS = {
+  /** Optional output directory policy; relative output paths use this root. */
+  outputRoot: "HOKUZ_OUTPUT_ROOT",
   /** Fallback Gemini API key environment variable (accepted for compatibility) */
   googleApiKey: "GOOGLE_API_KEY",
   /** Preferred Gemini API key environment variable; checked first */

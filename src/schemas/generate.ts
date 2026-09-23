@@ -33,7 +33,7 @@ export const GenerateImageInputSchema = z
       .string()
       .min(1, "Output path is required")
       .describe(
-        "Where to save the generated image. A trailing slash, or a path that is already a directory, " +
+        "Where to save the generated image. If HOKUZ_OUTPUT_ROOT is configured, paths must stay within it and relative paths start there. A trailing slash, or a path that is already a directory, " +
           "means a timestamped file inside it; anything else is the file to write. When output_format " +
           "is omitted this path's extension chooses the format, so a .png or .webp path needs an " +
           "OpenAI model; when output_format is set, the extension is replaced to match it. An existing " +
@@ -56,7 +56,7 @@ export const GenerateImageInputSchema = z
       .enum(ASPECT_RATIOS)
       .default(DEFAULTS.aspectRatio)
       .describe(
-        `Aspect ratio. Options: ${ASPECT_RATIOS.join(", ")}. The extreme ratios (1:4, 4:1, 1:8, 8:1) are ` +
+        `Target aspect ratio; actual pixel dimensions can differ. Options: ${ASPECT_RATIOS.join(", ")}. The extreme ratios (1:4, 4:1, 1:8, 8:1) are ` +
           "supported only by gemini-3.1-flash-image; OpenAI models accept the other ten. " +
           `Default: ${DEFAULTS.aspectRatio}`
       ),
@@ -67,8 +67,9 @@ export const GenerateImageInputSchema = z
       .describe(
         `Output resolution. Options: ${RESOLUTIONS.join(", ")}. Gemini: Flash is 0.5K-4K and the only ` +
           "model with 0.5K, Lite is 1K only, Pro is 1K/2K/4K. " +
-          "OpenAI models: 1K (~1 megapixel) or 2K (~4 megapixels) only; exact pixel size is derived from " +
-          `aspect_ratio and returned in the result. Default: ${DEFAULTS.resolution}`
+          "OpenAI models: 1K (~1 megapixel) or 2K (~4 megapixels) only; requested dimensions are derived from " +
+          "aspect_ratio and rounded to multiples of 16. For exact layouts, check returned width/height " +
+          `when available, or inspect the saved file. Default: ${DEFAULTS.resolution}`
       ),
 
     // No .default(): see gotcha 7. With one, the handler could not tell an
@@ -100,6 +101,12 @@ export const GenerateImageInputSchema = z
         "OpenAI models only; requires output_format png or webp (or a .png/.webp output_path). " +
           "false is accepted on every model. Default: false (opaque)."
       ),
+
+    include_preview: z.boolean().default(false).describe(
+      "Include a bounded derived JPEG preview in the tool result for clients that display MCP images. " +
+      "Transparent pixels are shown on white and navy backgrounds; alpha extrema describe the original " +
+      "8-bit pixels. Adds local processing and image payload, never another provider request. Default: false."
+    ),
 
     num_images: z
       .number()

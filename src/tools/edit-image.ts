@@ -11,6 +11,8 @@ import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { EditImageInputSchema } from "../schemas/edit.js";
 import { ImageToolOutputSchema } from "../schemas/output.js";
 import { editImage, validateGenerationConfig } from "../providers/index.js";
+import { acquireImageOperation, throwIfImageCancelled } from "../services/image-operation.js";
+import { resolveOutputDestination } from "../services/path-policy.js";
 import {
   inferOutputFormatFromPath,
   loadInputImage,
@@ -22,7 +24,7 @@ import {
   imageToolError,
   runImageTool,
 } from "./image-tool.js";
-import { DEFAULTS } from "../constants.js";
+import { DEFAULTS, LIMITS } from "../constants.js";
 
 /**
  * Tool description for LLM discoverability
@@ -32,8 +34,10 @@ const TOOL_DESCRIPTION = `Edit images with text instructions using Google's Nano
 ${MODEL_GUIDE}
 
 Rules the schema cannot express:
-- image_paths: local paths or URLs, in the order the prompt refers to them ("first image"). Gemini models: up to 14 images, 7 MB each, jpeg/png/webp/gif/heic/heif. OpenAI models: up to 16, 50 MB each, jpeg/png/webp only. A reference image costs ~$0.01 on OpenAI and a fraction of a cent on Gemini, so prefer gemini-3.1-flash-image for compositions with 4+ references. Each image is checked for type and size before any API call; the first bad one fails the whole call.
-- aspect_ratio "auto" (the default): Gemini models keep the input's framing and composition and re-render it at resolution (1K unless set), so set 2K or 4K to keep the detail of a large input. OpenAI models re-render at a size of their own choosing near the input's ratio (roughly 1-2 megapixels), and resolution must then be omitted (an explicit resolution with auto is rejected); set a ratio to control the size, which recomposes the image. Only Gemini keeps the original framing.
+- Only one image call runs at a time per server process. SERVER_BUSY means wait for the active call to finish before retrying; no inputs were loaded or provider request started for the rejected call.
+- include_preview is optional and off by default. When true, results may include a reduced JPEG preview; nonopaque images are shown on white (left) and navy (right). The saved original is unchanged. Preview alpha measurements describe original pixels, not whether the image is a clean cutout. If preview processing is unavailable or exceeds its bounds, the image call still succeeds with a preview_warning; inspect the saved file instead of regenerating it. Clients must support MCP image content to display previews.
+- image_paths: local paths or public HTTP(S) URLs (private destinations are rejected, including redirects), in the order the prompt refers to them ("first image"). Gemini models: up to 14 images, 7 MB each, jpeg/png/webp/gif/heic/heif. OpenAI models: up to 16, 50 MB each, jpeg/png/webp only. A reference image costs ~$0.01 on OpenAI and a fraction of a cent on Gemini, so prefer gemini-3.1-flash-image for compositions with 4+ references. All references combined must fit the local ${LIMITS.maxTotalInputImageBytes / (1024 * 1024)} MiB input budget. Each image is checked for type and size before any API call; the first bad one fails the whole call.
+- aspect_ratio "auto" (the default): Gemini omits the ratio from the request and applies resolution (1K unless set). OpenAI lets the provider choose the output size; resolution must be omitted (an explicit resolution with auto is rejected). Set an explicit ratio to request a target shape. Generative edits on either provider can change composition and details; auto does not guarantee original framing or pixel-identical preservation. Inspect the saved result for changes beyond the requested edit.
 - There is no mask or inpainting: describe the region to change in the prompt and say what must stay unchanged. "Remove the background" works on any model but only replaces it; a genuinely transparent result needs an OpenAI model with transparent_background and png or webp.
 - output_path, provider-only options and num_images behave as in hokuz_generate_image; in particular a .png or .webp output_path selects that format and therefore needs an OpenAI model.
 
@@ -56,13 +60,14 @@ export function registerEditImageTool(server: McpServer): void {
       outputSchema: ImageToolOutputSchema,
       annotations: IMAGE_TOOL_ANNOTATIONS,
     },
-    async (params) => {
+    async (params, { signal }) => {
+      let release: (() => void) | undefined;
       try {
         // The SDK has already applied the schema's .default() values; these fallbacks
         // are defence in depth only. Optionality is decided by .default() in the schema.
         const model = params.model ?? DEFAULTS.model;
         const aspectRatioParam = params.aspect_ratio ?? "auto";
-        // "auto" -> omit aspect ratio so the model preserves the native ratio.
+        // "auto" -> let the provider decide the ratio/size.
         const aspectRatio =
           aspectRatioParam === "auto" ? undefined : aspectRatioParam;
         // Explicit output_format wins; otherwise the output_path's extension
@@ -79,7 +84,7 @@ export function registerEditImageTool(server: McpServer): void {
         const config: GenerationConfig = {
           model,
           aspectRatio,
-          // No schema default: "auto" plus an explicit resolution is rejected,
+          // No schema default: OpenAI rejects "auto" plus an explicit resolution,
           // which the handler could not tell from a filled-in default.
           resolution: params.resolution,
           outputFormat,
@@ -92,23 +97,33 @@ export function registerEditImageTool(server: McpServer): void {
         validateGenerationConfig(config, {
           inputImageCount: params.image_paths.length,
         });
+        throwIfImageCancelled(signal);
+        release = acquireImageOperation();
+        await resolveOutputDestination(params.output_path);
 
         // Load the input images in order; the loader checks each one's type
         // and size against the model before reading it.
         const inputImages: InputImage[] = [];
+        let remainingInputBytes = LIMITS.maxTotalInputImageBytes;
         for (const imagePath of params.image_paths) {
-          inputImages.push(await loadInputImage(imagePath, model));
+          const image = await loadInputImage(imagePath, model, signal, remainingInputBytes);
+          remainingInputBytes -= Buffer.byteLength(image.data, "base64");
+          inputImages.push(image);
         }
 
         return await runImageTool({
           outputFormat,
           outputPath: params.output_path,
           requestedCount: params.num_images ?? DEFAULTS.numImages,
-          produce: () => editImage(params.prompt, inputImages, config),
+          includePreview: params.include_preview ?? false,
+          signal,
+          produce: () => editImage(params.prompt, inputImages, config, signal),
           summary: (n) => `Successfully edited ${params.image_paths.length} image(s) and generated ${n} result(s):`,
         });
       } catch (error) {
         return imageToolError(error, "editing");
+      } finally {
+        release?.();
       }
     }
   );

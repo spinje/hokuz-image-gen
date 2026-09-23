@@ -2,6 +2,7 @@ import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import * as fs from "fs/promises";
 import * as os from "os";
 import * as path from "path";
+import sharp from "sharp";
 import { DEFAULTS } from "../../constants.js";
 
 const { editMock } = vi.hoisted(() => ({ editMock: vi.fn() }));
@@ -245,4 +246,18 @@ describe(TOOL, () => {
     );
     expect(editMock).not.toHaveBeenCalled();
   });
+});
+
+
+it("forwards include_preview only to the shared pipeline while keeping edit input order", async () => {
+  const bytes = await sharp({ create: { width: 2, height: 1, channels: 3, background: "blue" } }).jpeg().toBuffer();
+  editMock.mockResolvedValue({ images: [{ data: bytes.toString("base64"), mimeType: "image/jpeg" }] });
+  const result = await harness.callTool(TOOL, { prompt: "p", image_paths: [second, first], output_path: path.join(tmp, "preview.jpg"), include_preview: true });
+  expect(result.isError).toBeFalsy();
+  expect(result.content[2]).toMatchObject({ type: "image", mimeType: "image/jpeg" });
+  expect(editMock).toHaveBeenCalledExactlyOnceWith("p", [
+    { data: Buffer.from("second-image").toString("base64"), mimeType: "image/webp" },
+    { data: Buffer.from("first-image").toString("base64"), mimeType: "image/png" },
+  ], { model: DEFAULTS.model, aspectRatio: undefined, resolution: undefined, outputFormat: "jpeg", temperature: undefined, quality: undefined, transparentBackground: undefined }, expect.any(AbortSignal));
+  expect(await fs.readFile(path.join(tmp, "preview.jpg"))).toEqual(bytes);
 });

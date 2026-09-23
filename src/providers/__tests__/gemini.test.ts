@@ -235,6 +235,15 @@ describe("usage and estimated cost", () => {
 });
 
 describe("generateImage request shape", () => {
+  it("forwards cancellation to the SDK and does not submit already-cancelled work", async () => {
+    const controller = new AbortController();
+    createMock.mockResolvedValue({ output_image: { data: IMG_A } });
+    await generateImage("p", baseConfig, controller.signal);
+    expect(createMock.mock.calls[0][1]).toEqual({ signal: controller.signal });
+    controller.abort();
+    await expect(generateImage("p", baseConfig, controller.signal)).rejects.toMatchObject({ type: ErrorType.REQUEST_CANCELLED });
+    expect(createMock).toHaveBeenCalledTimes(1);
+  });
   it("puts image options in response_format and only temperature in generation_config", async () => {
     createMock.mockResolvedValue({ output_image: { data: IMG_A } });
 

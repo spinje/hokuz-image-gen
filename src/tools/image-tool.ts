@@ -14,8 +14,10 @@ import {
   type OutputFormat,
   type Resolution,
 } from "../constants.js";
+import { createImagePreview, PreviewUnavailable } from "../services/image-preview.js";
+import { throwIfImageCancelled } from "../services/image-operation.js";
 import type { ImageToolOutput } from "../schemas/output.js";
-import { resolveOutputPath, saveBase64Image } from "../services/file-utils.js";
+import { saveBase64Image } from "../services/file-utils.js";
 import {
   ErrorType,
   McpError,
@@ -51,7 +53,7 @@ export const MODEL_GUIDE = `Models (approximate time and cost for one 1K image):
 - gemini-3-pro-image (Nano Banana Pro): ~17s, ~${usd("gemini-3-pro-image", "1K")} (1K/2K) to ~${usd("gemini-3-pro-image", "4K")} (4K). Photorealism, hero shots, factual content.
 - gpt-image-2.5-flare (OpenAI): cost and time follow \`quality\`: low ~$0.006/10s, medium ~$0.013/14s, high ~$0.05/18s, xhigh ~$0.09/27s, max ~$0.21/46s. The cheapest image overall is flare at low. Single subjects and short text.
 - gpt-image-2.5-sunburst (OpenAI): same prices, about 1.5-2x slower (high ~30s, max ~85s). Multi-element text layouts, branding, and edits where precision matters.
-OpenAI models take 1K (~1 megapixel) or 2K (~4 megapixels, about twice the cost) at the ten base ratios; the exact pixel size is derived from the ratio. Results carry each image's pixel size and an estimated cost (Google's per-image price on Gemini, token-based on OpenAI); either is omitted rather than guessed when the response does not carry it. Gemini models produce jpeg only; OpenAI models produce jpeg, png or webp and can render a transparent background (png/webp only). A model whose provider key is not configured on the server fails at call time with an error naming the variable.`;
+OpenAI models take 1K (~1 megapixel) or 2K (~4 megapixels, about twice the cost) at the ten base ratios; requested dimensions are derived from the ratio and rounded to multiples of 16. Aspect ratios are targets: OpenAI rounding and Gemini output can produce different file ratios. For exact layouts, check returned width/height when available, or inspect the saved file. Results carry each image's pixel size and an estimated cost (Google's per-image price on Gemini, token-based on OpenAI); either is omitted rather than guessed when the response does not carry it. Gemini models produce jpeg only; OpenAI models produce jpeg, png or webp and can render a transparent background (png/webp only). A model whose provider key is not configured on the server fails at call time with an error naming the variable.`;
 
 /** Annotations shared by both tools (same file-writing, never-overwriting behaviour). */
 export const IMAGE_TOOL_ANNOTATIONS = {
@@ -66,6 +68,8 @@ export interface ImageToolRun {
   outputFormat: OutputFormat;
   outputPath: string;
   requestedCount: number;
+  includePreview?: boolean;
+  signal?: AbortSignal;
   /**
    * One provider request. The pipeline calls it up to requestedCount times and
    * relies on it to throw when it produced no image: a resolved response with
@@ -109,6 +113,8 @@ export async function runImageTool({
   outputFormat,
   outputPath,
   requestedCount,
+  includePreview = false,
+  signal,
   produce,
   summary,
 }: ImageToolRun): Promise<CallToolResult> {
@@ -123,16 +129,20 @@ export async function runImageTool({
     attempt++
   ) {
     try {
+      throwIfImageCancelled(signal);
       const response = await produce();
       collected.push(...response.images);
       successfulRequests++;
       if (response.description) descriptions.push(response.description);
       if (response.usage) usages.push(response.usage);
     } catch (err) {
+      const error = signal?.aborted
+        ? new McpError(ErrorType.REQUEST_CANCELLED, "Error: Image request cancelled; no further images will be requested.")
+        : err;
       // If we have no images yet, surface the error. Otherwise keep what
       // we got and warn that fewer than requested were produced.
-      if (collected.length === 0) throw err;
-      failureReason = err instanceof Error ? err.message : String(err);
+      if (collected.length === 0) throw error;
+      failureReason = error instanceof Error ? error.message : String(error);
       break;
     }
   }
@@ -145,8 +155,7 @@ export async function runImageTool({
 
   for (let i = 0; i < imagesToSave.length; i++) {
     const image = imagesToSave[i];
-    const filePath = await resolveOutputPath(outputPath, outputFormat, i);
-    await saveBase64Image(image.data, filePath);
+    const filePath = await saveBase64Image(image.data, outputPath, outputFormat, i);
 
     outputImages.push({
       path: filePath,
@@ -154,6 +163,35 @@ export async function runImageTool({
       width: image.width,
       height: image.height,
     });
+  }
+
+  // Save all originals first. Preview failure must never lose a paid result.
+  const previewContent: CallToolResult["content"] = [];
+  if (includePreview) {
+    for (let i = 0; i < outputImages.length; i++) {
+      const saved = outputImages[i];
+      try {
+        throwIfImageCancelled(signal);
+        const { data, ...preview } = await createImagePreview(imagesToSave[i].data, imagesToSave[i].mimeType, signal);
+        throwIfImageCancelled(signal);
+        // One summary precedes previewContent; each label precedes its image.
+        saved.preview = { ...preview, content_index: previewContent.length + 2 };
+        const background = preview.background === "white_and_navy"
+          ? "White background left; navy right."
+          : "Original opaque appearance.";
+        previewContent.push({
+          type: "text",
+          text: `Derived JPEG preview for ${saved.path} (${preview.width}x${preview.height}). ${background} ` +
+            `Original alpha: channel ${preview.alpha.has_channel ? "present" : "absent"}, min ${preview.alpha.min}, max ${preview.alpha.max} ` +
+            "(0 transparent; 255 opaque). Saved original unchanged; inspect the original for fine detail. " +
+            "This preview does not establish clean edges or preservation.",
+        }, { type: "image", mimeType: "image/jpeg", data });
+      } catch (error) {
+        const reason = signal?.aborted ? "request cancelled"
+          : error instanceof PreviewUnavailable ? error.message : "image decoding or processing failed";
+        saved.preview_warning = `Preview unavailable: ${reason}. Original saved successfully; inspect ${saved.path} without repeating the image request.`;
+      }
+    }
   }
 
   const description = descriptions.length
@@ -222,8 +260,12 @@ export async function runImageTool({
     textContent += `\n\nDescription: ${description}`;
   }
 
+  for (const image of outputImages) {
+    if (image.preview_warning) textContent += `\n\n${image.preview_warning}`;
+  }
+
   return {
-    content: [{ type: "text", text: textContent }],
+    content: [{ type: "text", text: textContent }, ...previewContent],
     structuredContent: output,
   };
 }
@@ -235,6 +277,8 @@ export async function runImageTool({
  * API_ERROR raised outside a mapper.
  */
 const RETRYABLE_BY_TYPE: Record<ErrorType, boolean> = {
+  [ErrorType.SERVER_BUSY]: true,
+  [ErrorType.REQUEST_CANCELLED]: false,
   [ErrorType.MISSING_API_KEY]: false,
   [ErrorType.INVALID_IMAGE_PATH]: false,
   [ErrorType.IMAGE_TOO_LARGE]: false,

@@ -50,26 +50,28 @@ beforeEach(() => {
 
 describe("dispatch", () => {
   it("sends a Gemini model to the Gemini provider and nowhere else", async () => {
-    await generateImage("p", geminiConfig);
-    expect(geminiGenerate).toHaveBeenCalledWith("p", geminiConfig);
+    const signal = new AbortController().signal;
+    await generateImage("p", geminiConfig, signal);
+    expect(geminiGenerate).toHaveBeenCalledWith("p", geminiConfig, signal);
     expect(openaiGenerate).not.toHaveBeenCalled();
   });
 
   it("sends an OpenAI model to the OpenAI provider and nowhere else", async () => {
     await generateImage("p", openaiConfig);
-    expect(openaiGenerate).toHaveBeenCalledWith("p", openaiConfig);
+    expect(openaiGenerate).toHaveBeenCalledWith("p", openaiConfig, undefined);
     expect(geminiGenerate).not.toHaveBeenCalled();
   });
 
   it("routes edits by the same registry entry, passing the input images through", async () => {
     const images = [{ data: "BBB", mimeType: "image/png" }];
+    const signal = new AbortController().signal;
 
-    await editImage("p", images, openaiConfig);
-    expect(openaiEdit).toHaveBeenCalledWith("p", images, openaiConfig);
+    await editImage("p", images, openaiConfig, signal);
+    expect(openaiEdit).toHaveBeenCalledWith("p", images, openaiConfig, signal);
     expect(geminiEdit).not.toHaveBeenCalled();
 
     await editImage("p", images, geminiConfig);
-    expect(geminiEdit).toHaveBeenCalledWith("p", images, geminiConfig);
+    expect(geminiEdit).toHaveBeenCalledWith("p", images, geminiConfig, undefined);
   });
 });
 

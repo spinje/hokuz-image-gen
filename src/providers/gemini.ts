@@ -5,6 +5,7 @@
  * generally-available, recommended path for the current image models.
  */
 
+import { throwIfImageCancelled } from "../services/image-operation.js";
 import { GoogleGenAI } from "@google/genai";
 import {
   DEFAULTS,
@@ -87,8 +88,8 @@ function getClient(): GoogleGenAI {
  *
  * - `mime_type` is "image/jpeg". These models output JPEG only; the API
  *   rejects any other value (verified live: "image/png" returns a 400).
- * - `aspect_ratio` is only included when defined (edit "auto" omits it so the
- *   model preserves the input image's native ratio).
+ * - `aspect_ratio` is only included when defined (edit "auto" leaves the
+ *   ratio to the model).
  * - a config without a resolution gets this provider's default.
  */
 function buildResponseFormat(config: GenerationConfig) {
@@ -248,8 +249,10 @@ function imagePriceUsd(config: GenerationConfig): number | undefined {
  */
 export async function generateImage(
   prompt: string,
-  config: GenerationConfig
+  config: GenerationConfig,
+  signal?: AbortSignal
 ): Promise<ImageResponse> {
+  throwIfImageCancelled(signal);
   const client = getClient();
 
   try {
@@ -258,10 +261,11 @@ export async function generateImage(
       input: prompt,
       response_format: buildResponseFormat(config),
       generation_config: { temperature: config.temperature ?? DEFAULTS.temperature },
-    });
+    }, { signal });
 
     return parseInteraction(interaction as InteractionLike, imagePriceUsd(config));
   } catch (error) {
+    throwIfImageCancelled(signal);
     return handleApiError(error, config.model);
   }
 }
@@ -272,8 +276,10 @@ export async function generateImage(
 export async function editImage(
   prompt: string,
   inputImages: InputImage[],
-  config: GenerationConfig
+  config: GenerationConfig,
+  signal?: AbortSignal
 ): Promise<ImageResponse> {
+  throwIfImageCancelled(signal);
   const client = getClient();
 
   try {
@@ -293,10 +299,11 @@ export async function editImage(
       input,
       response_format: buildResponseFormat(config),
       generation_config: { temperature: config.temperature ?? DEFAULTS.temperature },
-    });
+    }, { signal });
 
     return parseInteraction(interaction as InteractionLike, imagePriceUsd(config));
   } catch (error) {
+    throwIfImageCancelled(signal);
     return handleApiError(error, config.model);
   }
 }

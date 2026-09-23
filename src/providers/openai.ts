@@ -7,6 +7,7 @@
  * token; see `openaiSize` for the rule.
  */
 
+import { throwIfImageCancelled } from "../services/image-operation.js";
 import OpenAI, { APIError, toFile } from "openai";
 import type { ImagesResponse } from "openai/resources/images";
 import {
@@ -42,7 +43,7 @@ const RESOLUTION_PIXEL_AREA: Record<Resolution, number> = {
  * Derive the `size` request value from the public aspect ratio + resolution.
  *
  * Both edges are rounded to a multiple of 16, which the API requires. Without
- * an aspect ratio (edit "auto") the provider picks a size near the input's.
+ * an aspect ratio (edit "auto") the provider chooses the output size.
  */
 export function openaiSize(config: GenerationConfig): string {
   if (!config.aspectRatio) return "auto";
@@ -183,8 +184,10 @@ export function parseImagesResponse(
  */
 export async function generateImage(
   prompt: string,
-  config: GenerationConfig
+  config: GenerationConfig,
+  signal?: AbortSignal
 ): Promise<ImageResponse> {
+  throwIfImageCancelled(signal);
   const client = getClient(config.model);
 
   // Only the SDK call is mapped by handleApiError; parsing raises its own
@@ -194,8 +197,9 @@ export async function generateImage(
     response = await client.images.generate({
       ...buildCommonParams(config),
       prompt,
-    });
+    }, { signal });
   } catch (error) {
+    throwIfImageCancelled(signal);
     handleApiError(error, config.model);
   }
 
@@ -211,8 +215,10 @@ export async function generateImage(
 export async function editImage(
   prompt: string,
   inputImages: InputImage[],
-  config: GenerationConfig
+  config: GenerationConfig,
+  signal?: AbortSignal
 ): Promise<ImageResponse> {
+  throwIfImageCancelled(signal);
   const client = getClient(config.model);
 
   const image = await Promise.all(
@@ -231,8 +237,9 @@ export async function editImage(
       ...buildCommonParams(config),
       prompt,
       image,
-    });
+    }, { signal });
   } catch (error) {
+    throwIfImageCancelled(signal);
     handleApiError(error, config.model);
   }
 

@@ -53,11 +53,12 @@ export interface ProviderModule {
   label: string;
   /** Whether this provider's API key is set; never throws. */
   hasApiKey(): boolean;
-  generateImage(prompt: string, config: GenerationConfig): Promise<ImageResponse>;
+  generateImage(prompt: string, config: GenerationConfig, signal?: AbortSignal): Promise<ImageResponse>;
   editImage(
     prompt: string,
     inputImages: InputImage[],
-    config: GenerationConfig
+    config: GenerationConfig,
+    signal?: AbortSignal
   ): Promise<ImageResponse>;
 }
 
@@ -77,10 +78,11 @@ export function providerLabel(provider: Provider): string {
  */
 export async function generateImage(
   prompt: string,
-  config: GenerationConfig
+  config: GenerationConfig,
+  signal?: AbortSignal
 ): Promise<ImageResponse> {
   validateGenerationConfig(config);
-  return providerFor(config.model).generateImage(prompt, config);
+  return providerFor(config.model).generateImage(prompt, config, signal);
 }
 
 /**
@@ -89,10 +91,11 @@ export async function generateImage(
 export async function editImage(
   prompt: string,
   inputImages: InputImage[],
-  config: GenerationConfig
+  config: GenerationConfig,
+  signal?: AbortSignal
 ): Promise<ImageResponse> {
   validateGenerationConfig(config, { inputImageCount: inputImages.length });
-  return providerFor(config.model).editImage(prompt, inputImages, config);
+  return providerFor(config.model).editImage(prompt, inputImages, config, signal);
 }
 
 /**

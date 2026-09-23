@@ -3,16 +3,20 @@
  */
 
 import * as fs from "fs/promises";
-import type { Stats } from "fs";
+import { constants as fsConstants, type Stats } from "fs";
 import * as path from "path";
 import {
   FILE_EXTENSIONS,
+  LIMITS,
   IMAGE_MODEL_CAPABILITIES,
   getUnsupportedInputImageMessage,
   type ImageModel,
   type OutputFormat,
 } from "../constants.js";
 import { type InputImage, McpError, ErrorType } from "../types.js";
+import { throwIfImageCancelled } from "./image-operation.js";
+import { fetchRemoteImage } from "./remote-image.js";
+import { expandHomePath, resolveOutputDestination } from "./path-policy.js";
 
 /**
  * Generate a timestamp-based filename
@@ -41,18 +45,6 @@ async function isDirectory(filePath: string): Promise<boolean> {
   try {
     const stats = await fs.stat(filePath);
     return stats.isDirectory();
-  } catch {
-    return false;
-  }
-}
-
-/**
- * Check if a path exists
- */
-async function pathExists(filePath: string): Promise<boolean> {
-  try {
-    await fs.access(filePath);
-    return true;
   } catch {
     return false;
   }
@@ -91,103 +83,52 @@ export function inferOutputFormatFromPath(
   return OUTPUT_FORMAT_BY_EXTENSION[path.extname(outputPath).toLowerCase()];
 }
 
-/**
- * Resolve the output path for saving an image
- *
- * @param outputPath - User-provided path (file or directory)
- * @param format - Output format (jpeg, png or webp)
- * @param index - Image index for multiple images (0-based)
- * @returns Resolved absolute file path
- */
-export async function resolveOutputPath(
-  outputPath: string,
-  format: OutputFormat,
-  index: number = 0
-): Promise<string> {
-  // Expand home directory
-  const expandedPath = outputPath.replace(/^~/, process.env.HOME || "");
-  const absolutePath = path.resolve(expandedPath);
-
+/** Resolve directory intent and extension; only the exclusive write claims a name. */
+async function outputTarget(outputPath: string, format: OutputFormat) {
+  const absolutePath = await resolveOutputDestination(outputPath);
   const extension = FILE_EXTENSIONS[format];
-
-  // Treat as a directory when the path already is one, OR when the user signals
-  // directory intent with a trailing separator (path.resolve strips it, so we
-  // check the original string). A directory that does not exist yet is created.
-  const endsWithSeparator = /[\\/]$/.test(outputPath);
-  if (endsWithSeparator || (await isDirectory(absolutePath))) {
+  if (/[\\/]$/.test(outputPath) || await isDirectory(absolutePath)) {
     await ensureDirectory(absolutePath);
-    return nextFreeName(
-      absolutePath,
-      generateTimestampFilename(),
-      extension,
-      index
-    );
+    return { dir: absolutePath, baseName: generateTimestampFilename(), extension };
   }
-
-  // Check if parent directory exists
-  const parentDir = path.dirname(absolutePath);
-  if (!(await pathExists(parentDir))) {
-    // Try to create the parent directory
-    await ensureDirectory(parentDir);
-  }
-
-  // If it's a file path. Any existing extension is replaced so the saved file
-  // extension always matches the resolved output format.
-  const ext = path.extname(absolutePath);
-  const baseName = ext
-    ? path.basename(absolutePath, ext)
-    : path.basename(absolutePath);
-
-  return nextFreeName(parentDir, baseName, extension, index);
+  const dir = path.dirname(absolutePath);
+  await ensureDirectory(dir);
+  return { dir, baseName: path.basename(absolutePath, path.extname(absolutePath)), extension };
 }
 
-/**
- * The first name in `dir` that is not taken: `base.ext`, then `base-2.ext`,
- * `base-3.ext`, and so on. `index` (0-based) is where the search starts, so
- * the images of one num_images call keep their order, and an existing file
- * pushes every later one along rather than being overwritten.
- */
-async function nextFreeName(
-  dir: string,
-  baseName: string,
-  extension: string,
-  index: number
-): Promise<string> {
-  for (let n = index; ; n++) {
-    const candidate = path.join(
-      dir,
-      `${baseName}${n > 0 ? `-${n + 1}` : ""}${extension}`
-    );
-    if (!(await pathExists(candidate))) return candidate;
-  }
-}
+const MAX_NAME_ATTEMPTS = 10_000;
 
 /**
- * Save base64-encoded image data to a file
- *
- * @param base64Data - Base64-encoded image data
- * @param outputPath - Resolved output file path
- * @returns Size of the saved file in bytes
+ * Claim and write one unused filename, returning the path actually saved.
+ * Exclusive creation also protects against other server processes and dangling
+ * symlinks. A collision retries the filename, never the paid provider request.
  */
 export async function saveBase64Image(
   base64Data: string,
-  outputPath: string
-): Promise<number> {
-  try {
-    // Decode base64 to buffer
-    const buffer = Buffer.from(base64Data, "base64");
-
-    // Write to file
-    await fs.writeFile(outputPath, buffer);
-
-    return buffer.length;
-  } catch (error) {
-    throw new McpError(
-      ErrorType.FILE_WRITE_ERROR,
-      `Error: Could not write to '${outputPath}'. Check that the directory exists and you have write permissions.`,
-      error
-    );
+  outputPath: string,
+  format: OutputFormat,
+  index = 0
+): Promise<string> {
+  const { dir, baseName, extension } = await outputTarget(outputPath, format);
+  const buffer = Buffer.from(base64Data, "base64");
+  for (let n = index; n < index + MAX_NAME_ATTEMPTS; n++) {
+    const candidate = path.join(dir, `${baseName}${n > 0 ? `-${n + 1}` : ""}${extension}`);
+    try {
+      await fs.writeFile(candidate, buffer, { flag: "wx" });
+      return candidate;
+    } catch (error) {
+      if (error && typeof error === "object" && "code" in error && error.code === "EEXIST") continue;
+      throw new McpError(
+        ErrorType.FILE_WRITE_ERROR,
+        `Error: Could not write to '${candidate}'. Check directory permissions and available disk space.`,
+        error
+      );
+    }
   }
+  throw new McpError(
+    ErrorType.FILE_WRITE_ERROR,
+    `Error: Could not find a free filename near '${baseName}${extension}' after ${MAX_NAME_ATTEMPTS} attempts. Choose a different output_path.`
+  );
 }
 
 /** Input MIME type per file extension. */
@@ -214,11 +155,19 @@ const FETCH_TIMEOUT_MS = 30_000;
  */
 export async function loadInputImage(
   pathOrUrl: string,
-  model: ImageModel
+  model: ImageModel,
+  signal?: AbortSignal,
+  remainingBytes = LIMITS.maxTotalInputImageBytes
 ): Promise<InputImage> {
-  return isUrl(pathOrUrl)
-    ? fetchInputImage(pathOrUrl, model)
-    : readInputImage(pathOrUrl, model);
+  throwIfImageCancelled(signal);
+  try {
+    return await (isUrl(pathOrUrl)
+      ? fetchInputImage(pathOrUrl, model, signal, remainingBytes)
+      : readInputImage(pathOrUrl, model, signal, remainingBytes));
+  } catch (error) {
+    throwIfImageCancelled(signal);
+    throw error;
+  }
 }
 
 /** True for the schemes we fetch; anything else is treated as a file path. */
@@ -233,11 +182,11 @@ function isUrl(value: string): boolean {
 
 async function readInputImage(
   imagePath: string,
-  model: ImageModel
+  model: ImageModel,
+  signal: AbortSignal | undefined,
+  remainingBytes: number
 ): Promise<InputImage> {
-  const absolutePath = path.resolve(
-    imagePath.replace(/^~/, process.env.HOME || "")
-  );
+  const absolutePath = path.resolve(expandHomePath(imagePath));
 
   const extension = path.extname(absolutePath).toLowerCase();
   const mimeType = INPUT_MIME_BY_EXTENSION[extension];
@@ -259,12 +208,13 @@ async function readInputImage(
       `Error: Image file not found at '${imagePath}'. Ensure the path is correct and the file exists.`
     );
   }
-  assertWithinSizeLimit(stats.size, imagePath, model);
+  assertRegularInput(stats, imagePath, model, remainingBytes);
 
   try {
-    const buffer = await fs.readFile(absolutePath);
+    const buffer = await readLocalWithinLimit(absolutePath, model, signal, remainingBytes);
     return { data: buffer.toString("base64"), mimeType };
   } catch (error) {
+    if (error instanceof McpError) throw error;
     throw new McpError(
       ErrorType.INVALID_IMAGE_PATH,
       `Error: Could not read image file at '${imagePath}'. ${error instanceof Error ? error.message : String(error)}. Check the file's permissions.`
@@ -272,16 +222,50 @@ async function readInputImage(
   }
 }
 
+function assertRegularInput(stats: Stats, source: string, model: ImageModel, remainingBytes: number): void {
+  if (!stats.isFile()) throw new McpError(ErrorType.INVALID_IMAGE_PATH, `Error: Input '${source}' must be a regular file.`);
+  assertWithinSizeLimit(stats.size, source, model, remainingBytes);
+}
+
+/** Cap the actual read too: a file can grow or be replaced after path stat. */
+async function readLocalWithinLimit(source: string, model: ImageModel, signal: AbortSignal | undefined, remainingBytes: number): Promise<Buffer> {
+  throwIfImageCancelled(signal);
+  // NONBLOCK prevents a replacement FIFO from blocking open; fstat then rejects
+  // non-files. Regular-file reads are bounded and cancellation checked per chunk.
+  const handle = await fs.open(source, fsConstants.O_RDONLY | fsConstants.O_NONBLOCK);
+  try {
+    assertRegularInput(await handle.stat(), source, model, remainingBytes);
+    const limit = Math.min(IMAGE_MODEL_CAPABILITIES[model].maxInputImageBytes, remainingBytes);
+    const chunks: Buffer[] = [];
+    let received = 0;
+    for (;;) {
+      throwIfImageCancelled(signal);
+      const chunk = Buffer.allocUnsafe(Math.min(64 * 1024, limit - received + 1));
+      const { bytesRead } = await handle.read(chunk, 0, chunk.length, null);
+      if (!bytesRead) break;
+      received += bytesRead;
+      assertWithinSizeLimit(received, source, model, remainingBytes);
+      chunks.push(chunk.subarray(0, bytesRead));
+    }
+    return Buffer.concat(chunks, received);
+  } finally {
+    await handle.close();
+  }
+}
+
 async function fetchInputImage(
   imageUrl: string,
-  model: ImageModel
+  model: ImageModel,
+  signal: AbortSignal | undefined,
+  remainingBytes: number
 ): Promise<InputImage> {
   let response: Response;
   try {
-    response = await fetch(imageUrl, {
-      signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
+    response = await fetchRemoteImage(imageUrl, {
+      signal: signal ? AbortSignal.any([signal, AbortSignal.timeout(FETCH_TIMEOUT_MS)]) : AbortSignal.timeout(FETCH_TIMEOUT_MS),
     });
   } catch (error) {
+    if (error instanceof McpError) throw error;
     const reason =
       error instanceof Error && error.name === "TimeoutError"
         ? `it did not respond within ${FETCH_TIMEOUT_MS / 1000} seconds`
@@ -298,40 +282,45 @@ async function fetchInputImage(
     );
   }
 
-  if (!response.ok) {
-    throw new McpError(
-      ErrorType.INVALID_IMAGE_PATH,
-      `Error: Could not fetch image from '${imageUrl}'. Server returned status ${response.status}. Check the URL, or download the image and pass a local path.`,
-      undefined,
-      // The host failing or throttling is transient; a 4xx from it means the
-      // URL really is wrong.
-      { retryable: response.status >= 500 || response.status === 429 }
-    );
-  }
+  try {
+    if (!response.ok) {
+      throw new McpError(
+        ErrorType.INVALID_IMAGE_PATH,
+        `Error: Could not fetch image from '${imageUrl}'. Server returned status ${response.status}. Check the URL, or download the image and pass a local path.`,
+        undefined,
+        // The host failing or throttling is transient; a 4xx from it means the
+        // URL really is wrong.
+        { retryable: response.status >= 500 || response.status === 429 }
+      );
+    }
 
-  // "image/jpeg; charset=utf-8" and "IMAGE/JPEG" are the same type as far as
-  // the allowlist is concerned.
-  const mimeType = response.headers
-    .get("content-type")
-    ?.split(";")[0]
-    .trim()
-    .toLowerCase();
-  if (!mimeType) {
-    throw unknownTypeError(
-      imageUrl,
-      model,
-      "because the server did not report a content-type"
-    );
-  }
-  assertModelAcceptsType(imageUrl, mimeType, model);
+    // "image/jpeg; charset=utf-8" and "IMAGE/JPEG" are the same type as far as
+    // the allowlist is concerned.
+    const mimeType = response.headers
+      .get("content-type")
+      ?.split(";")[0]
+      .trim()
+      .toLowerCase();
+    if (!mimeType) {
+      throw unknownTypeError(
+        imageUrl,
+        model,
+        "because the server did not report a content-type"
+      );
+    }
+    assertModelAcceptsType(imageUrl, mimeType, model);
 
-  const declaredLength = Number(response.headers.get("content-length"));
-  if (declaredLength > 0) {
-    assertWithinSizeLimit(declaredLength, imageUrl, model);
-  }
+    const declaredLength = Number(response.headers.get("content-length"));
+    if (declaredLength > 0) {
+      assertWithinSizeLimit(declaredLength, imageUrl, model, remainingBytes);
+    }
 
-  const buffer = await readBodyWithinLimit(response, imageUrl, model);
-  return { data: buffer.toString("base64"), mimeType };
+    const buffer = await readBodyWithinLimit(response, imageUrl, model, remainingBytes);
+    return { data: buffer.toString("base64"), mimeType };
+  } catch (error) {
+    await response.body?.cancel().catch(() => undefined);
+    throw error;
+  }
 }
 
 /**
@@ -342,7 +331,8 @@ async function fetchInputImage(
 async function readBodyWithinLimit(
   response: Response,
   source: string,
-  model: ImageModel
+  model: ImageModel,
+  remainingBytes: number
 ): Promise<Buffer> {
   if (!response.body) {
     throw new McpError(
@@ -351,24 +341,25 @@ async function readBodyWithinLimit(
     );
   }
 
-  const limit = IMAGE_MODEL_CAPABILITIES[model].maxInputImageBytes;
   const reader = response.body.getReader();
   const chunks: Buffer[] = [];
   let received = 0;
 
-  for (;;) {
-    const { done, value } = await reader.read();
-    if (done) break;
+  try {
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
 
-    received += value.length;
-    if (received > limit) {
-      await reader.cancel();
-      assertWithinSizeLimit(received, source, model);
+      received += value.length;
+      assertWithinSizeLimit(received, source, model, remainingBytes);
+      chunks.push(Buffer.from(value));
     }
-    chunks.push(Buffer.from(value));
-  }
 
-  return Buffer.concat(chunks);
+    return Buffer.concat(chunks);
+  } finally {
+    await reader.cancel().catch(() => undefined);
+    reader.releaseLock();
+  }
 }
 
 /**
@@ -409,10 +400,19 @@ function assertModelAcceptsType(
 function assertWithinSizeLimit(
   bytes: number,
   source: string,
-  model: ImageModel
+  model: ImageModel,
+  remainingBytes: number
 ): void {
   const caps = IMAGE_MODEL_CAPABILITIES[model];
-  if (bytes <= caps.maxInputImageBytes) return;
+  if (bytes <= caps.maxInputImageBytes) {
+    if (bytes > remainingBytes) {
+      throw new McpError(
+        ErrorType.IMAGE_TOO_LARGE,
+        `Error: Image '${source}' exceeds the remaining combined input budget. All reference images in one edit must fit within ${LIMITS.maxTotalInputImageBytes / MB} MiB. Reduce their total size or number.`
+      );
+    }
+    return;
+  }
 
   const largestLimit = Math.max(
     ...Object.values(IMAGE_MODEL_CAPABILITIES).map(

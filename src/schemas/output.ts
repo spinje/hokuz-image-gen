@@ -15,6 +15,18 @@ export const ImageToolOutputSchema = z.object({
   images: z
     .array(
       z.object({
+        preview: z.object({
+          content_index: z.number().int().min(0).describe("Zero-based index of this image's derived JPEG block in content"),
+          width: z.number().int().positive().max(1024).describe("Derived preview width in pixels, not the saved image width"),
+          height: z.number().int().positive().max(512).describe("Derived preview height in pixels, not the saved image height"),
+          background: z.enum(["original", "white_and_navy"]).describe("original: opaque image; white_and_navy: the same image composited on white left and navy right"),
+          alpha: z.object({
+            has_channel: z.boolean().describe("Whether the original decoded image has an alpha channel; a channel alone does not prove transparency"),
+            min: z.number().int().min(0).max(255).describe("Minimum original 8-bit alpha; 0 is fully transparent, 255 fully opaque. 255 when there is no alpha channel"),
+            max: z.number().int().min(0).max(255).describe("Maximum original 8-bit alpha; 0 is fully transparent, 255 fully opaque. 255 when there is no alpha channel"),
+          }).describe("Alpha measurements before resizing/compositing; not a clean-cutout or preservation guarantee"),
+        }).optional().describe("Present only when include_preview produced an inline derived JPEG; the saved original remains authoritative"),
+        preview_warning: z.string().optional().describe("Requested preview unavailable; the original was saved successfully. Inspect that file rather than repeating the paid image request"),
         path: z.string().describe("File path where the image was saved; authoritative, and different from output_path when a -2, -3 suffix was needed"),
         format: z.enum(OUTPUT_FORMATS).describe("Image format"),
         width: z
@@ -81,13 +93,13 @@ export const ImageToolOutputSchema = z.object({
     .enum(ErrorType)
     .optional()
     .describe(
-      "Why the call failed, for choosing the next step. INVALID_MODEL_OPTION, INVALID_IMAGE_PATH, IMAGE_TOO_LARGE: fix the arguments. CONTENT_BLOCKED: rephrase the prompt or change the input images. API_RATE_LIMIT: wait, then retry. MISSING_API_KEY: the provider's key is missing, invalid or denied; use the other provider. API_ERROR: the provider failed the request; read retryable rather than guessing from the message. FILE_WRITE_ERROR: fix output_path. UNKNOWN_ERROR: unexpected."
+      "Why the call failed, for choosing the next step. SERVER_BUSY: another image call is active; wait for it to finish before retrying. REQUEST_CANCELLED: the caller cancelled; do not automatically retry. INVALID_MODEL_OPTION, INVALID_IMAGE_PATH, IMAGE_TOO_LARGE: fix the arguments. CONTENT_BLOCKED: rephrase the prompt or change the input images. API_RATE_LIMIT: wait, then retry. MISSING_API_KEY: the provider's key is missing, invalid or denied; use the other provider. API_ERROR: the provider failed the request; read retryable rather than guessing from the message. FILE_WRITE_ERROR: fix output_path. UNKNOWN_ERROR: unexpected."
     ),
   retryable: z
     .boolean()
     .optional()
     .describe(
-      "Whether repeating the identical call could succeed. false means it cannot: change the arguments, the prompt, or the server's configuration first. Wait before retrying when error_type is API_RATE_LIMIT."
+      "Whether repeating the identical call could succeed. false means it cannot: change the arguments, the prompt, or the server's configuration first. Wait before retrying API_RATE_LIMIT; for SERVER_BUSY, wait for the active image call to finish."
     ),
 });
 

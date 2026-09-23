@@ -93,6 +93,15 @@ describe("openaiSize", () => {
 });
 
 describe("generateImage request shape", () => {
+  it("forwards cancellation to the SDK and does not submit already-cancelled work", async () => {
+    const controller = new AbortController();
+    generateMock.mockResolvedValue(okResponse());
+    await generateImage("p", baseConfig, controller.signal);
+    expect(generateMock.mock.calls[0][1]).toEqual({ signal: controller.signal });
+    controller.abort();
+    await expect(generateImage("p", baseConfig, controller.signal)).rejects.toMatchObject({ type: ErrorType.REQUEST_CANCELLED });
+    expect(generateMock).toHaveBeenCalledTimes(1);
+  });
   it("sends one image at the derived size with an explicit quality and background", async () => {
     generateMock.mockResolvedValue(okResponse());
 

@@ -47,7 +47,7 @@ For every new or changed string that reaches `content[].text`, `structuredConten
 Any new `console.log`, `process.stdout.write`, or library that prints to stdout corrupts the MCP stream. ESLint catches the first; you check the others.
 
 ### 6. Dependencies
-A new dependency is a review point: what does it do with the network, the filesystem, and stdout? Prefer none — this server has three runtime dependencies on purpose.
+A new dependency is a review point: what does it do with the network, the filesystem, and stdout? Prefer none unless justified — this server has four required runtime dependencies and optional `sharp` for bounded, opt-in previews; decoder/import failures must not fail a saved image result.
 
 ## What NOT to Flag (lens-specific — on top of the protocol's list)
 

@@ -47,6 +47,8 @@ describe("published tool contract", () => {
         "format",
         "height",
         "path",
+        "preview",
+        "preview_warning",
         "width",
       ]);
       // usage is what a caller quotes back as "this cost $X", so its shape is
@@ -144,6 +146,7 @@ describe("published tool contract", () => {
     expect(props.aspect_ratio.default).toBe("1:1");
     expect(props.resolution.default).toBe("1K");
     expect(props.num_images.default).toBe(1);
+    expect(props.include_preview).toMatchObject({ type: "boolean", default: false });
     expect(props.output_format.enum).toEqual(["jpeg", "png", "webp"]);
     // No default: without one the handler can tell an explicit format from a
     // filled-in default and fall back to the output_path's extension.
@@ -164,6 +167,7 @@ describe("published tool contract", () => {
       { default?: unknown; maxItems?: number }
     >;
     expect(editProps.aspect_ratio.default).toBe("auto");
+    expect(editProps.include_preview).toMatchObject({ type: "boolean", default: false });
     // Edit's resolution is optional with no default (gotcha 7): "auto" plus an
     // explicit resolution is rejected, which a filled-in default would hide.
     expect(editProps.resolution).not.toHaveProperty("default");
