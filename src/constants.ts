@@ -294,11 +294,11 @@ export const IMAGE_MODEL_CAPABILITIES: Record<ImageModel, ImageModelCapabilities
 };
 
 /**
- * Pure validation helper. Returns a human-readable error message if the
+ * Pure validation helper. Returns a diagnosis and next step if the
  * combination of options is unsupported by the model, otherwise null.
  *
  * Kept free of ToolError to avoid coupling constants to the error domain;
- * callers translate the message into an ToolError.
+ * callers translate the explanation into a ToolError.
  */
 export function getUnsupportedModelOption(args: {
   model: ImageModel;

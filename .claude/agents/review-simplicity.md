@@ -35,7 +35,7 @@ Follow `.claude/agents/REVIEW-PROTOCOL.md` (read it first). Lens-specifics on to
 7. **Data shapes that obscure the invariant.** Needless optionals forcing `undefined` handling at every consumer; casts where a typed shape would delete branches; the same three fields travelling together — a type waiting to be born, flagged only when bundling deletes real noise at multiple sites.
 8. **Complexity moved, not deleted.** A refactor that rearranges the same concepts with the same branch count. Name the concrete reframing that makes branches disappear, or it isn't a finding.
 9. **Spaghetti growth in surrounding code.** One-off flags threaded into an existing handler, special cases dropped into the request loop. Judge the diff by what it does to the code around it.
-10. **Wrong home.** Capability built beside an existing seam instead of behind it (a second path-resolution rule outside `resolveOutputPath`, a second error-mapping outside `handleApiError`). Name the seam it should route through.
+10. **Wrong home.** Capability built beside an existing seam instead of behind it (a second path-resolution rule outside `resolveOutputDestination`, a second error-mapping outside `handleApiError`). Name the seam it should route through.
 
 ## What NOT to Flag (lens-specific — on top of the protocol's list)
 
