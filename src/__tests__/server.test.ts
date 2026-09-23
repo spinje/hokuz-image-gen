@@ -73,24 +73,13 @@ describe("published tool contract", () => {
         "requests_reported",
         "requests_succeeded",
       ]);
-      expect(outputProperties).toHaveProperty("warning");
-      // error_type is how the caller picks its next step, so the published
-      // list must be every type the pipeline can actually emit.
-      expect((outputProperties.error_type as { enum: string[] }).enum).toEqual(
-        Object.values(ErrorType)
-      );
-      // The enum is what the caller matches on; the describe string is what
-      // tells it what to do about each value. A tenth type would otherwise be
-      // published with no guidance at all.
-      const errorTypeGuidance = (outputProperties.error_type as { description: string })
-        .description;
-      for (const type of Object.values(ErrorType)) {
-        expect(errorTypeGuidance).toContain(type);
+      expect(outputProperties.status).toMatchObject({ enum: ["complete", "partial", "failed"] });
+      const issue = outputProperties.issue as { properties: Record<string, unknown>; required: string[] };
+      expect(issue.required.sort()).toEqual(["code", "message", "next_step"]);
+      expect(issue.properties.code).toMatchObject({ enum: Object.values(ErrorType) });
+      for (const legacy of ["success", "warning", "error", "error_type", "retryable"]) {
+        expect(outputProperties).not.toHaveProperty(legacy);
       }
-      // retryable answers what error_type cannot: whether the same call again
-      // could work. No default — it is absent on a success, not "false".
-      expect(outputProperties.retryable).toMatchObject({ type: "boolean" });
-      expect(outputProperties.retryable).not.toHaveProperty("default");
       expect(tool.annotations).toEqual({
         readOnlyHint: false,
         destructiveHint: false,

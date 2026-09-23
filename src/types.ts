@@ -108,31 +108,20 @@ export enum ErrorType {
   UNKNOWN_ERROR = "UNKNOWN_ERROR",
 }
 
-/**
- * Custom error class for MCP operations
- */
-export class McpError extends Error {
-  /** Whether retrying the identical call could succeed; undefined when the type decides. */
-  public readonly retryable?: boolean;
+/** The public explanation of a failure, shared by text and structured replies. */
+export interface ToolIssue {
+  code: ErrorType;
+  message: string;
+  next_step: string;
+}
 
-  constructor(
-    public readonly type: ErrorType,
-    message: string,
-    public readonly details?: unknown,
-    /**
-     * Set `retryable` only where the `type` alone cannot say — the provider
-     * mappers, which know the HTTP status, and the remote fetch, where one type
-     * covers both a bad URL and a timeout. `RETRYABLE_BY_TYPE` in
-     * `tools/image-tool.ts` answers for every other case.
-     *
-     * It is an object rather than a fourth positional argument so that a bare
-     * `new McpError(type, message, false)` cannot quietly land on `details` and
-     * leave the verdict unset, which is the inversion this field exists to stop.
-     */
-    options?: { retryable?: boolean }
-  ) {
-    super(message);
-    this.retryable = options?.retryable;
-    this.name = "McpError";
+/** Expected application failure. The original cause is never sent to clients. */
+export class ToolError extends Error {
+  public readonly issue: ToolIssue;
+
+  constructor(code: ErrorType, message: string, nextStep: string, cause?: unknown) {
+    super(message, { cause });
+    this.name = "ToolError";
+    this.issue = { code, message, next_step: nextStep };
   }
 }

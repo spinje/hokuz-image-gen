@@ -1,6 +1,6 @@
 /**
  * The pipeline both image tools run once their arguments are mapped and
- * validated: the num_images loop, saving, usage, the warning, the response
+ * validated: the num_images loop, saving, usage, the issue, the response
  * text and the uniform failure result.
  *
  * A tool file keeps only what is genuinely its own — the TOOL_DESCRIPTION, its
@@ -20,9 +20,10 @@ import type { ImageToolOutput } from "../schemas/output.js";
 import { saveBase64Image } from "../services/file-utils.js";
 import {
   ErrorType,
-  McpError,
+  ToolError,
   type GeneratedImage,
   type ImageResponse,
+  type ToolIssue,
   type UsageReport,
 } from "../types.js";
 
@@ -70,14 +71,8 @@ export interface ImageToolRun {
   requestedCount: number;
   includePreview?: boolean;
   signal?: AbortSignal;
-  /**
-   * One provider request. The pipeline calls it up to requestedCount times and
-   * relies on it to throw when it produced no image: a resolved response with
-   * empty `images` would count as a successful, billed request.
-   */
+  /** One paid provider request, without automatic retries. */
   produce: () => Promise<ImageResponse>;
-  /** First line of the text reply, e.g. "Successfully generated 2 image(s):". */
-  summary: (savedCount: number) => string;
 }
 
 /**
@@ -108,61 +103,53 @@ function sumUsage(usages: UsageReport[]): UsageReport | undefined {
   };
 }
 
-/** The num_images loop, saving, usage, warning, text and structured output. */
+/** Save each response before requesting more; a later failure never hides files. */
 export async function runImageTool({
-  outputFormat,
-  outputPath,
-  requestedCount,
-  includePreview = false,
-  signal,
-  produce,
-  summary,
+  outputFormat, outputPath, requestedCount, includePreview = false, signal, produce,
 }: ImageToolRun): Promise<CallToolResult> {
-  const collected: GeneratedImage[] = [];
+  const outputImages: ImageToolOutput["images"] = [];
+  const previewInputs: GeneratedImage[] = [];
   const descriptions: string[] = [];
   const usages: UsageReport[] = [];
   let successfulRequests = 0;
-  let failureReason: string | undefined;
-  for (
-    let attempt = 0;
-    collected.length < requestedCount && attempt < requestedCount;
-    attempt++
-  ) {
+  let issue: ToolIssue | undefined;
+
+  while (outputImages.length < requestedCount) {
+    let response: ImageResponse;
     try {
       throwIfImageCancelled(signal);
-      const response = await produce();
-      collected.push(...response.images);
-      successfulRequests++;
-      if (response.description) descriptions.push(response.description);
-      if (response.usage) usages.push(response.usage);
-    } catch (err) {
-      const error = signal?.aborted
-        ? new McpError(ErrorType.REQUEST_CANCELLED, "Error: Image request cancelled; no further images will be requested.")
-        : err;
-      // If we have no images yet, surface the error. Otherwise keep what
-      // we got and warn that fewer than requested were produced.
-      if (collected.length === 0) throw error;
-      failureReason = error instanceof Error ? error.message : String(error);
+      response = await produce();
+      if (!response.images.length) {
+        throw new ToolError(ErrorType.API_ERROR,
+          "The provider returned no usable image; the reason was not reported.",
+          "If another paid attempt is acceptable, submit a new request. Changing the prompt is not known to be necessary.");
+      }
+    } catch (error) {
+      issue = issueFromError(error);
       break;
     }
-  }
-
-  const usage = sumUsage(usages);
-  const imagesToSave = collected.slice(0, requestedCount);
-
-  // Process the generated images - save to files
-  const outputImages: ImageToolOutput["images"] = [];
-
-  for (let i = 0; i < imagesToSave.length; i++) {
-    const image = imagesToSave[i];
-    const filePath = await saveBase64Image(image.data, outputPath, outputFormat, i);
-
-    outputImages.push({
-      path: filePath,
-      format: outputFormat,
-      width: image.width,
-      height: image.height,
-    });
+    successfulRequests++;
+    if (response.description) descriptions.push(response.description);
+    if (response.usage) usages.push(response.usage);
+    const images = response.images.slice(0, requestedCount - outputImages.length);
+    let savedFromResponse = 0;
+    try {
+      // Even after cancellation, save images already returned by the provider.
+      for (const image of images) {
+        const filePath = await saveBase64Image(image.data, outputPath, outputFormat, outputImages.length);
+        outputImages.push({ path: filePath, format: outputFormat, width: image.width, height: image.height });
+        if (includePreview) previewInputs.push(image);
+        savedFromResponse++;
+      }
+    } catch (error) {
+      const failure = issueFromError(error);
+      issue = {
+        ...failure,
+        message: `${failure.message} Generation returned ${images.length} requested image(s) in this request, but only ${savedFromResponse} were saved.`,
+        next_step: `${failure.next_step} The unsaved image(s) cannot be retrieved through this tool; generating replacements requires another paid request.`,
+      };
+      break;
+    }
   }
 
   // Save all originals first. Preview failure must never lose a paid result.
@@ -172,7 +159,7 @@ export async function runImageTool({
       const saved = outputImages[i];
       try {
         throwIfImageCancelled(signal);
-        const { data, ...preview } = await createImagePreview(imagesToSave[i].data, imagesToSave[i].mimeType, signal);
+        const { data, ...preview } = await createImagePreview(previewInputs[i].data, previewInputs[i].mimeType, signal);
         throwIfImageCancelled(signal);
         // One summary precedes previewContent; each label precedes its image.
         saved.preview = { ...preview, content_index: previewContent.length + 2 };
@@ -194,126 +181,70 @@ export async function runImageTool({
     }
   }
 
-  const description = descriptions.length
-    ? Array.from(new Set(descriptions)).join("\n---\n")
-    : undefined;
-
-  const warning =
-    outputImages.length < requestedCount
-      ? `Requested ${requestedCount} image(s) but only ${outputImages.length} were produced.` +
-        (failureReason ? ` The failed request reported: ${failureReason}` : "")
-      : undefined;
-
-  const output: ImageToolOutput = {
-    success: true,
+  if (issue && outputImages.length) {
+    issue = { ...issue, next_step: `${issue.next_step} Keep the ${outputImages.length} saved image(s). If making another request, set num_images to ${requestedCount - outputImages.length} for only the missing images.` };
+  }
+  const usage = sumUsage(usages);
+  return formatImageResult({
+    status: issue ? (outputImages.length ? "partial" : "failed") : "complete",
     images: outputImages,
-    description,
-    usage: usage && {
-      ...(usage.inputTokens !== undefined ? { input_tokens: usage.inputTokens } : {}),
-      ...(usage.outputTokens !== undefined ? { output_tokens: usage.outputTokens } : {}),
+    ...(issue && { issue }),
+    ...(descriptions.length && { description: [...new Set(descriptions)].join("\n---\n") }),
+    ...(usage && { usage: {
+      ...(usage.inputTokens !== undefined && { input_tokens: usage.inputTokens }),
+      ...(usage.outputTokens !== undefined && { output_tokens: usage.outputTokens }),
       estimated_cost_usd: usage.estimatedCostUsd,
       cost_basis: usage.costBasis,
-      // The same two numbers the text line's scope clause uses, so a caller
-      // reading either channel sees the same scope.
       requests_succeeded: successfulRequests,
       requests_reported: usages.length,
-    },
-    warning,
-  };
+    } }),
+  }, previewContent, requestedCount);
+}
 
-  // Format response text
-  const paths = outputImages
-    .map((img) =>
-      img.width && img.height
-        ? `${img.path} (${img.width}x${img.height})`
-        : img.path
-    )
-    .join("\n  ");
-  let textContent = `${summary(outputImages.length)}\n  ${paths}`;
+/** One formatter keeps recovery facts identical for text-only and structured clients. */
+function formatImageResult(
+  output: ImageToolOutput,
+  previewContent: CallToolResult["content"] = [],
+  requestedCount?: number,
+): CallToolResult {
+  const { images, issue, usage } = output;
+  const count = requestedCount === undefined ? "" : ` of ${requestedCount} requested`;
+  const lines = [`${output.status}: ${images.length}${count} image(s) saved.`];
+  for (const image of images) {
+    lines.push(image.width && image.height ? `${image.path} (${image.width}x${image.height})` : image.path);
+  }
+  if (issue) lines.push(`\n${issue.message}`, `Next step: ${issue.next_step}`);
   if (usage) {
-    // Say so when the totals cover only some of the requests, rather
-    // than letting them read as the cost of the whole call.
-    const scope =
-      usages.length < successfulRequests
-        ? ` (reported for ${usages.length} of ${successfulRequests} requests)`
-        : "";
-    // A cost can arrive without counts (Google prices per image), so name only
-    // the counts the provider reported rather than printing an undefined.
     const counts = [
-      usage.inputTokens !== undefined ? `${usage.inputTokens} input` : undefined,
-      usage.outputTokens !== undefined ? `${usage.outputTokens} output` : undefined,
+      usage.input_tokens !== undefined ? `${usage.input_tokens} input` : undefined,
+      usage.output_tokens !== undefined ? `${usage.output_tokens} output` : undefined,
     ].filter((count) => count !== undefined);
     const tokens = counts.length ? `${counts.join(" + ")} tokens, ` : "";
-    // Name the basis here too. Counts printed next to a cost they did not
-    // produce invite exactly the arithmetic cost_basis exists to prevent, and a
-    // client that surfaces only this text would never see that field.
-    const basis =
-      usage.costBasis === "tokens"
-        ? " (from those token counts)"
-        : " (the provider's per-image price, not derived from those tokens)";
-    textContent += `\n\nUsage${scope}: ${tokens}estimated cost $${usage.estimatedCostUsd.toFixed(4)}${basis}`;
+    const basis = usage.cost_basis === "tokens" ? "from those token counts" : "the provider's per-image price, not derived from those tokens";
+    lines.push(`\nUsage (reported for ${usage.requests_reported} of ${usage.requests_succeeded} requests that returned images): ${tokens}estimated cost $${usage.estimated_cost_usd.toFixed(4)} (${basis}). Charges for failed or interrupted requests are not included.`);
   }
-  if (warning) {
-    textContent += `\n\nWarning: ${warning}`;
-  }
-  if (description) {
-    textContent += `\n\nDescription: ${description}`;
-  }
-
-  for (const image of outputImages) {
-    if (image.preview_warning) textContent += `\n\n${image.preview_warning}`;
-  }
-
+  if (output.description) lines.push(`\nDescription: ${output.description}`);
+  for (const image of images) if (image.preview_warning) lines.push(`\n${image.preview_warning}`);
   return {
-    content: [{ type: "text", text: textContent }, ...previewContent],
+    content: [{ type: "text", text: lines.join("\n") }, ...previewContent],
     structuredContent: output,
+    ...(output.status === "failed" && { isError: true }),
   };
 }
 
-/**
- * Whether a type is worth retrying when nothing about the call changes. The
- * provider mappers override API_ERROR, the one type that spans both a 500 and
- * a 400; this table is the answer for every other type and the fallback for an
- * API_ERROR raised outside a mapper.
- */
-const RETRYABLE_BY_TYPE: Record<ErrorType, boolean> = {
-  [ErrorType.SERVER_BUSY]: true,
-  [ErrorType.REQUEST_CANCELLED]: false,
-  [ErrorType.MISSING_API_KEY]: false,
-  [ErrorType.INVALID_IMAGE_PATH]: false,
-  [ErrorType.IMAGE_TOO_LARGE]: false,
-  [ErrorType.API_RATE_LIMIT]: true,
-  [ErrorType.CONTENT_BLOCKED]: false,
-  [ErrorType.FILE_WRITE_ERROR]: false,
-  [ErrorType.API_ERROR]: true,
-  [ErrorType.INVALID_MODEL_OPTION]: false,
-  [ErrorType.UNKNOWN_ERROR]: false,
-};
-
-/** The uniform failure result. `activity` is "generation" or "editing". */
-export function imageToolError(
-  error: unknown,
-  activity: string
-): CallToolResult {
-  const errorMessage =
-    error instanceof McpError
-      ? error.message
-      : `Error: Unexpected error during image ${activity}. ${error instanceof Error ? error.message : String(error)}`;
-
-  const output: ImageToolOutput = {
-    success: false,
-    images: [],
-    error: errorMessage,
-    error_type: error instanceof McpError ? error.type : ErrorType.UNKNOWN_ERROR,
-    retryable:
-      error instanceof McpError
-        ? (error.retryable ?? RETRYABLE_BY_TYPE[error.type])
-        : false,
+function issueFromError(error: unknown): ToolIssue {
+  return error instanceof ToolError ? error.issue : {
+    code: ErrorType.UNKNOWN_ERROR,
+    message: "An unexpected error prevented completion. The outcome of the interrupted operation could not be confirmed.",
+    next_step: "Keep any saved images. Do not automatically repeat the call; report the problem before trying again.",
   };
+}
 
-  return {
-    content: [{ type: "text", text: errorMessage }],
-    structuredContent: output,
-    isError: true,
-  };
+/** Handler failures occur before the shared generation pipeline starts. */
+export function imageToolError(error: unknown): CallToolResult {
+  const issue = issueFromError(error);
+  return formatImageResult({
+    status: "failed", images: [],
+    issue: error instanceof ToolError ? { ...issue, message: `${issue.message} Generation did not start.` } : issue,
+  });
 }

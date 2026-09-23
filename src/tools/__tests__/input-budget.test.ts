@@ -26,8 +26,8 @@ it("shares one input-byte budget across references and rejects before the provid
   await fs.writeFile(first, "12345"); await fs.writeFile(second, "67890");
   edit.mockResolvedValue({ images: [{ data: "YQ==", mimeType: "image/jpeg" }] });
   const args = { prompt: "p", image_paths: [first, second], output_path: path.join(tmp, "out.jpg") };
-  expect(await client.callTool("hokuz_edit_image", args)).toMatchObject({ isError: true, structuredContent: { error_type: "IMAGE_TOO_LARGE" } });
+  expect(await client.callTool("hokuz_edit_image", args)).toMatchObject({ isError: true, structuredContent: { issue: { code: "IMAGE_TOO_LARGE" } } });
   expect(edit).not.toHaveBeenCalled();
-  expect(await client.callTool("hokuz_edit_image", { ...args, image_paths: [first] })).toMatchObject({ structuredContent: { success: true } });
+  expect(await client.callTool("hokuz_edit_image", { ...args, image_paths: [first] })).toMatchObject({ structuredContent: { status: "complete" } });
   expect(edit).toHaveBeenCalledTimes(1);
 });

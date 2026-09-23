@@ -35,7 +35,7 @@ function deferred<T>() {
 describe("preview stage cancellation", () => {
   it("rejects cancellation before inspecting input", async () => {
     const controller = new AbortController(); controller.abort();
-    await expect(createImagePreview("invalid", "image/jpeg", controller.signal)).rejects.toMatchObject({ type: ErrorType.REQUEST_CANCELLED });
+    await expect(createImagePreview("invalid", "image/jpeg", controller.signal)).rejects.toMatchObject({ issue: expect.objectContaining({ code: ErrorType.REQUEST_CANCELLED }) });
     expect(decoder.open).not.toHaveBeenCalled();
     await expect(createImagePreview(input, "image/jpeg")).resolves.toMatchObject({ background: "original" });
     expect(decoder.open).toHaveBeenCalled();
@@ -45,7 +45,7 @@ describe("preview stage cancellation", () => {
     const controller = new AbortController();
     const result = createImagePreview(input, "image/jpeg", controller.signal);
     controller.abort();
-    await expect(result).rejects.toMatchObject({ type: ErrorType.REQUEST_CANCELLED });
+    await expect(result).rejects.toMatchObject({ issue: expect.objectContaining({ code: ErrorType.REQUEST_CANCELLED }) });
     expect(decoder.open).not.toHaveBeenCalled();
     await expect(createImagePreview(input, "image/jpeg")).resolves.toMatchObject({ background: "original" });
     expect(decoder.open).toHaveBeenCalled();
@@ -71,7 +71,7 @@ describe("preview stage cancellation", () => {
     const result = createImagePreview(input, "image/jpeg", controller.signal);
     let settled = false;
     void result.then(() => { settled = true; }, () => { settled = true; });
-    const rejected = expect(result).rejects.toMatchObject({ type: ErrorType.REQUEST_CANCELLED });
+    const rejected = expect(result).rejects.toMatchObject({ issue: expect.objectContaining({ code: ErrorType.REQUEST_CANCELLED }) });
     await entered.promise;
     controller.abort();
     await Promise.resolve();

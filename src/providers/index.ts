@@ -7,7 +7,7 @@
 
 import {
   IMAGE_MODEL_CAPABILITIES,
-  getUnsupportedModelOptionMessage,
+  getUnsupportedModelOption,
   type ImageModel,
   type Provider,
 } from "../constants.js";
@@ -15,7 +15,7 @@ import {
   type GenerationConfig,
   type ImageResponse,
   type InputImage,
-  McpError,
+  ToolError,
   ErrorType,
 } from "../types.js";
 import * as gemini from "./gemini.js";
@@ -29,7 +29,7 @@ export function validateGenerationConfig(
   config: GenerationConfig,
   options: { inputImageCount?: number } = {}
 ): void {
-  const message = getUnsupportedModelOptionMessage({
+  const issue = getUnsupportedModelOption({
     model: config.model,
     resolution: config.resolution,
     aspectRatio: config.aspectRatio,
@@ -39,8 +39,8 @@ export function validateGenerationConfig(
     transparentBackground: config.transparentBackground,
     inputImageCount: options.inputImageCount,
   });
-  if (message) {
-    throw new McpError(ErrorType.INVALID_MODEL_OPTION, message);
+  if (issue) {
+    throw new ToolError(ErrorType.INVALID_MODEL_OPTION, issue.message, issue.next_step);
   }
 }
 

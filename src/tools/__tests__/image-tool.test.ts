@@ -1,6 +1,6 @@
 /**
  * The pipeline in `tools/image-tool.ts` — the num_images loop, saving, usage,
- * the warning and the failure result — is shared by both tools, so it is
+ * the issue and the failure result — is shared by both tools, so it is
  * tested once, through hokuz_generate_image (the tool with the simpler
  * mapping). `generate-image.test.ts` and `edit-image.test.ts` then cover only
  * what is their own: the param -> GenerationConfig mapping, image loading, and
@@ -14,7 +14,7 @@ import * as path from "path";
 import sharp from "sharp";
 import * as previews from "../../services/image-preview.js";
 import type { ImageToolOutput } from "../../schemas/output.js";
-import { ErrorType, McpError } from "../../types.js";
+import { ErrorType, ToolError } from "../../types.js";
 
 const { generateMock } = vi.hoisted(() => ({ generateMock: vi.fn() }));
 
@@ -87,114 +87,45 @@ describe("image tool pipeline", () => {
     expect(await fs.readdir(tmp)).toEqual(["one.jpg"]);
   });
 
-  it("keeps what it has and warns when a later request fails", async () => {
-    generateMock
-      .mockResolvedValueOnce(okResponse())
-      .mockRejectedValueOnce(new McpError(ErrorType.API_RATE_LIMIT, "Error: Rate limit exceeded."));
-
-    const result = await harness.callTool(TOOL, {
-      prompt: "p",
-      output_path: tmp,
-      num_images: 3,
-    });
-
+  it("preserves the provider's recovery advice alongside partial results", async () => {
+    generateMock.mockResolvedValueOnce(okResponse()).mockRejectedValueOnce(
+      new ToolError(ErrorType.API_RATE_LIMIT, "Account limit reached.", "Wait until capacity is available.")
+    );
+    const result = await harness.callTool(TOOL, { prompt: "p", output_path: tmp, num_images: 3 });
+    const output = result.structuredContent as ImageToolOutput;
     expect(result.isError).toBeFalsy();
     expect(generateMock).toHaveBeenCalledTimes(2);
-    expect(result.structuredContent).toMatchObject({ success: true });
-    expect((result.structuredContent as { images: unknown[] }).images).toHaveLength(1);
-    expect(result.structuredContent).toMatchObject({
-      warning:
-        "Requested 3 image(s) but only 1 were produced. The failed request reported: Error: Rate limit exceeded.",
-    });
-    expect(firstText(result)).toContain(
-      "Warning: Requested 3 image(s) but only 1 were produced. The failed request reported: Error: Rate limit exceeded."
-    );
+    expect(output).toMatchObject({ status: "partial", issue: {
+      code: "API_RATE_LIMIT", message: "Account limit reached.",
+      next_step: "Wait until capacity is available. Keep the 1 saved image(s). If making another request, set num_images to 2 for only the missing images.",
+    } });
+    expect(output.images).toHaveLength(1);
+    expect(firstText(result)).toContain(output.images[0].path);
+    expect(firstText(result)).toContain(output.issue!.next_step);
+    expect(firstText(result)).toContain("1 of 3 requested image(s) saved");
   });
 
-  it("surfaces the error when the first request fails", async () => {
-    generateMock.mockRejectedValue(
-      new McpError(
-        ErrorType.CONTENT_BLOCKED,
-        "Error: No images were generated. The content may have been blocked by safety filters. Try modifying your prompt."
-      )
-    );
-
+  it("preserves a first-request error without claiming generation never started", async () => {
+    generateMock.mockRejectedValue(new ToolError(ErrorType.CONTENT_BLOCKED,
+      "The provider reported a moderation block.", "Revise the prompt."));
     const result = await harness.callTool(TOOL, { prompt: "p", output_path: tmp });
-
     expect(result.isError).toBe(true);
-    expect(firstText(result)).toContain("blocked by safety filters");
-    expect(result.structuredContent).toEqual({
-      success: false,
-      images: [],
-      error:
-        "Error: No images were generated. The content may have been blocked by safety filters. Try modifying your prompt.",
-      // The McpError's own type, so the caller can act without parsing prose.
-      error_type: "CONTENT_BLOCKED",
-      // Nothing about repeating this call would change the verdict.
-      retryable: false,
-    });
+    expect(result.structuredContent).toEqual({ status: "failed", images: [], issue: {
+      code: "CONTENT_BLOCKED", message: "The provider reported a moderation block.", next_step: "Revise the prompt.",
+    } });
+    expect(firstText(result)).toContain("Revise the prompt.");
+    expect(firstText(result)).not.toContain("Generation did not start");
   });
 
-  it("wraps a non-McpError in the tool's own 'Unexpected error' message", async () => {
-    // Every provider failure is an McpError whose message passes through as
-    // is; this is the one branch that composes a message. Edit's activity
-    // word is pinned in edit-image.test.ts.
-    generateMock.mockRejectedValue(new Error("boom"));
-
+  it("keeps raw unexpected exceptions out of the agent-facing response", async () => {
+    generateMock.mockRejectedValue(new Error("internal details boom"));
     const result = await harness.callTool(TOOL, { prompt: "p", output_path: tmp });
-
     expect(result.isError).toBe(true);
-    expect(firstText(result)).toBe("Error: Unexpected error during image generation. boom");
-    expect(result.structuredContent).toEqual({
-      success: false,
-      images: [],
-      error: "Error: Unexpected error during image generation. boom",
-      error_type: "UNKNOWN_ERROR",
-      // We have no idea what went wrong, so we do not invite a retry.
-      retryable: false,
-    });
-  });
-
-  it("lets a provider's own verdict override the type's default", async () => {
-    // API_ERROR is retryable by type, so a 4xx the mapper marked unretryable
-    // would otherwise be published as "try again" and be rejected again.
-    generateMock.mockRejectedValue(
-      new McpError(
-        ErrorType.API_ERROR,
-        "Error: OpenAI rejected the request: Invalid value. Adjust the arguments accordingly.",
-        undefined,
-        { retryable: false }
-      )
-    );
-
-    const rejected = await harness.callTool(TOOL, { prompt: "p", output_path: tmp });
-    expect(rejected.structuredContent).toMatchObject({
-      error_type: "API_ERROR",
-      retryable: false,
-    });
-
-    // The table's other true: a rate limit clears on its own, and the schema
-    // tells the caller to wait and retry, so the verdict must agree.
-    generateMock.mockRejectedValue(
-      new McpError(ErrorType.API_RATE_LIMIT, "Error: Rate limit exceeded.")
-    );
-    const rateLimited = await harness.callTool(TOOL, { prompt: "p", output_path: tmp });
-    expect(rateLimited.structuredContent).toMatchObject({
-      error_type: "API_RATE_LIMIT",
-      retryable: true,
-    });
-
-    // Without a verdict from the mapper the table answers, and for API_ERROR
-    // (a 5xx or a dropped connection) its answer is "retry".
-    generateMock.mockRejectedValue(
-      new McpError(ErrorType.API_ERROR, "Error: Gemini request failed (network): fetch failed.")
-    );
-
-    const transient = await harness.callTool(TOOL, { prompt: "p", output_path: tmp });
-    expect(transient.structuredContent).toMatchObject({
-      error_type: "API_ERROR",
-      retryable: true,
-    });
+    expect(result.structuredContent).toMatchObject({ status: "failed", images: [], issue: {
+      code: "UNKNOWN_ERROR", message: expect.stringContaining("could not be confirmed"),
+      next_step: expect.stringContaining("Do not automatically repeat"),
+    } });
+    expect(JSON.stringify(result)).not.toContain("internal details boom");
   });
 
   it("reports the provider's pixel size and sums usage across the num_images loop", async () => {
@@ -235,7 +166,7 @@ describe("image tool pipeline", () => {
     ]);
     expect(firstText(result)).toContain("(1360x768)");
     expect(firstText(result)).toContain(
-      "Usage: 30 input + 458 output tokens, estimated cost $0.0140 (from those token counts)"
+      "Usage (reported for 2 of 2 requests that returned images): 30 input + 458 output tokens, estimated cost $0.0140 (from those token counts)"
     );
   });
 
@@ -261,7 +192,7 @@ describe("image tool pipeline", () => {
 
     expect(generateMock).toHaveBeenCalledTimes(2);
     expect(firstText(result)).toContain(
-      "Usage (reported for 1 of 2 requests): 15 input + 229 output tokens, estimated cost $0.0070 (from those token counts)"
+      "Usage (reported for 1 of 2 requests that returned images): 15 input + 229 output tokens, estimated cost $0.0070 (from those token counts)"
     );
     // The same scope in the structured channel: a caller reading only that one
     // must not take the totals for the whole call's cost.
@@ -305,7 +236,7 @@ describe("image tool pipeline", () => {
       },
     });
     expect(firstText(result)).toContain(
-      "Usage: 9 input + 1481 output tokens, estimated cost $0.1250 (the provider's per-image price, not derived from those tokens)"
+      "Usage (reported for 2 of 2 requests that returned images): 9 input + 1481 output tokens, estimated cost $0.1250 (the provider's per-image price, not derived from those tokens)"
     );
   });
 
@@ -327,7 +258,7 @@ describe("image tool pipeline", () => {
       requests_reported: 1,
     });
     expect(firstText(result)).toContain(
-      "Usage: estimated cost $0.0670 (the provider's per-image price, not derived from those tokens)"
+      "Usage (reported for 1 of 1 requests that returned images): estimated cost $0.0670 (the provider's per-image price, not derived from those tokens)"
     );
     // No count is named. The basis clause still says "tokens" to deny them, so
     // match the shape a count would take rather than the bare word.
@@ -343,10 +274,10 @@ describe("image tool pipeline", () => {
     // toEqual treats an undefined-valued key as absent, which is what a JSON
     // transport delivers; the point is that neither field carries a value.
     expect(result.structuredContent).toEqual({
-      success: true,
+      status: "complete",
       images: [{ path: expect.any(String), format: "jpeg" }],
     });
-    expect(firstText(result)).not.toContain("Usage:");
+    expect(firstText(result)).not.toContain("Usage (");
     expect(firstText(result)).toContain("Successfully generated 1 image(s)");
   });
 });
@@ -371,7 +302,7 @@ describe("inline previews through MCP", () => {
     expect(generateMock).toHaveBeenCalledTimes(3);
     expect(generateMock.mock.calls[2][1]).toEqual({ model: "gemini-3.1-flash-image", aspectRatio: "1:1", resolution: "1K", outputFormat: "jpeg", temperature: undefined, quality: undefined, transparentBackground: undefined });
     const output = result.structuredContent as ImageToolOutput;
-    expect(output).toMatchObject({ success: true, images: [{ path: path.join(tmp, "out-3.jpg"), format: "jpeg", width: 1024, height: 256, preview: { content_index: 2, width: 512, height: 128, background: "original", alpha: { has_channel: false, min: 255, max: 255 } } }], usage: { estimated_cost_usd: 0.067, requests_succeeded: 1, requests_reported: 1 } });
+    expect(output).toMatchObject({ status: "complete", images: [{ path: path.join(tmp, "out-3.jpg"), format: "jpeg", width: 1024, height: 256, preview: { content_index: 2, width: 512, height: 128, background: "original", alpha: { has_channel: false, min: 255, max: 255 } } }], usage: { estimated_cost_usd: 0.067, requests_succeeded: 1, requests_reported: 1 } });
     expect(await fs.readFile(output.images[0].path)).toEqual(bytes);
     const block = result.content[output.images[0].preview!.content_index];
     expect(block.type).toBe("image");
@@ -385,16 +316,16 @@ describe("inline previews through MCP", () => {
     expect(result.content.filter(b => b.type === "text").map(b => b.text).join(" ")).not.toContain(block.data);
   });
 
-  it("preserves paid partial success and its warning when preview processing fails", async () => {
-    generateMock.mockResolvedValueOnce({ images: [{ data: IMG, mimeType: "image/jpeg", width: 1024, height: 1024 }], usage: { estimatedCostUsd: 0.067, costBasis: "per_image" } }).mockRejectedValueOnce(new McpError(ErrorType.API_RATE_LIMIT, "Error: Rate limit exceeded."));
+  it("preserves paid partial delivery and its issue when preview processing fails", async () => {
+    generateMock.mockResolvedValueOnce({ images: [{ data: IMG, mimeType: "image/jpeg", width: 1024, height: 1024 }], usage: { estimatedCostUsd: 0.067, costBasis: "per_image" } }).mockRejectedValueOnce(new ToolError(ErrorType.API_RATE_LIMIT, "Rate limit exceeded.", "Wait until capacity is available."));
     const result = await harness.callTool(TOOL, { prompt: "p", output_path: path.join(tmp, "partial.jpg"), num_images: 2, include_preview: true });
     expect(result.isError).toBeFalsy();
     expect(generateMock).toHaveBeenCalledTimes(2);
     const output = result.structuredContent as ImageToolOutput;
-    expect(output).toMatchObject({ success: true, images: [{ path: path.join(tmp, "partial.jpg"), format: "jpeg", width: 1024, height: 1024 }], usage: { estimated_cost_usd: 0.067, requests_succeeded: 1, requests_reported: 1 }, warning: "Requested 2 image(s) but only 1 were produced. The failed request reported: Error: Rate limit exceeded." });
+    expect(output).toMatchObject({ status: "partial", images: [{ path: path.join(tmp, "partial.jpg"), format: "jpeg", width: 1024, height: 1024 }], usage: { estimated_cost_usd: 0.067, requests_succeeded: 1, requests_reported: 1 }, issue: { code: "API_RATE_LIMIT", message: "Rate limit exceeded." } });
     expect(await fs.readFile(output.images[0].path)).toEqual(Buffer.from("fake-jpeg-bytes"));
     expect(output.images[0].preview_warning).toBe(`Preview unavailable: unsupported image signature or MIME type. Original saved successfully; inspect ${output.images[0].path} without repeating the image request.`);
-    expect(firstText(result)).toContain(output.warning);
+    expect(firstText(result)).toContain(output.issue!.message);
     expect(firstText(result)).toContain(output.images[0].preview_warning);
     expect(result.content).toHaveLength(1);
   });
@@ -430,7 +361,7 @@ describe("inline previews through MCP", () => {
       const result = await harness.callTool(TOOL, { prompt: "p", output_path: path.join(tmp, "no-decoder.jpg"), include_preview: true });
       expect(result.isError).toBeFalsy();
       const output = result.structuredContent as ImageToolOutput;
-      expect(output.success).toBe(true);
+      expect(output.status).toBe("complete");
       expect(output.images[0].preview_warning).toContain("optional image decoder unavailable");
       expect(firstText(result)).toContain(output.images[0].preview_warning);
       expect(await fs.readFile(output.images[0].path)).toEqual(bytes);

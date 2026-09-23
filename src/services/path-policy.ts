@@ -1,7 +1,7 @@
 import * as fs from "fs/promises";
 import * as os from "os";
 import * as path from "path";
-import { ErrorType, McpError } from "../types.js";
+import { ErrorType, ToolError } from "../types.js";
 import { ENV_VARS } from "../constants.js";
 
 /** Expand only the current user's home, never ~otheruser or a missing HOME to /. */
@@ -37,26 +37,35 @@ async function canonicalDestination(destination: string): Promise<string> {
  * after the checks. Other tools/processes need their own filesystem sandbox.
  */
 export async function resolveOutputDestination(outputPath: string): Promise<string> {
-  if (outputPath.includes("\0")) throw new McpError(ErrorType.FILE_WRITE_ERROR, "Error: output_path contains a null byte.");
+  if (outputPath.includes("\0")) throw new ToolError(ErrorType.FILE_WRITE_ERROR, "output_path contains a null byte.", "Remove the null byte from output_path.");
   const expanded = expandHomePath(outputPath);
   const configured = process.env[ENV_VARS.outputRoot];
   if (configured === undefined) return path.resolve(expanded);
+  let root: string;
   try {
     const rootPath = expandHomePath(configured);
-    if (!configured.trim() || !path.isAbsolute(rootPath)) throw new Error("HOKUZ_OUTPUT_ROOT must be an absolute directory path");
-    const root = await fs.realpath(rootPath);
-    if (!(await fs.stat(root)).isDirectory()) throw new Error("HOKUZ_OUTPUT_ROOT must be an existing directory");
-    const absolute = path.resolve(root, expanded);
-    const canonical = await canonicalDestination(absolute);
-    const relative = path.relative(root, canonical);
-    if (relative === ".." || relative.startsWith(`..${path.sep}`) || path.isAbsolute(relative)) {
-      throw new Error("output_path is outside HOKUZ_OUTPUT_ROOT (including its symlink target)");
-    }
-    return absolute;
+    if (!configured.trim() || !path.isAbsolute(rootPath)) throw new Error("Invalid root");
+    root = await fs.realpath(rootPath);
+    if (!(await fs.stat(root)).isDirectory()) throw new Error("Not a directory");
   } catch (error) {
-    throw new McpError(
-      ErrorType.FILE_WRITE_ERROR,
-      `Error: Output path rejected. Use a path within the existing HOKUZ_OUTPUT_ROOT directory. ${error instanceof Error ? error.message : "Check the output root configuration."}`
-    );
+    throw new ToolError(ErrorType.FILE_WRITE_ERROR,
+      "The server's HOKUZ_OUTPUT_ROOT configuration is not an accessible absolute directory.",
+      "Have the server operator set HOKUZ_OUTPUT_ROOT to an existing, accessible absolute directory.", error);
   }
+  const absolute = path.resolve(root, expanded);
+  let canonical: string;
+  try {
+    canonical = await canonicalDestination(absolute);
+  } catch (error) {
+    throw new ToolError(ErrorType.FILE_WRITE_ERROR,
+      `Could not resolve output_path '${outputPath}' within '${root}'.`,
+      `Use a path within '${root}' whose existing parent directories are accessible and whose symlinks have valid targets.`, error);
+  }
+  const relative = path.relative(root, canonical);
+  if (relative === ".." || relative.startsWith(`..${path.sep}`) || path.isAbsolute(relative)) {
+    throw new ToolError(ErrorType.FILE_WRITE_ERROR,
+      `output_path '${outputPath}' resolves outside the allowed directory '${root}'.`,
+      `Choose output_path within '${root}'; symlink targets must also stay inside that directory.`);
+  }
+  return absolute;
 }

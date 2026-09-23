@@ -60,11 +60,11 @@ describe(TOOL, () => {
     const saved = path.join(tmp, "lake.jpg");
     expect(await fs.readFile(saved)).toEqual(Buffer.from("fake-jpeg-bytes"));
     expect(result.structuredContent).toEqual({
-      success: true,
+      status: "complete",
       images: [{ path: saved, format: "jpeg" }],
       description: "a lake",
     });
-    expect(firstText(result)).toContain("Successfully generated 1 image(s)");
+    expect(firstText(result)).toContain("complete: 1 of 1 requested image(s) saved.");
   });
 
   it("forwards explicit params to the service", async () => {
@@ -98,7 +98,7 @@ describe(TOOL, () => {
     expect(result.isError).toBe(true);
     expect(firstText(result)).toMatch(/does not support resolution '2K'/);
     // A pre-flight rejection is an argument problem, not an API failure.
-    expect(result.structuredContent?.error_type).toBe("INVALID_MODEL_OPTION");
+    expect((result.structuredContent?.issue as { code: string })?.code).toBe("INVALID_MODEL_OPTION");
     expect(generateMock).not.toHaveBeenCalled();
   });
 
@@ -198,8 +198,8 @@ describe(TOOL, () => {
     });
 
     expect(result.isError).toBe(true);
-    expect(firstText(result)).toBe(
-      "Error: Model 'gemini-3.1-flash-image' (Nano Banana 2) does not support output_format 'png'. Supported: jpeg. Gemini models produce jpeg only; use gpt-image-2.5-flare or gpt-image-2.5-sunburst for png/webp."
+    expect(firstText(result)).toContain(
+      "Model 'gemini-3.1-flash-image' (Nano Banana 2) does not support output_format 'png'."
     );
     expect(generateMock).not.toHaveBeenCalled();
   });

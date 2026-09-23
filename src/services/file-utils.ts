@@ -9,11 +9,11 @@ import {
   FILE_EXTENSIONS,
   LIMITS,
   IMAGE_MODEL_CAPABILITIES,
-  getUnsupportedInputImageMessage,
+  getUnsupportedInputImage,
   type ImageModel,
   type OutputFormat,
 } from "../constants.js";
-import { type InputImage, McpError, ErrorType } from "../types.js";
+import { type InputImage, ToolError, ErrorType } from "../types.js";
 import { throwIfImageCancelled } from "./image-operation.js";
 import { fetchRemoteImage } from "./remote-image.js";
 import { expandHomePath, resolveOutputDestination } from "./path-policy.js";
@@ -57,10 +57,10 @@ async function ensureDirectory(dirPath: string): Promise<void> {
   try {
     await fs.mkdir(dirPath, { recursive: true });
   } catch (error) {
-    throw new McpError(
+    throw new ToolError(
       ErrorType.FILE_WRITE_ERROR,
-      `Error: Could not create directory '${dirPath}'. Check permissions.`,
-      error
+      `Could not create output directory '${dirPath}'.`,
+      fileWriteRecovery(error), error
     );
   }
 }
@@ -118,16 +118,17 @@ export async function saveBase64Image(
       return candidate;
     } catch (error) {
       if (error && typeof error === "object" && "code" in error && error.code === "EEXIST") continue;
-      throw new McpError(
+      throw new ToolError(
         ErrorType.FILE_WRITE_ERROR,
-        `Error: Could not write to '${candidate}'. Check directory permissions and available disk space.`,
-        error
+        `Could not save the image to '${candidate}'.`,
+        fileWriteRecovery(error), error
       );
     }
   }
-  throw new McpError(
+  throw new ToolError(
     ErrorType.FILE_WRITE_ERROR,
-    `Error: Could not find a free filename near '${baseName}${extension}' after ${MAX_NAME_ATTEMPTS} attempts. Choose a different output_path.`
+    `Could not find a free filename near '${baseName}${extension}'.`,
+    "Choose a different output_path."
   );
 }
 
@@ -199,31 +200,45 @@ async function readInputImage(
   }
   assertModelAcceptsType(imagePath, mimeType, model);
 
-  let stats: Stats;
   try {
-    stats = await fs.stat(absolutePath);
-  } catch {
-    throw new McpError(
-      ErrorType.INVALID_IMAGE_PATH,
-      `Error: Image file not found at '${imagePath}'. Ensure the path is correct and the file exists.`
-    );
-  }
-  assertRegularInput(stats, imagePath, model, remainingBytes);
-
-  try {
+    const stats = await fs.stat(absolutePath);
+    assertRegularInput(stats, imagePath, model, remainingBytes);
     const buffer = await readLocalWithinLimit(absolutePath, model, signal, remainingBytes);
     return { data: buffer.toString("base64"), mimeType };
   } catch (error) {
-    if (error instanceof McpError) throw error;
-    throw new McpError(
-      ErrorType.INVALID_IMAGE_PATH,
-      `Error: Could not read image file at '${imagePath}'. ${error instanceof Error ? error.message : String(error)}. Check the file's permissions.`
-    );
+    if (error instanceof ToolError) throw error;
+    switch (fileErrorCode(error)) {
+      case "ENOENT":
+        throw new ToolError(ErrorType.INVALID_IMAGE_PATH, `Image file not found at '${imagePath}'.`,
+          "Correct image_paths to point to an existing image file.", error);
+      case "EACCES": case "EPERM":
+        throw new ToolError(ErrorType.INVALID_IMAGE_PATH, `Permission denied reading image '${imagePath}'.`,
+          "Grant the server read access, or provide an accessible copy of the image.", error);
+      case "ENOTDIR":
+        throw new ToolError(ErrorType.INVALID_IMAGE_PATH, `A parent of '${imagePath}' is not a directory.`,
+          "Correct the directory components in image_paths.", error);
+      default:
+        throw new ToolError(ErrorType.INVALID_IMAGE_PATH, `Could not read image '${imagePath}'.`,
+          "Check that the file and its storage are accessible, or provide another readable copy.", error);
+    }
+  }
+}
+
+function fileErrorCode(error: unknown): unknown {
+  return error && typeof error === "object" && "code" in error ? error.code : undefined;
+}
+
+function fileWriteRecovery(error: unknown): string {
+  switch (fileErrorCode(error)) {
+    case "EACCES": case "EPERM": return "Choose an output_path the server can write to, or correct directory permissions.";
+    case "ENOSPC": case "EDQUOT": return "Free disk space or storage quota before requesting another image.";
+    case "ENOTDIR": case "EISDIR": return "Correct output_path so its parent is a directory and its filename is not an existing directory.";
+    default: return "Check the output directory's accessibility and available storage before requesting another image.";
   }
 }
 
 function assertRegularInput(stats: Stats, source: string, model: ImageModel, remainingBytes: number): void {
-  if (!stats.isFile()) throw new McpError(ErrorType.INVALID_IMAGE_PATH, `Error: Input '${source}' must be a regular file.`);
+  if (!stats.isFile()) throw new ToolError(ErrorType.INVALID_IMAGE_PATH, `Input '${source}' must be a regular file.`, "Pass an image file, not a directory or special file.");
   assertWithinSizeLimit(stats.size, source, model, remainingBytes);
 }
 
@@ -259,39 +274,18 @@ async function fetchInputImage(
   signal: AbortSignal | undefined,
   remainingBytes: number
 ): Promise<InputImage> {
-  let response: Response;
+  let response: Response | undefined;
+  const timeout = AbortSignal.timeout(FETCH_TIMEOUT_MS);
   try {
     response = await fetchRemoteImage(imageUrl, {
-      signal: signal ? AbortSignal.any([signal, AbortSignal.timeout(FETCH_TIMEOUT_MS)]) : AbortSignal.timeout(FETCH_TIMEOUT_MS),
+      signal: signal ? AbortSignal.any([signal, timeout]) : timeout,
     });
-  } catch (error) {
-    if (error instanceof McpError) throw error;
-    const reason =
-      error instanceof Error && error.name === "TimeoutError"
-        ? `it did not respond within ${FETCH_TIMEOUT_MS / 1000} seconds`
-        : error instanceof Error
-          ? error.message
-          : String(error);
-    throw new McpError(
-      ErrorType.INVALID_IMAGE_PATH,
-      `Error: Could not fetch image from '${imageUrl}': ${reason}. Check the URL, or download the image and pass a local path.`,
-      undefined,
-      // A timeout or a refused connection says nothing about the URL being
-      // wrong, and INVALID_IMAGE_PATH is otherwise a "fix the arguments" type.
-      { retryable: true }
-    );
-  }
-
-  try {
     if (!response.ok) {
-      throw new McpError(
-        ErrorType.INVALID_IMAGE_PATH,
-        `Error: Could not fetch image from '${imageUrl}'. Server returned status ${response.status}. Check the URL, or download the image and pass a local path.`,
-        undefined,
-        // The host failing or throttling is transient; a 4xx from it means the
-        // URL really is wrong.
-        { retryable: response.status >= 500 || response.status === 429 }
-      );
+      throw new ToolError(ErrorType.INVALID_IMAGE_PATH,
+        `Could not download image '${imageUrl}': the image host returned HTTP ${response.status}.`,
+        response.status >= 500 || response.status === 429 || response.status === 408
+          ? "Wait for the image host to recover before retrying, or download the image and pass a local path."
+          : "Correct the image URL or its access settings, or download the image and pass a local path.");
     }
 
     // "image/jpeg; charset=utf-8" and "IMAGE/JPEG" are the same type as far as
@@ -318,8 +312,14 @@ async function fetchInputImage(
     const buffer = await readBodyWithinLimit(response, imageUrl, model, remainingBytes);
     return { data: buffer.toString("base64"), mimeType };
   } catch (error) {
-    await response.body?.cancel().catch(() => undefined);
-    throw error;
+    await response?.body?.cancel().catch(() => undefined);
+    if (error instanceof ToolError) throw error;
+    const timedOut = timeout.aborted || (error instanceof Error && error.name === "TimeoutError");
+    throw new ToolError(ErrorType.INVALID_IMAGE_PATH,
+      timedOut
+        ? `Image download from '${imageUrl}' did not finish within ${FETCH_TIMEOUT_MS / 1000} seconds.`
+        : `Could not finish downloading image '${imageUrl}'.`,
+      "Check that the URL is accessible and serves an image, then retry, or download the image and pass a local path.", error);
   }
 }
 
@@ -335,9 +335,10 @@ async function readBodyWithinLimit(
   remainingBytes: number
 ): Promise<Buffer> {
   if (!response.body) {
-    throw new McpError(
+    throw new ToolError(
       ErrorType.INVALID_IMAGE_PATH,
-      `Error: The response from '${source}' carried no image data. Check the URL, or download the image and pass a local path.`
+      `The response from '${source}' carried no image data.`,
+      "Use a direct image URL, or download the image and pass a local path."
     );
   }
 
@@ -370,15 +371,18 @@ function unknownTypeError(
   source: string,
   model: ImageModel,
   clause: string
-): McpError {
+): ToolError {
   const caps = IMAGE_MODEL_CAPABILITIES[model];
   const supported = caps.inputMimeTypes
     .map((mime) => mime.replace("image/", ""))
     .join(", ");
 
-  return new McpError(
+  return new ToolError(
     ErrorType.INVALID_IMAGE_PATH,
-    `Error: Cannot determine the image type of '${source}' ${clause}. Supported input formats for '${model}' (${caps.label}): ${supported}. Rename or convert the image.`
+    `Cannot determine the image type of '${source}' ${clause}.`,
+    isUrl(source)
+      ? `Use a direct image URL with an image content-type header, or pass a local file in one of these formats: ${supported}.`
+      : `Use the correct file extension for its actual format, or convert the image to one of: ${supported}.`
   );
 }
 
@@ -387,13 +391,13 @@ function assertModelAcceptsType(
   mimeType: string,
   model: ImageModel
 ): void {
-  const unsupported = getUnsupportedInputImageMessage({
+  const unsupported = getUnsupportedInputImage({
     model,
     mimeType,
     path: source,
   });
   if (unsupported) {
-    throw new McpError(ErrorType.INVALID_IMAGE_PATH, unsupported);
+    throw new ToolError(ErrorType.INVALID_IMAGE_PATH, unsupported.message, unsupported.next_step);
   }
 }
 
@@ -406,9 +410,10 @@ function assertWithinSizeLimit(
   const caps = IMAGE_MODEL_CAPABILITIES[model];
   if (bytes <= caps.maxInputImageBytes) {
     if (bytes > remainingBytes) {
-      throw new McpError(
+      throw new ToolError(
         ErrorType.IMAGE_TOO_LARGE,
-        `Error: Image '${source}' exceeds the remaining combined input budget. All reference images in one edit must fit within ${LIMITS.maxTotalInputImageBytes / MB} MiB. Reduce their total size or number.`
+        `Image '${source}' needs at least ${bytes} bytes, exceeding the remaining combined input budget of ${remainingBytes} bytes (${LIMITS.maxTotalInputImageBytes / MB} MiB total).`,
+        "Reduce the total size or number of reference images."
       );
     }
     return;
@@ -424,8 +429,9 @@ function assertWithinSizeLimit(
       ? `, or use an OpenAI model (${largestLimit / MB}MB limit)`
       : "";
 
-  throw new McpError(
+  throw new ToolError(
     ErrorType.IMAGE_TOO_LARGE,
-    `Error: Image at '${source}' is ${(bytes / MB).toFixed(2)}MB, above the ${caps.maxInputImageBytes / MB}MB limit for '${model}' (${caps.label}). Resize it${alternative}.`
+    `Image at '${source}' is ${(bytes / MB).toFixed(2)}MB, above the ${caps.maxInputImageBytes / MB}MB limit for '${model}' (${caps.label}).`,
+    `Resize or compress it${alternative}.`
   );
 }

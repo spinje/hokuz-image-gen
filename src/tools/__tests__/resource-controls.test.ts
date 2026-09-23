@@ -44,9 +44,9 @@ describe("image operation admission", () => {
     vi.stubEnv("HOKUZ_OUTPUT_ROOT", path.dirname(a.output));
     mocks.generate.mockResolvedValue(generated);
     const rejected = await a.client.callTool("hokuz_generate_image", { prompt: "p", output_path: b.output });
-    expect(rejected).toMatchObject({ isError: true, structuredContent: { error_type: "FILE_WRITE_ERROR" } });
+    expect(rejected).toMatchObject({ isError: true, structuredContent: { issue: { code: "FILE_WRITE_ERROR" } } });
     expect(mocks.generate).not.toHaveBeenCalled();
-    expect(await a.client.callTool("hokuz_generate_image", { prompt: "p", output_path: a.output })).toMatchObject({ structuredContent: { success: true } });
+    expect(await a.client.callTool("hokuz_generate_image", { prompt: "p", output_path: a.output })).toMatchObject({ structuredContent: { status: "complete" } });
     expect(mocks.generate).toHaveBeenCalledTimes(1);
   });
   it("holds the shared slot through preview work and rejects edit before reading its input", async () => {
@@ -60,14 +60,14 @@ describe("image operation admission", () => {
       const busy = await b.client.callTool("hokuz_edit_image", {
         prompt: "p", output_path: b.output, image_paths: [path.join(path.dirname(b.output), "absent.png")],
       });
-      expect(busy).toMatchObject({ isError: true, structuredContent: { error_type: "SERVER_BUSY", retryable: true, images: [] } });
+      expect(busy).toMatchObject({ isError: true, structuredContent: { issue: { code: "SERVER_BUSY" }, images: [] } });
       expect(mocks.edit).not.toHaveBeenCalled();
       expect(mocks.generate).toHaveBeenCalledTimes(1);
     } finally {
       finish.resolve({ data: "YQ==", width: 1, height: 1, background: "original", alpha: { has_channel: false, min: 255, max: 255 } });
-      expect(await first).toMatchObject({ structuredContent: { success: true } });
+      expect(await first).toMatchObject({ structuredContent: { status: "complete" } });
     }
-    expect(await b.client.callTool("hokuz_generate_image", { prompt: "p", output_path: b.output })).toMatchObject({ structuredContent: { success: true } });
+    expect(await b.client.callTool("hokuz_generate_image", { prompt: "p", output_path: b.output })).toMatchObject({ structuredContent: { status: "complete" } });
     expect(mocks.generate).toHaveBeenCalledTimes(2);
   });
 
@@ -75,7 +75,7 @@ describe("image operation admission", () => {
     const a = await setup();
     mocks.generate.mockRejectedValueOnce(new Error("provider failed")).mockResolvedValueOnce(generated);
     expect(await a.client.callTool("hokuz_generate_image", { prompt: "p", output_path: a.output })).toMatchObject({ isError: true });
-    expect(await a.client.callTool("hokuz_generate_image", { prompt: "p", output_path: a.output })).toMatchObject({ structuredContent: { success: true } });
+    expect(await a.client.callTool("hokuz_generate_image", { prompt: "p", output_path: a.output })).toMatchObject({ structuredContent: { status: "complete" } });
     expect(mocks.generate).toHaveBeenCalledTimes(2);
   });
 });
@@ -135,9 +135,9 @@ describe("request cancellation", () => {
     const produce = vi.fn(async () => { controller.abort(); return generated; });
     const result = await runImageTool({
       outputFormat: "jpeg", outputPath: a.output, requestedCount: 3, includePreview: true,
-      signal: controller.signal, produce, summary: n => `Saved ${n}`,
+      signal: controller.signal, produce,
     });
-    expect(result.structuredContent).toMatchObject({ success: true, warning: expect.stringContaining("cancelled") });
+    expect(result.structuredContent).toMatchObject({ status: "partial", issue: { code: "REQUEST_CANCELLED", message: expect.stringContaining("cancelled") } });
     expect(await fs.readFile(a.output, "utf8")).toBe("tiny fixture");
     expect(produce).toHaveBeenCalledTimes(1);
     expect(mocks.preview).not.toHaveBeenCalled();

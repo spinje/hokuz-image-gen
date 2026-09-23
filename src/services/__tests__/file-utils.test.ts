@@ -81,10 +81,10 @@ describe("saveBase64Image naming", () => {
 
   it("bounds name collisions and does not retry unrelated write failures", async () => {
     const write = vi.spyOn(fs, "writeFile").mockRejectedValue(Object.assign(new Error("exists"), { code: "EEXIST" }));
-    await expect(save(path.join(tmp, "full.jpg"), "jpeg", 2)).rejects.toMatchObject({ type: ErrorType.FILE_WRITE_ERROR, message: expect.stringContaining("10000 attempts") });
+    await expect(save(path.join(tmp, "full.jpg"), "jpeg", 2)).rejects.toMatchObject({ issue: expect.objectContaining({ code: ErrorType.FILE_WRITE_ERROR }), message: expect.stringContaining("Could not find a free filename") });
     expect(write).toHaveBeenCalledTimes(10_000);
     write.mockClear().mockRejectedValue(Object.assign(new Error("denied"), { code: "EACCES" }));
-    await expect(save(path.join(tmp, "denied.jpg"), "jpeg")).rejects.toMatchObject({ type: ErrorType.FILE_WRITE_ERROR, message: expect.stringContaining("Could not write") });
+    await expect(save(path.join(tmp, "denied.jpg"), "jpeg")).rejects.toMatchObject({ issue: expect.objectContaining({ code: ErrorType.FILE_WRITE_ERROR }), message: expect.stringContaining("Could not save") });
     expect(write).toHaveBeenCalledTimes(1);
   });
   it("treats an existing directory as a directory and generates a timestamped name", async () => {
@@ -198,7 +198,7 @@ describe("inferOutputFormatFromPath", () => {
 describe("loadInputImage", () => {
   it("rejects metadata above the remaining budget before opening the local file", async () => {
     const source = path.join(tmp, "budget.png"); await fs.writeFile(source, "12345");
-    await expect(loadInputImage(source, OPENAI, undefined, 4)).rejects.toMatchObject({ type: ErrorType.IMAGE_TOO_LARGE });
+    await expect(loadInputImage(source, OPENAI, undefined, 4)).rejects.toMatchObject({ issue: expect.objectContaining({ code: ErrorType.IMAGE_TOO_LARGE }) });
     expect(openSpy).not.toHaveBeenCalled();
     expect(await loadInputImage(source, OPENAI, undefined, 5)).toMatchObject({ data: Buffer.from("12345").toString("base64") });
     expect(openSpy).toHaveBeenCalledTimes(1);
@@ -217,7 +217,7 @@ describe("loadInputImage", () => {
       vi.spyOn(handle, "close").mockImplementation(async () => { await close(); closed = true; });
       return handle;
     });
-    await expect(loadInputImage(source, OPENAI, undefined, 4)).rejects.toMatchObject({ type: ErrorType.IMAGE_TOO_LARGE });
+    await expect(loadInputImage(source, OPENAI, undefined, 4)).rejects.toMatchObject({ issue: expect.objectContaining({ code: ErrorType.IMAGE_TOO_LARGE }) });
     expect(closed).toBe(true);
     expect(await fs.readFile(source, "utf8")).toBe("12345");
   });
@@ -228,7 +228,7 @@ describe("loadInputImage", () => {
       start(controller) { controller.enqueue(Buffer.from("123")); controller.enqueue(Buffer.from("45")); controller.enqueue(Buffer.from("6")); controller.close(); },
       cancel: cancelled,
     }), { headers: { "content-type": "image/png" } }));
-    await expect(loadInputImage("https://example.com/budget.png", OPENAI, undefined, 4)).rejects.toMatchObject({ type: ErrorType.IMAGE_TOO_LARGE });
+    await expect(loadInputImage("https://example.com/budget.png", OPENAI, undefined, 4)).rejects.toMatchObject({ issue: expect.objectContaining({ code: ErrorType.IMAGE_TOO_LARGE }) });
     expect(cancelled).toHaveBeenCalledTimes(1);
   });
 
@@ -242,7 +242,7 @@ describe("loadInputImage", () => {
       vi.spyOn(handle, "stat").mockImplementationOnce(async () => { const result = await stat(); controller.abort(); return result; });
       return handle;
     });
-    await expect(loadInputImage(source, OPENAI, controller.signal)).rejects.toMatchObject({ type: ErrorType.REQUEST_CANCELLED });
+    await expect(loadInputImage(source, OPENAI, controller.signal)).rejects.toMatchObject({ issue: expect.objectContaining({ code: ErrorType.REQUEST_CANCELLED }) });
     expect(openSpy).toHaveBeenCalledTimes(1);
     expect(readCalls()).toBe(0);
   });
@@ -252,8 +252,8 @@ describe("loadInputImage", () => {
     const named = path.join(tmp, "notes.txt");
     await expect(loadInputImage(named, GEMINI)).rejects.toThrowError(
       expect.objectContaining({
-        type: ErrorType.INVALID_IMAGE_PATH,
-        message: `Error: Cannot determine the image type of '${named}' from its extension '.txt'. Supported input formats for 'gemini-3.1-flash-image' (Nano Banana 2): ${GEMINI_FORMATS}. Rename or convert the image.`,
+        issue: expect.objectContaining({ code: ErrorType.INVALID_IMAGE_PATH }),
+        message: `Cannot determine the image type of '${named}' from its extension '.txt'.`,
       })
     );
 
@@ -272,7 +272,7 @@ describe("loadInputImage", () => {
 
     await expect(loadInputImage(gif, OPENAI)).rejects.toThrowError(
       expect.objectContaining({
-        type: ErrorType.INVALID_IMAGE_PATH,
+        issue: expect.objectContaining({ code: ErrorType.INVALID_IMAGE_PATH }),
         message: expect.stringContaining("does not accept image/gif input"),
       })
     );
@@ -292,8 +292,8 @@ describe("loadInputImage", () => {
 
     await expect(loadInputImage(big, GEMINI)).rejects.toThrowError(
       expect.objectContaining({
-        type: ErrorType.IMAGE_TOO_LARGE,
-        message: `Error: Image at '${big}' is 7.00MB, above the 7MB limit for 'gemini-3.1-flash-image' (Nano Banana 2). Resize it, or use an OpenAI model (50MB limit).`,
+        issue: expect.objectContaining({ code: ErrorType.IMAGE_TOO_LARGE }),
+        message: `Image at '${big}' is 7.00MB, above the 7MB limit for 'gemini-3.1-flash-image' (Nano Banana 2).`,
       })
     );
     expect(openSpy).not.toHaveBeenCalled();
@@ -306,7 +306,7 @@ describe("loadInputImage", () => {
   it("reports a missing file as a path error once the type is known", async () => {
     await expect(loadInputImage(path.join(tmp, "missing.png"), GEMINI)).rejects.toThrowError(
       expect.objectContaining({
-        type: ErrorType.INVALID_IMAGE_PATH,
+        issue: expect.objectContaining({ code: ErrorType.INVALID_IMAGE_PATH }),
         message: expect.stringContaining("Image file not found"),
       })
     );
@@ -345,8 +345,11 @@ describe("loadInputImage", () => {
 
     await expect(loadInputImage("https://example.com/pic", GEMINI)).rejects.toThrowError(
       expect.objectContaining({
-        type: ErrorType.INVALID_IMAGE_PATH,
-        message: `Error: Cannot determine the image type of 'https://example.com/pic' because the server did not report a content-type. Supported input formats for 'gemini-3.1-flash-image' (Nano Banana 2): ${GEMINI_FORMATS}. Rename or convert the image.`,
+        issue: {
+          code: ErrorType.INVALID_IMAGE_PATH,
+          message: "Cannot determine the image type of 'https://example.com/pic' because the server did not report a content-type.",
+          next_step: `Use a direct image URL with an image content-type header, or pass a local file in one of these formats: ${GEMINI_FORMATS}.`,
+        },
       })
     );
   });
@@ -371,7 +374,7 @@ describe("loadInputImage", () => {
 
     await expect(loadInputImage("https://example.com/big.png", GEMINI)).rejects.toThrowError(
       expect.objectContaining({
-        type: ErrorType.IMAGE_TOO_LARGE,
+        issue: expect.objectContaining({ code: ErrorType.IMAGE_TOO_LARGE }),
         message: expect.stringContaining("above the 7MB limit for 'gemini-3.1-flash-image'"),
       })
     );
@@ -388,7 +391,7 @@ describe("loadInputImage", () => {
 
     await expect(loadInputImage("https://example.com/lying.png", GEMINI)).rejects.toThrowError(
       expect.objectContaining({
-        type: ErrorType.IMAGE_TOO_LARGE,
+        issue: expect.objectContaining({ code: ErrorType.IMAGE_TOO_LARGE }),
         message: expect.stringContaining("above the 7MB limit"),
       })
     );
@@ -413,8 +416,8 @@ describe("loadInputImage", () => {
 
     await expect(loadInputImage("https://example.com/missing.png", GEMINI)).rejects.toThrowError(
       expect.objectContaining({
-        type: ErrorType.INVALID_IMAGE_PATH,
-        message: expect.stringContaining("status 404"),
+        issue: expect.objectContaining({ code: ErrorType.INVALID_IMAGE_PATH }),
+        message: expect.stringContaining("HTTP 404"),
       })
     );
   });
@@ -424,20 +427,44 @@ describe("loadInputImage", () => {
     // failing host would tell the caller to rewrite a URL that is already right.
     vi.stubGlobal("fetch", vi.fn().mockRejectedValue(Object.assign(new Error("t"), { name: "TimeoutError" })));
     await expect(loadInputImage("https://example.com/pic.jpg", GEMINI)).rejects.toMatchObject({
-      type: ErrorType.INVALID_IMAGE_PATH,
-      retryable: true,
+      issue: { code: ErrorType.INVALID_IMAGE_PATH, message: expect.stringContaining("did not finish within 30 seconds"), next_step: expect.stringContaining("then retry") },
     });
 
     stubFetch(new Response(null, { status: 503 }));
     await expect(loadInputImage("https://example.com/pic.jpg", GEMINI)).rejects.toMatchObject({
-      retryable: true,
+      issue: { next_step: expect.stringContaining("Wait for the image host to recover") },
     });
 
     // A 404 from the host is the URL being wrong, and repeating it cannot help.
     stubFetch(new Response(null, { status: 404 }));
     await expect(loadInputImage("https://example.com/pic.jpg", GEMINI)).rejects.toMatchObject({
-      retryable: false,
+      issue: { next_step: expect.stringContaining("Correct the image URL") },
     });
+  });
+
+  it("maps a body interruption as a download failure, just like a connection failure", async () => {
+    const stream = new ReadableStream({ start(controller) {
+      controller.enqueue(new Uint8Array([1, 2]));
+      controller.error(new Error("internal socket failure"));
+    } });
+    stubFetch(new Response(stream, { headers: { "content-type": "image/png" } }));
+    await expect(loadInputImage("https://example.com/image.png", GEMINI)).rejects.toMatchObject({ issue: {
+      code: ErrorType.INVALID_IMAGE_PATH,
+      message: "Could not finish downloading image 'https://example.com/image.png'.",
+      next_step: expect.stringContaining("then retry"),
+    } });
+  });
+
+  it("does not misreport a stat permission error as a missing file", async () => {
+    const stat = vi.spyOn(fs, "stat").mockRejectedValueOnce(Object.assign(new Error("denied"), { code: "EACCES" }));
+    try {
+      await expect(loadInputImage("private.png", GEMINI)).rejects.toMatchObject({ issue: {
+        code: ErrorType.INVALID_IMAGE_PATH,
+        message: "Permission denied reading image 'private.png'.",
+        next_step: expect.stringContaining("read access"),
+      } });
+      expect(openSpy).not.toHaveBeenCalled();
+    } finally { stat.mockRestore(); }
   });
 
   it("does not treat non-http schemes as URLs", async () => {
@@ -445,7 +472,7 @@ describe("loadInputImage", () => {
     vi.stubGlobal("fetch", fetchMock);
 
     await expect(loadInputImage("file:///etc/hosts", GEMINI)).rejects.toThrowError(
-      expect.objectContaining({ type: ErrorType.INVALID_IMAGE_PATH })
+      expect.objectContaining({ issue: expect.objectContaining({ code: ErrorType.INVALID_IMAGE_PATH }) })
     );
     expect(fetchMock).not.toHaveBeenCalled();
   });

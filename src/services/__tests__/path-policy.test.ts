@@ -22,16 +22,16 @@ describe("output root", () => {
     const outside = path.join(tmp, "outside"); await fs.mkdir(outside);
     await fs.symlink(outside, path.join(root, "escape"), "dir");
     for (const target of ["../outside/bad.png", path.join(outside, "bad.png"), "escape/bad.png"]) {
-      await expect(saveBase64Image(bytes, target, "png")).rejects.toMatchObject({ type: "FILE_WRITE_ERROR" });
+      await expect(saveBase64Image(bytes, target, "png")).rejects.toMatchObject({ issue: { code: "FILE_WRITE_ERROR" } });
     }
     expect(await fs.readdir(outside)).toEqual([]);
   });
 
   it("rejects a dangling symlink and invalid root configuration", async () => {
     await fs.symlink(path.join(tmp, "missing"), path.join(root, "dangling"), "dir");
-    await expect(resolveOutputDestination("dangling/new.png")).rejects.toMatchObject({ type: "FILE_WRITE_ERROR" });
+    await expect(resolveOutputDestination("dangling/new.png")).rejects.toMatchObject({ issue: { code: "FILE_WRITE_ERROR" } });
     vi.stubEnv("HOKUZ_OUTPUT_ROOT", "");
-    await expect(resolveOutputDestination("photo.png")).rejects.toMatchObject({ type: "FILE_WRITE_ERROR" });
+    await expect(resolveOutputDestination("photo.png")).rejects.toMatchObject({ issue: { code: "FILE_WRITE_ERROR" } });
     vi.stubEnv("HOKUZ_OUTPUT_ROOT", undefined);
     expect(await resolveOutputDestination("photo.png")).toBe(path.resolve("photo.png"));
   });

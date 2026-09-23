@@ -5,6 +5,7 @@
  * generally-available, recommended path for the current image models.
  */
 
+import { providerRequestError } from "./errors.js";
 import { throwIfImageCancelled } from "../services/image-operation.js";
 import { GoogleGenAI } from "@google/genai";
 import {
@@ -20,7 +21,7 @@ import {
   type ImageResponse,
   type GeneratedImage,
   type InputImage,
-  McpError,
+  ToolError,
   ErrorType,
 } from "../types.js";
 
@@ -58,9 +59,10 @@ function getApiKey(): string {
   const apiKey = resolveApiKey();
 
   if (!apiKey) {
-    throw new McpError(
+    throw new ToolError(
       ErrorType.MISSING_API_KEY,
-      `Error: ${ENV_VARS.geminiApiKey} is not set, so Gemini models cannot be used. Set ${ENV_VARS.geminiApiKey} (or ${ENV_VARS.googleApiKey}) in the MCP server's environment — get a key at https://aistudio.google.com/ — or choose an OpenAI model.`
+      "The server has no Gemini API key.",
+      `Have the server operator set ${ENV_VARS.geminiApiKey} (or ${ENV_VARS.googleApiKey}) in the server environment. Do not put API keys in tool arguments.`
     );
   }
 
@@ -211,9 +213,10 @@ export function parseInteraction(
   }
 
   if (images.length === 0) {
-    throw new McpError(
-      ErrorType.CONTENT_BLOCKED,
-      "Error: No images were generated. The content may have been blocked by safety filters. Try modifying your prompt."
+    throw new ToolError(
+      ErrorType.API_ERROR,
+      "Gemini returned no usable image; the reason was not reported.",
+      "If another paid attempt is acceptable, submit a new request. Changing the prompt is not known to be necessary; the original request may still incur a charge."
     );
   }
 
@@ -261,12 +264,11 @@ export async function generateImage(
       input: prompt,
       response_format: buildResponseFormat(config),
       generation_config: { temperature: config.temperature ?? DEFAULTS.temperature },
-    }, { signal });
+    }, { signal, maxRetries: 0 });
 
     return parseInteraction(interaction as InteractionLike, imagePriceUsd(config));
   } catch (error) {
-    throwIfImageCancelled(signal);
-    return handleApiError(error, config.model);
+    return handleApiError(error, config.model, signal);
   }
 }
 
@@ -299,12 +301,11 @@ export async function editImage(
       input,
       response_format: buildResponseFormat(config),
       generation_config: { temperature: config.temperature ?? DEFAULTS.temperature },
-    }, { signal });
+    }, { signal, maxRetries: 0 });
 
     return parseInteraction(interaction as InteractionLike, imagePriceUsd(config));
   } catch (error) {
-    throwIfImageCancelled(signal);
-    return handleApiError(error, config.model);
+    return handleApiError(error, config.model, signal);
   }
 }
 
@@ -350,8 +351,7 @@ function apiMessage(error: GeminiApiErrorLike): string {
 }
 
 /**
- * The HTTP status of a failed request, or undefined when it never reached
- * Google. `status` is a number on every shape captured so far, but the class
+ * The HTTP status of a failed request, or undefined when no HTTP status is available. `status` is a number on every shape captured so far, but the class
  * that carries it is internal to the SDK, so a bump could rename or re-type it.
  * Falling back to the `"<status> "` prefix the SDK puts on every HTTP message
  * keeps a key rejection from being misread as a network failure worth retrying.
@@ -365,83 +365,18 @@ function resolveStatus(error: GeminiApiErrorLike): number | undefined {
   return prefixed ? Number(prefixed[1]) : undefined;
 }
 
-/**
- * Map a Gemini SDK error to an McpError whose message says what to do next.
- *
- * Classification is by HTTP status, like the OpenAI module's. The two text
- * checks are deliberate exceptions: a rejected API key comes back as a 400 with
- * no distinguishing code, and a safety block has no code either (no real block
- * was triggered while capturing these shapes, so the wording is a best guess).
- */
-function handleApiError(error: unknown, model: ImageModel): never {
-  // Preserve McpErrors we raised ourselves (e.g. validation, content blocked).
-  if (error instanceof McpError) {
-    throw error;
-  }
-
+/** Keep the Gemini-specific response shapes here; share recovery policy. */
+function handleApiError(error: unknown, model: ImageModel, signal?: AbortSignal): never {
+  if (error instanceof ToolError) throw error;
   const apiError = (error ?? {}) as GeminiApiErrorLike;
-  const message = apiMessage(apiError);
+  const reason = apiMessage(apiError);
   const status = resolveStatus(apiError);
-
-  if (status === 400) {
-    const body = typeof apiError.body === "string" ? apiError.body : "";
-    if (/api key/i.test(message) || /api key/i.test(body)) {
-      throw new McpError(
-        ErrorType.MISSING_API_KEY,
-        `Error: Gemini rejected the API key: ${message}. Check ${ENV_VARS.geminiApiKey} (or ${ENV_VARS.googleApiKey}), or choose an OpenAI model.`,
-        error
-      );
-    }
-    if (/safety|blocked/i.test(message)) {
-      throw new McpError(
-        ErrorType.CONTENT_BLOCKED,
-        `Error: Gemini's safety filters blocked this request: ${message}. Rephrase the prompt or change the input images.`,
-        error
-      );
-    }
-  }
-
-  switch (status) {
-    case 401:
-    case 403:
-      throw new McpError(
-        ErrorType.MISSING_API_KEY,
-        `Error: Gemini denied the request (${status}): ${message}. Check ${ENV_VARS.geminiApiKey} (or ${ENV_VARS.googleApiKey}) and the project's billing, or choose an OpenAI model.`,
-        error
-      );
-    case 404:
-      throw new McpError(
-        ErrorType.API_ERROR,
-        `Error: Gemini reports model '${model}' was not found (${message}). The model ID may have been retired, or this resolution is not offered for it; try another Gemini model or an OpenAI model.`,
-        error,
-        { retryable: false }
-      );
-    case 429:
-      throw new McpError(
-        ErrorType.API_RATE_LIMIT,
-        `Error: Gemini rate limit exceeded (429): ${message}. Wait a minute and retry, lower num_images, or use an OpenAI model.`,
-        error
-      );
-  }
-
-  // 408 and 409 can clear on their own, so they fall through to the retryable
-  // tail; every other 4xx is the request itself being wrong.
-  if (status !== undefined && status >= 400 && status < 500 && status !== 408 && status !== 409) {
-    throw new McpError(
-      ErrorType.API_ERROR,
-      `Error: Gemini rejected the request (${status}): ${message}. Adjust the arguments accordingly.`,
-      error,
-      // Every 4xx that reaches here, 400 included, is the request itself being
-      // wrong; 408/409 and the 5xx and no-status tail below stay retryable.
-      { retryable: false }
-    );
-  }
-
-  // 5xx, and no status at all when the request never reached Google
-  // (connection, timeout, abort).
-  throw new McpError(
-    ErrorType.API_ERROR,
-    `Error: Gemini request failed (${status ?? "network"}): ${message}. Retry; if it persists, try an OpenAI model.`,
-    error
-  );
+  throw providerRequestError("Gemini", model, {
+    status,
+    reason,
+    keyRejected: status === 400 && /api key/i.test(reason + (typeof apiError.body === "string" ? apiError.body : "")),
+    // Require an explicit moderation statement, not merely the word "blocked".
+    contentBlocked: status === 400 && /(?:blocked by (?:the )?(?:safety|content)|(?:safety|content moderation|safety filters?).*(?:blocked|rejected))/i.test(reason),
+    cancelled: signal?.aborted,
+  }, error);
 }

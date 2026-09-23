@@ -80,7 +80,7 @@ describe("validation before dispatch", () => {
     await expect(
       generateImage("p", { ...geminiConfig, model: "gemini-3.1-flash-lite-image", resolution: "2K" })
     ).rejects.toThrowError(
-      expect.objectContaining({ type: ErrorType.INVALID_MODEL_OPTION })
+      expect.objectContaining({ issue: expect.objectContaining({ code: ErrorType.INVALID_MODEL_OPTION }) })
     );
     expect(geminiGenerate).not.toHaveBeenCalled();
   });

@@ -34,7 +34,7 @@ Rules the schema cannot express:
 - include_preview is optional and off by default. When true, results may include a reduced JPEG preview; nonopaque images are shown on white (left) and navy (right). The saved original is unchanged. Preview alpha measurements describe original pixels, not whether the image is a clean cutout. If preview processing is unavailable or exceeds its bounds, the image call still succeeds with a preview_warning; inspect the saved file instead of regenerating it. Clients must support MCP image content to display previews.
 - output_path: a trailing slash or an existing directory means a timestamped file inside it; otherwise it is the file to write. Parent directories are created. An existing file is never overwritten: -2, -3, ... is appended. When output_format is omitted the path's extension (.jpg/.png/.webp) selects it, else jpeg; the saved extension always matches the format. A .png/.webp path therefore needs an OpenAI model; with a Gemini model use .jpg or a directory. The returned path is authoritative and differs from output_path when a suffix was needed.
 - quality and transparent_background are OpenAI-only; temperature is Gemini-only. An explicit value on the other provider is rejected, not ignored. Omit them and the provider applies its default (medium / 1.0). transparent_background: false is accepted everywhere.
-- num_images makes that many separate requests, one after another, so time and cost scale linearly and the whole call blocks until the last one returns (4 sunburst images at max quality is several minutes). If a later request fails you get the images so far, still as a success, plus a \`warning\` naming the reason; re-request only the shortfall. OpenAI tier-1 accounts allow 5 images per minute.
+- num_images makes that many separate requests, one after another, so time and cost scale linearly and the whole call blocks until the last one returns (4 sunburst images at max quality is several minutes). Each response is saved before requesting another image. A later generation or save failure stops the batch and preserves saved files. Results report status complete, partial, or failed; partial/failed results include an issue with what happened and what to do next. Generation requests are never automatically retried. An interrupted request may still incur a charge; follow the issue advice and request only missing images if another attempt is appropriate.
 
 Examples:
 - Draft: model="gpt-image-2.5-flare", quality="low", output_path="~/drafts/"
@@ -97,10 +97,9 @@ export function registerGenerateImageTool(server: McpServer): void {
           includePreview: params.include_preview ?? false,
           signal,
           produce: () => generateImage(params.prompt, config, signal),
-          summary: (n) => `Successfully generated ${n} image(s):`,
         });
       } catch (error) {
-        return imageToolError(error, "generation");
+        return imageToolError(error);
       } finally {
         release?.();
       }
