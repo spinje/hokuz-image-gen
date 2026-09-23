@@ -55,13 +55,13 @@ describe("public remote image transport", () => {
     "http://[::1]/image", "http://[::ffff:127.0.0.1]/image", "http://[fc00::1]/image",
     "http://[fe80::1]/image", "http://[2002:7f00:1::]/image", "file:///etc/hosts",
   ])("rejects a non-public or unsupported URL before opening a request: %s", async url => {
-    await expect(fetchRemoteImage(url, options())).rejects.toMatchObject({ type: "INVALID_IMAGE_PATH" });
+    await expect(fetchRemoteImage(url, options())).rejects.toMatchObject({ issue: { code: "INVALID_IMAGE_PATH" } });
     expect(mocks.get).not.toHaveBeenCalled();
   });
 
   it("blocks redirects into private literal addresses before a second request", async () => {
     replies.push({ status: 302, headers: { location: "http://127.0.0.1/admin/secret" } });
-    await expect(fetchRemoteImage("https://images.example/photo.png", options())).rejects.toMatchObject({ type: "INVALID_IMAGE_PATH" });
+    await expect(fetchRemoteImage("https://images.example/photo.png", options())).rejects.toMatchObject({ issue: { code: "INVALID_IMAGE_PATH" } });
     expect(connections).toHaveLength(1);
     expect(mocks.get).toHaveBeenCalledTimes(1);
     expect(responses[0].destroyed).toBe(true);
@@ -71,7 +71,7 @@ describe("public remote image transport", () => {
     mocks.lookup.mockImplementationOnce((_host, _options, done) => done(null, [{ address: "93.184.216.34", family: 4 }]))
       .mockImplementation((_host, _options, done) => done(null, [{ address: "93.184.216.34", family: 4 }, { address: "10.0.0.1", family: 4 }]));
     replies.push({ status: 302, headers: { location: "/rebound.png" } });
-    await expect(fetchRemoteImage("https://images.example/photo.png", options())).rejects.toMatchObject({ type: "INVALID_IMAGE_PATH" });
+    await expect(fetchRemoteImage("https://images.example/photo.png", options())).rejects.toMatchObject({ issue: { code: "INVALID_IMAGE_PATH" } });
     expect(mocks.get).toHaveBeenCalledTimes(2);
     expect(mocks.lookup).toHaveBeenCalledTimes(2);
     expect(connections).toHaveLength(1);

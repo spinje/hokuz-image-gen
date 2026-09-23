@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeEach, vi } from "vitest";
 import { APIConnectionError, APIError } from "openai";
 import { IMAGE_MODEL_CAPABILITIES } from "../../constants.js";
-import { ErrorType, McpError, type GenerationConfig } from "../../types.js";
+import { ErrorType, ToolError, type GenerationConfig } from "../../types.js";
 
 const FLARE = IMAGE_MODEL_CAPABILITIES["gpt-image-2.5-flare"];
 
@@ -97,9 +97,9 @@ describe("generateImage request shape", () => {
     const controller = new AbortController();
     generateMock.mockResolvedValue(okResponse());
     await generateImage("p", baseConfig, controller.signal);
-    expect(generateMock.mock.calls[0][1]).toEqual({ signal: controller.signal });
+    expect(generateMock.mock.calls[0][1]).toEqual({ signal: controller.signal, maxRetries: 0 });
     controller.abort();
-    await expect(generateImage("p", baseConfig, controller.signal)).rejects.toMatchObject({ type: ErrorType.REQUEST_CANCELLED });
+    await expect(generateImage("p", baseConfig, controller.signal)).rejects.toMatchObject({ issue: expect.objectContaining({ code: ErrorType.REQUEST_CANCELLED }) });
     expect(generateMock).toHaveBeenCalledTimes(1);
   });
   it("sends one image at the derived size with an explicit quality and background", async () => {
@@ -276,126 +276,91 @@ describe("response parsing", () => {
     expect(response.usage).toBeUndefined();
   });
 
-  it("refuses an image in a format other than the one requested", async () => {
-    generateMock.mockResolvedValue(okResponse({ output_format: "png" }));
-
-    await expect(generateImage("p", baseConfig)).rejects.toThrowError(
-      expect.objectContaining({
-        type: ErrorType.API_ERROR,
-        message:
-          "Error: OpenAI returned png instead of the requested jpeg; nothing was saved. Retry, or request png explicitly.",
-      })
-    );
-
-    // The format it was asked for comes back as an image, not an error.
-    generateMock.mockResolvedValue(okResponse({ output_format: "jpeg" }));
-    expect((await generateImage("p", baseConfig)).images).toHaveLength(1);
+  it("refuses an unexpected format but preserves the returned usage", async () => {
+    generateMock.mockResolvedValue(okResponse({ output_format: "png", usage: {
+      input_tokens: 12, output_tokens: 20, input_tokens_details: { text_tokens: 2, image_tokens: 10 },
+    } }));
+    await expect(generateImage("p", baseConfig)).resolves.toMatchObject({
+      images: [], issue: { code: ErrorType.API_ERROR, message: expect.stringContaining("png instead of the requested jpeg") },
+      usage: { inputTokens: 12, outputTokens: 20, estimatedCostUsd: 0.00069 },
+    });
   });
 
-  it("raises API_ERROR when the response carries no image", async () => {
+  it("returns a completed response without images for the pipeline to explain", async () => {
     generateMock.mockResolvedValue(okResponse({ data: [] }));
-
-    await expect(generateImage("p", baseConfig)).rejects.toThrowError(
-      expect.objectContaining({
-        type: ErrorType.API_ERROR,
-        message: "Error: OpenAI returned no image for this request. Retry, or rephrase the prompt.",
-      })
-    );
+    await expect(generateImage("p", baseConfig)).resolves.toEqual({ images: [], usage: undefined });
   });
 });
 
 describe("API error mapping", () => {
-  const cases: Array<[number, ErrorType, RegExp]> = [
-    [401, ErrorType.MISSING_API_KEY, /rejected the API key \(401\).*Check OPENAI_API_KEY/],
-    [403, ErrorType.API_ERROR, /denied access \(403\).*organisation verification/],
-    [404, ErrorType.API_ERROR, /model 'gpt-image-2\.5-flare' was not found/],
-    [429, ErrorType.API_RATE_LIMIT, /rate limit exceeded \(429\).*lower num_images/],
-    [500, ErrorType.API_ERROR, /request failed \(500\).*try the other provider/],
-  ];
+  it.each([
+    [401, ErrorType.MISSING_API_KEY, "credentials"],
+    [403, ErrorType.API_ERROR, "account's access"],
+    [404, ErrorType.API_ERROR, "available to the configured account"],
+    [429, ErrorType.API_RATE_LIMIT, "after capacity is available"],
+  ])("gives appropriate recovery for HTTP %s", async (status, code, action) => {
+    generateMock.mockRejectedValue(apiError(status as number, { message: "boom" }));
+    await expect(generateImage("p", baseConfig)).rejects.toMatchObject({ issue: {
+      code, next_step: expect.stringContaining(action as string),
+    } });
+    expect(generateMock).toHaveBeenCalledTimes(1);
+    expect(generateMock.mock.calls[0][1]).toMatchObject({ maxRetries: 0 });
+  });
 
-  for (const [status, type, pattern] of cases) {
-    it(`maps HTTP ${status} to ${type}`, async () => {
-      generateMock.mockRejectedValue(apiError(status, { message: "boom" }));
-      await expect(generateImage("p", baseConfig)).rejects.toThrowError(
-        expect.objectContaining({ type, message: expect.stringMatching(pattern) })
-      );
+  it("classifies explicit moderation separately from request validation", async () => {
+    generateMock.mockRejectedValue(apiError(400, { message: "Rejected", code: "moderation_blocked" }));
+    await expect(generateImage("p", baseConfig)).rejects.toMatchObject({ issue: {
+      code: ErrorType.CONTENT_BLOCKED, message: expect.stringContaining("moderation blocked"),
+      next_step: expect.stringContaining("Revise the prompt"),
+    } });
+    generateMock.mockRejectedValue(apiError(400, { message: "Invalid size" }));
+    await expect(generateImage("p", baseConfig)).rejects.toMatchObject({ issue: {
+      code: ErrorType.API_ERROR, message: "OpenAI rejected the request. Invalid size",
+      next_step: expect.stringContaining("Correct the request"),
+    } });
+  });
+
+  it("does not tell an exhausted-quota account merely to wait", async () => {
+    generateMock.mockRejectedValue(apiError(429, { message: "Quota exceeded", code: "insufficient_quota" }));
+    await expect(generateImage("p", baseConfig)).rejects.toMatchObject({ issue: {
+      code: ErrorType.API_RATE_LIMIT, next_step: expect.stringContaining("restore quota or billing capacity"),
+    } });
+  });
+
+  it.each([500, 408, 409, undefined])("preserves outcome uncertainty for %s", async (status) => {
+    generateMock.mockRejectedValue(status === undefined
+      ? new APIConnectionError({ message: "socket details" }) : apiError(status, { message: "server details" }));
+    const error = await generateImage("p", baseConfig).catch(e => e as ToolError);
+    expect(error).toMatchObject({ issue: {
+      code: ErrorType.API_ERROR, message: expect.stringContaining("Completion and billing could not be confirmed"),
+      next_step: expect.stringContaining("may also incur a charge"),
+    } });
+    expect(error).toBeInstanceOf(ToolError);
+    expect(JSON.stringify((error as ToolError).issue)).not.toContain("details");
+    expect(generateMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("preserves a confirmed rejection even when cancellation races with it", async () => {
+    const controller = new AbortController();
+    generateMock.mockImplementation(() => {
+      controller.abort();
+      throw apiError(400, { code: "moderation_blocked", message: "Rejected by moderation" });
     });
-  }
-
-  it("maps a moderation refusal to CONTENT_BLOCKED with the stage and categories", async () => {
-    generateMock.mockRejectedValue(
-      apiError(400, {
-        message: "Your request was rejected.",
-        code: "moderation_blocked",
-        moderation_details: {
-          moderation_stage: "input",
-          categories: ["violence", "self-harm"],
-        },
-      })
-    );
-
-    await expect(generateImage("p", baseConfig)).rejects.toThrowError(
-      expect.objectContaining({
-        type: ErrorType.CONTENT_BLOCKED,
-        message:
-          "Error: OpenAI's content moderation blocked this request (input; categories: violence, self-harm). Rephrase the prompt or change the input images.",
-      })
-    );
+    await expect(generateImage("p", baseConfig, controller.signal)).rejects.toMatchObject({ issue: {
+      code: ErrorType.CONTENT_BLOCKED, message: expect.stringContaining("moderation blocked"),
+    } });
   });
 
-  it("quotes the API's own message on an unclassified 4xx", async () => {
-    generateMock.mockRejectedValue(apiError(400, { message: "Invalid value" }));
-
-    await expect(generateImage("p", baseConfig)).rejects.toThrowError(
-      expect.objectContaining({
-        type: ErrorType.API_ERROR,
-        message:
-          "Error: OpenAI rejected the request: Invalid value. Adjust the arguments accordingly.",
-      })
-    );
-  });
-
-  it("says a 4xx is not worth retrying and leaves the 5xx tail's verdict open", async () => {
-    // Every one of these is API_ERROR, the type that spans both a 500 worth
-    // retrying and an argument the API will reject again.
-    // 403 and 404 have their own branches; 400 reaches the generic 4xx one.
-    for (const status of [403, 404, 400]) {
-      generateMock.mockRejectedValue(apiError(status, { message: "boom" }));
-      await expect(generateImage("p", baseConfig)).rejects.toMatchObject({
-        type: ErrorType.API_ERROR,
-        retryable: false,
-      });
-    }
-
-    // A 500 and a 408 both leave the verdict open so the type's default stands.
-    for (const status of [500, 408]) {
-      generateMock.mockRejectedValue(apiError(status, { message: "boom" }));
-      await expect(generateImage("p", baseConfig)).rejects.toSatisfy(
-        (e: unknown) =>
-          e instanceof McpError && e.type === ErrorType.API_ERROR && e.retryable === undefined
-      );
-    }
-  });
-
-  it("maps a connection failure with no status to a retryable API_ERROR", async () => {
-    generateMock.mockRejectedValue(new APIConnectionError({ message: "socket hang up" }));
-
-    await expect(generateImage("p", baseConfig)).rejects.toThrowError(
-      expect.objectContaining({
-        type: ErrorType.API_ERROR,
-        message:
-          "Error: OpenAI request failed (network): socket hang up. Retry; if it persists, try the other provider.",
-      })
-    );
-
-    // Anything that is not an SDK error at all says only what it knows.
-    generateMock.mockRejectedValue(new Error("boom"));
-    await expect(generateImage("p", baseConfig)).rejects.toThrowError(
-      expect.objectContaining({
-        message:
-          "Error: OpenAI request failed: boom. Retry; if it persists, try the other provider.",
-      })
-    );
+  it("distinguishes cancellation in flight from a request that never started", async () => {
+    const controller = new AbortController();
+    generateMock.mockImplementation(() => { controller.abort(); throw new Error("aborted"); });
+    await expect(generateImage("p", baseConfig, controller.signal)).rejects.toMatchObject({ issue: {
+      code: ErrorType.REQUEST_CANCELLED, message: expect.stringContaining("Completion and billing could not be confirmed"),
+      next_step: expect.stringContaining("Do not automatically retry"),
+    } });
+    generateMock.mockClear();
+    await expect(generateImage("p", baseConfig, controller.signal)).rejects.toMatchObject({ issue: expect.objectContaining({ code: ErrorType.REQUEST_CANCELLED }) });
+    expect(generateMock).not.toHaveBeenCalled();
   });
 });
 
@@ -407,9 +372,8 @@ describe("API key resolution", () => {
     const { generateImage } = await import("../openai.js");
 
     await expect(generateImage("p", baseConfig)).rejects.toMatchObject({
-      type: ErrorType.MISSING_API_KEY,
-      message:
-        "Error: OPENAI_API_KEY is not set, so 'gpt-image-2.5-flare' cannot be used. Set OPENAI_API_KEY in the MCP server's environment, or choose a Gemini model.",
+      issue: expect.objectContaining({ code: ErrorType.MISSING_API_KEY }),
+      message: "The server has no OpenAI API key, so 'gpt-image-2.5-flare' cannot be used.",
     });
     expect(ctorMock).not.toHaveBeenCalled();
     expect(generateMock).not.toHaveBeenCalled();

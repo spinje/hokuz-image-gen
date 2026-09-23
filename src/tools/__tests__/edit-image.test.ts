@@ -9,7 +9,7 @@ const { editMock } = vi.hoisted(() => ({ editMock: vi.fn() }));
 
 vi.mock("../../providers/index.js", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../../providers/index.js")>();
-  return { ...actual, editImage: editMock };
+  return { ...actual, requireProviderKey: vi.fn(), editImage: editMock };
 });
 
 const { connectTestClient, firstText } = await import("../../__tests__/harness.js");
@@ -126,8 +126,8 @@ describe(TOOL, () => {
     });
 
     expect(result.isError).toBe(true);
-    expect(firstText(result)).toBe(
-      "Error: Model 'gemini-3.1-flash-image' (Nano Banana 2) accepts at most 14 input images; 15 were given. Remove images, or use an OpenAI model (up to 16)."
+    expect(firstText(result)).toContain(
+      "Model 'gemini-3.1-flash-image' (Nano Banana 2) accepts at most 14 input images; 15 were given."
     );
     expect(editMock).not.toHaveBeenCalled();
   });
@@ -145,8 +145,8 @@ describe(TOOL, () => {
     });
 
     expect(rejected.isError).toBe(true);
-    expect(firstText(rejected)).toBe(
-      `Error: Image at '${big}' is 7.00MB, above the 7MB limit for 'gemini-3.1-flash-image' (Nano Banana 2). Resize it, or use an OpenAI model (50MB limit).`
+    expect(firstText(rejected)).toContain(
+      `Image at '${big}' is 7.00MB, above the 7MB limit for 'gemini-3.1-flash-image' (Nano Banana 2).`
     );
     expect(editMock).not.toHaveBeenCalled();
 
@@ -173,8 +173,8 @@ describe(TOOL, () => {
     });
 
     expect(rejected.isError).toBe(true);
-    expect(firstText(rejected)).toBe(
-      `Error: Model 'gpt-image-2.5-flare' (GPT Image 2.5 Flare) does not accept image/gif input ('${gif}'). Supported input formats: jpeg, png, webp. Convert the image, or use a Gemini model.`
+    expect(firstText(rejected)).toContain(
+      `Model 'gpt-image-2.5-flare' (GPT Image 2.5 Flare) does not accept image/gif input ('${gif}'). Supported input formats: jpeg, png, webp.`
     );
     expect(editMock).not.toHaveBeenCalled();
 
@@ -215,7 +215,7 @@ describe(TOOL, () => {
 
     expect(editMock).toHaveBeenCalledTimes(2);
     expect(firstText(result)).toContain(
-      "Successfully edited 2 image(s) and generated 2 result(s):"
+      "complete: 2 of 2 requested image(s) saved."
     );
 
     editMock.mockRejectedValue(new Error("boom"));
@@ -226,7 +226,8 @@ describe(TOOL, () => {
     });
 
     expect(failed.isError).toBe(true);
-    expect(firstText(failed)).toBe("Error: Unexpected error during image editing. boom");
+    expect(firstText(failed)).toContain("An unexpected error prevented completion");
+    expect(firstText(failed)).not.toContain("boom");
   });
 
   it("rejects an explicit resolution on an OpenAI model with the default 'auto' ratio", async () => {
@@ -241,8 +242,8 @@ describe(TOOL, () => {
     });
 
     expect(result.isError).toBe(true);
-    expect(firstText(result)).toBe(
-      "Error: Model 'gpt-image-2.5-flare' (GPT Image 2.5 Flare) cannot apply resolution '2K' when aspect_ratio is 'auto' because the provider chooses the output size. Set an aspect_ratio to control the size, or omit resolution."
+    expect(firstText(result)).toContain(
+      "Model 'gpt-image-2.5-flare' (GPT Image 2.5 Flare) cannot apply resolution '2K' when aspect_ratio is 'auto' because the provider chooses the output size."
     );
     expect(editMock).not.toHaveBeenCalled();
   });

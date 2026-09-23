@@ -4,7 +4,7 @@ import * as http from "node:http";
 import * as https from "node:https";
 import { BlockList, isIP, type LookupFunction } from "node:net";
 import { Readable } from "node:stream";
-import { ErrorType, McpError } from "../types.js";
+import { ErrorType, ToolError } from "../types.js";
 
 // Conservative policy based on IANA's special-purpose address registries.
 // https://www.iana.org/assignments/iana-ipv4-special-registry/
@@ -30,8 +30,8 @@ function publicAddress(address: string): boolean {
   return isIP(address) === 6 && global6.check(address, "ipv6") && !blocked6.check(address, "ipv6");
 }
 
-function invalidRemote(reason: string): McpError {
-  return new McpError(ErrorType.INVALID_IMAGE_PATH, `Error: ${reason} Use a public image URL or download the image and pass a local file.`);
+function invalidRemote(reason: string): ToolError {
+  return new ToolError(ErrorType.INVALID_IMAGE_PATH, reason, "Use a public image URL or download the image and pass a local file.");
 }
 
 function checkedUrl(value: string, base?: URL): URL {
@@ -100,7 +100,7 @@ export async function fetchRemoteImage(value: string, { signal }: { signal: Abor
     const encoding = headers.get("content-encoding")?.trim().toLowerCase();
     if (encoding && encoding !== "identity") {
       incoming.destroy();
-      throw invalidRemote("Remote image server must honor Accept-Encoding: identity.");
+      throw invalidRemote("The image host returned an unsupported compressed HTTP response.");
     }
     return new Response(Readable.toWeb(incoming) as ReadableStream<Uint8Array>, { status, headers });
   }

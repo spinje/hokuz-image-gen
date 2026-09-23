@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, vi } from "vitest";
-import { ErrorType, McpError } from "../../types.js";
+import { ErrorType } from "../../types.js";
 
 const { createMock } = vi.hoisted(() => ({ createMock: vi.fn() }));
 
@@ -97,10 +97,10 @@ describe("parseInteraction", () => {
     expect(result.description).toBe("fallback");
   });
 
-  it("throws CONTENT_BLOCKED when no image is present", () => {
-    expect(() => parseInteraction({ output_text: "refused" })).toThrowError(
-      expect.objectContaining({ type: ErrorType.CONTENT_BLOCKED })
-    );
+  it("preserves model text when no image is present", () => {
+    expect(parseInteraction({ output_text: "Please clarify the requested image" })).toEqual({
+      images: [], description: "Please clarify the requested image", usage: undefined,
+    });
   });
 });
 
@@ -239,9 +239,9 @@ describe("generateImage request shape", () => {
     const controller = new AbortController();
     createMock.mockResolvedValue({ output_image: { data: IMG_A } });
     await generateImage("p", baseConfig, controller.signal);
-    expect(createMock.mock.calls[0][1]).toEqual({ signal: controller.signal });
+    expect(createMock.mock.calls[0][1]).toEqual({ signal: controller.signal, maxRetries: 0 });
     controller.abort();
-    await expect(generateImage("p", baseConfig, controller.signal)).rejects.toMatchObject({ type: ErrorType.REQUEST_CANCELLED });
+    await expect(generateImage("p", baseConfig, controller.signal)).rejects.toMatchObject({ issue: expect.objectContaining({ code: ErrorType.REQUEST_CANCELLED }) });
     expect(createMock).toHaveBeenCalledTimes(1);
   });
   it("puts image options in response_format and only temperature in generation_config", async () => {
@@ -354,7 +354,7 @@ describe("API error mapping", () => {
         error: googleBody("Model 'gemini-does-not-exist' not found. Did you mean one of ...", 404),
       }),
       ErrorType.API_ERROR,
-      "Error: Gemini reports model 'gemini-3.1-flash-image' was not found (Model 'gemini-does-not-exist' not found. Did you mean one of ...). The model ID may have been retired, or this resolution is not offered for it; try another Gemini model or an OpenAI model.",
+      "Gemini could not find the requested model or resource for 'gemini-3.1-flash-image'.",
     ],
     [
       "an unsupported aspect_ratio value (400)",
@@ -367,7 +367,7 @@ describe("API error mapping", () => {
         ),
       }),
       ErrorType.API_ERROR,
-      "Error: Gemini rejected the request (400): The value '7:5' is not supported for 'response_format.aspect_ratio'. Supported values: .... Adjust the arguments accordingly.",
+      "Gemini rejected the request. The value '7:5' is not supported for 'response_format.aspect_ratio'. Supported values: ...",
     ],
     [
       "a resolution the model does not offer (404, not a retired ID)",
@@ -377,7 +377,7 @@ describe("API error mapping", () => {
         error: googleBody("Requested entity was not found.", 404),
       }),
       ErrorType.API_ERROR,
-      "Error: Gemini reports model 'gemini-3.1-flash-image' was not found (Requested entity was not found.). The model ID may have been retired, or this resolution is not offered for it; try another Gemini model or an OpenAI model.",
+      "Gemini could not find the requested model or resource for 'gemini-3.1-flash-image'.",
     ],
     [
       "an invalid API key, whose message is only in the array-shaped body (400)",
@@ -390,7 +390,7 @@ describe("API error mapping", () => {
         body: '[{"error":{"code":400,"message":"API key not valid. Please pass a valid API key.","status":"INVALID_ARGUMENT"}}]',
       }),
       ErrorType.MISSING_API_KEY,
-      "Error: Gemini rejected the API key: API key not valid. Please pass a valid API key.. Check GEMINI_API_KEY (or GOOGLE_API_KEY), or choose an OpenAI model.",
+      "Gemini rejected the server's API key.",
     ],
     [
       "an invalid API key behind a body that is not JSON at all (400)",
@@ -403,7 +403,7 @@ describe("API error mapping", () => {
         body: "<html><body>API key not valid</body></html>",
       }),
       ErrorType.MISSING_API_KEY,
-      "Error: Gemini rejected the API key: API error occurred. Check GEMINI_API_KEY (or GOOGLE_API_KEY), or choose an OpenAI model.",
+      "Gemini rejected the server's API key.",
     ],
     [
       "a rejected key whose status the SDK exposes as a string, not a number",
@@ -416,7 +416,7 @@ describe("API error mapping", () => {
         body: '[{"error":{"message":"API key not valid. Please pass a valid API key."}}]',
       }),
       ErrorType.MISSING_API_KEY,
-      "Error: Gemini rejected the API key: API key not valid. Please pass a valid API key.. Check GEMINI_API_KEY (or GOOGLE_API_KEY), or choose an OpenAI model.",
+      "Gemini rejected the server's API key.",
     ],
     [
       "a rate limit whose status survives only in the SDK's message prefix",
@@ -426,7 +426,7 @@ describe("API error mapping", () => {
         error: { error: { message: "Resource has been exhausted (e.g. check quota)." } },
       }),
       ErrorType.API_RATE_LIMIT,
-      "Error: Gemini rate limit exceeded (429): Resource has been exhausted (e.g. check quota).. Wait a minute and retry, lower num_images, or use an OpenAI model.",
+      "Gemini rejected this request because an account limit was reached.",
     ],
     [
       "a safety block (400)",
@@ -436,7 +436,7 @@ describe("API error mapping", () => {
         error: googleBody("The request was blocked by safety filters.", 400),
       }),
       ErrorType.CONTENT_BLOCKED,
-      "Error: Gemini's safety filters blocked this request: The request was blocked by safety filters.. Rephrase the prompt or change the input images.",
+      "Gemini reported that content moderation blocked this request.",
     ],
     [
       "a permission denial (403)",
@@ -445,8 +445,8 @@ describe("API error mapping", () => {
         status: 403,
         error: googleBody("Permission denied on resource project.", 403),
       }),
-      ErrorType.MISSING_API_KEY,
-      "Error: Gemini denied the request (403): Permission denied on resource project.. Check GEMINI_API_KEY (or GOOGLE_API_KEY) and the project's billing, or choose an OpenAI model.",
+      ErrorType.API_ERROR,
+      "Gemini denied access to 'gemini-3.1-flash-image'.",
     ],
     [
       "a rate limit (429)",
@@ -456,7 +456,7 @@ describe("API error mapping", () => {
         error: googleBody("Resource has been exhausted (e.g. check quota).", 429),
       }),
       ErrorType.API_RATE_LIMIT,
-      "Error: Gemini rate limit exceeded (429): Resource has been exhausted (e.g. check quota).. Wait a minute and retry, lower num_images, or use an OpenAI model.",
+      "Gemini rejected this request because an account limit was reached.",
     ],
     [
       "a server fault whose body is not JSON, leaving only the SDK's message (503)",
@@ -468,80 +468,51 @@ describe("API error mapping", () => {
         body: "<html><body>503 Service Unavailable</body></html>",
       }),
       ErrorType.API_ERROR,
-      "Error: Gemini request failed (503): Service Unavailable. Retry; if it persists, try an OpenAI model.",
+      "No usable result was received from Gemini for this request. Completion and billing could not be confirmed.",
     ],
     [
       "a connection failure, which carries no status, error or body",
       apiError({ message: "Unable to make request: TypeError: fetch failed" }),
       ErrorType.API_ERROR,
-      "Error: Gemini request failed (network): Unable to make request: TypeError: fetch failed. Retry; if it persists, try an OpenAI model.",
+      "No usable result was received from Gemini for this request. Completion and billing could not be confirmed.",
     ],
   ];
 
   for (const [name, error, type, message] of cases) {
     it(`maps ${name} to ${type}`, async () => {
       createMock.mockRejectedValue(error);
-      await expect(generateImage("p", baseConfig)).rejects.toMatchObject({ type, message });
+      await expect(generateImage("p", baseConfig)).rejects.toMatchObject({ issue: { code: type, message, next_step: expect.any(String) } });
     });
   }
 
-  it("says a 4xx is not worth retrying, since the request itself is what failed", async () => {
-    // API_ERROR spans a retired model ID and a 500, so the type alone cannot
-    // tell the caller whether to try again; the status can.
-    // 404 has its own branch; 400 is the likeliest Gemini rejection and reaches
-    // the generic 4xx branch, so both are exercised.
-    for (const status of [404, 400]) {
-      createMock.mockRejectedValue(
-        apiError({
-          message: `${status} Requested entity was not found.`,
-          status,
-          error: googleBody("Requested entity was not found.", status),
-        })
-      );
-
-      await expect(generateImage("p", baseConfig)).rejects.toMatchObject({
-        type: ErrorType.API_ERROR,
-        retryable: false,
-      });
-    }
+  it.each([408, 409, 503])("does not claim a definite rejection on HTTP %s", async (status) => {
+    createMock.mockRejectedValue(apiError({ message: `${status} failure`, status }));
+    await expect(generateImage("p", baseConfig)).rejects.toMatchObject({ issue: {
+      code: ErrorType.API_ERROR, message: expect.stringContaining("Completion and billing could not be confirmed"),
+      next_step: expect.stringContaining("Do not automatically retry"),
+    } });
+    expect(createMock).toHaveBeenCalledTimes(1);
+    expect(createMock.mock.calls[0][1]).toMatchObject({ maxRetries: 0 });
   });
 
-  it("leaves a 408 retryable, since a timeout can clear without the call changing", async () => {
-    createMock.mockRejectedValue(
-      apiError({
-        message: "408 Request Timeout",
-        status: 408,
-        error: googleBody("Request Timeout", 408),
-      })
-    );
-
-    await expect(generateImage("p", baseConfig)).rejects.toSatisfy(
-      (e: unknown) =>
-        e instanceof McpError && e.type === ErrorType.API_ERROR && e.retryable === undefined
-    );
+  it("returns text-only responses to the pipeline without inferring moderation", async () => {
+    createMock.mockResolvedValue({ output_text: "Please clarify", usage: { total_input_tokens: 10, total_output_tokens: 5 } });
+    await expect(generateImage("p", baseConfig)).resolves.toMatchObject({
+      images: [], description: "Please clarify", usage: { inputTokens: 10, outputTokens: 5, estimatedCostUsd: 0, costBasis: "per_image" },
+    });
   });
 
-  it("passes no verdict on a 5xx, leaving the type's default (retry) to stand", async () => {
-    createMock.mockRejectedValue(apiError({ message: "503 Service Unavailable", status: 503 }));
-
-    await expect(generateImage("p", baseConfig)).rejects.toSatisfy(
-      (e: unknown) =>
-        e instanceof McpError && e.type === ErrorType.API_ERROR && e.retryable === undefined
-    );
+  it("does not mistake a non-moderation block for content moderation", async () => {
+    createMock.mockRejectedValue(apiError({ message: "Request blocked by network policy", status: 400, error: googleBody("Request blocked by network policy", 400) }));
+    await expect(generateImage("p", baseConfig)).rejects.toMatchObject({ issue: expect.objectContaining({ code: ErrorType.API_ERROR }) });
   });
 
-  it("re-throws McpErrors raised inside the request path with their original message", async () => {
-    // parseInteraction throws CONTENT_BLOCKED when the response has no image.
-    // Without the instanceof guard in handleApiError the heuristic would still
-    // classify it as CONTENT_BLOCKED (the message contains "blocked"), so the
-    // type alone cannot detect the regression; the exact message can.
-    createMock.mockResolvedValue({ output_text: "no image" });
-    await expect(generateImage("p", baseConfig)).rejects.toSatisfy(
-      (e: unknown) =>
-        e instanceof McpError &&
-        e.type === ErrorType.CONTENT_BLOCKED &&
-        e.message.startsWith("Error: No images were generated.")
-    );
+  it("reports uncertainty when cancellation interrupts the provider request", async () => {
+    const controller = new AbortController();
+    createMock.mockImplementation(() => { controller.abort(); throw new Error("aborted"); });
+    await expect(generateImage("p", baseConfig, controller.signal)).rejects.toMatchObject({ issue: {
+      code: ErrorType.REQUEST_CANCELLED, message: expect.stringContaining("Completion and billing could not be confirmed"),
+    } });
   });
 });
 
@@ -585,17 +556,15 @@ describe("API key resolution", () => {
     expect(ctorMock).toHaveBeenCalledWith({ apiKey: "google-key" });
   });
 
-  it("names the variable to set, and the alternative, when neither key is present", async () => {
+  it("names the configuration problem when neither key is present", async () => {
     vi.stubEnv("GEMINI_API_KEY", "");
     vi.stubEnv("GOOGLE_API_KEY", "");
     const { generateImage } = await freshGenerate();
-    // vi.resetModules() gives this module graph its own McpError class, so
+    // vi.resetModules() gives this module graph its own ToolError class, so
     // match on the shape rather than instanceof.
     await expect(generateImage("p", baseConfig)).rejects.toMatchObject({
-      type: ErrorType.MISSING_API_KEY,
-      message: expect.stringMatching(
-        /GEMINI_API_KEY is not set.*choose an OpenAI model/s
-      ),
+      issue: expect.objectContaining({ code: ErrorType.MISSING_API_KEY }),
+      message: "The server has no Gemini API key.",
     });
     expect(createMock).not.toHaveBeenCalled();
   });

@@ -7,7 +7,7 @@
 
 import {
   IMAGE_MODEL_CAPABILITIES,
-  getUnsupportedModelOptionMessage,
+  getUnsupportedModelOption,
   type ImageModel,
   type Provider,
 } from "../constants.js";
@@ -15,7 +15,7 @@ import {
   type GenerationConfig,
   type ImageResponse,
   type InputImage,
-  McpError,
+  ToolError,
   ErrorType,
 } from "../types.js";
 import * as gemini from "./gemini.js";
@@ -29,7 +29,7 @@ export function validateGenerationConfig(
   config: GenerationConfig,
   options: { inputImageCount?: number } = {}
 ): void {
-  const message = getUnsupportedModelOptionMessage({
+  const issue = getUnsupportedModelOption({
     model: config.model,
     resolution: config.resolution,
     aspectRatio: config.aspectRatio,
@@ -39,8 +39,8 @@ export function validateGenerationConfig(
     transparentBackground: config.transparentBackground,
     inputImageCount: options.inputImageCount,
   });
-  if (message) {
-    throw new McpError(ErrorType.INVALID_MODEL_OPTION, message);
+  if (issue) {
+    throw new ToolError(ErrorType.INVALID_MODEL_OPTION, issue.message, issue.next_step);
   }
 }
 
@@ -53,6 +53,7 @@ export interface ProviderModule {
   label: string;
   /** Whether this provider's API key is set; never throws. */
   hasApiKey(): boolean;
+  getApiKey(model: ImageModel): string;
   generateImage(prompt: string, config: GenerationConfig, signal?: AbortSignal): Promise<ImageResponse>;
   editImage(
     prompt: string,
@@ -66,6 +67,11 @@ const PROVIDERS: Record<Provider, ProviderModule> = { google: gemini, openai };
 
 function providerFor(model: ImageModel): ProviderModule {
   return PROVIDERS[IMAGE_MODEL_CAPABILITIES[model].provider];
+}
+
+/** Check local configuration before loading potentially large edit inputs. */
+export function requireProviderKey(model: ImageModel): void {
+  providerFor(model).getApiKey(model);
 }
 
 /** Human-readable name of a provider. */

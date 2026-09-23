@@ -1,3 +1,5 @@
+import type { ToolIssue } from "./types.js";
+
 /**
  * Constants for the image server
  */
@@ -292,13 +294,13 @@ export const IMAGE_MODEL_CAPABILITIES: Record<ImageModel, ImageModelCapabilities
 };
 
 /**
- * Pure validation helper. Returns a human-readable error message if the
+ * Pure validation helper. Returns a diagnosis and next step if the
  * combination of options is unsupported by the model, otherwise null.
  *
- * Kept free of McpError to avoid coupling constants to the error domain;
- * callers translate the message into an McpError.
+ * Kept free of ToolError to avoid coupling constants to the error domain;
+ * callers translate the explanation into a ToolError.
  */
-export function getUnsupportedModelOptionMessage(args: {
+export function getUnsupportedModelOption(args: {
   model: ImageModel;
   /** Undefined means "not asked for"; the provider applies its own default. */
   resolution?: Resolution;
@@ -309,16 +311,16 @@ export function getUnsupportedModelOptionMessage(args: {
   transparentBackground?: boolean;
   /** Number of images an edit is about to send; omitted by generate. */
   inputImageCount?: number;
-}): string | null {
+}): Pick<ToolIssue, "message" | "next_step"> | null {
   const caps = IMAGE_MODEL_CAPABILITIES[args.model];
   const who = `Model '${args.model}' (${caps.label})`;
 
   if (args.resolution !== undefined && !caps.resolutions.includes(args.resolution)) {
-    return `Error: ${who} does not support resolution '${args.resolution}'. Supported resolutions: ${caps.resolutions.join(", ")}. Choose one of those, or a model that supports '${args.resolution}'.`;
+    return { message: `${who} does not support resolution '${args.resolution}'. Supported resolutions: ${caps.resolutions.join(", ")}.`, next_step: `Choose one of those, or a model that supports '${args.resolution}'.` };
   }
 
   if (args.aspectRatio && !caps.aspectRatios.includes(args.aspectRatio)) {
-    return `Error: ${who} does not support aspect ratio '${args.aspectRatio}'. Supported aspect ratios: ${caps.aspectRatios.join(", ")}. Choose one of those, or a model that supports '${args.aspectRatio}'.`;
+    return { message: `${who} does not support aspect ratio '${args.aspectRatio}'. Supported aspect ratios: ${caps.aspectRatios.join(", ")}.`, next_step: `Choose one of those, or a model that supports '${args.aspectRatio}'.` };
   }
 
   // OpenAI derives the pixel size from the aspect ratio; without one it sends
@@ -328,32 +330,32 @@ export function getUnsupportedModelOptionMessage(args: {
     args.aspectRatio === undefined &&
     args.resolution !== undefined
   ) {
-    return `Error: ${who} cannot apply resolution '${args.resolution}' when aspect_ratio is 'auto' because the provider chooses the output size. Set an aspect_ratio to control the size, or omit resolution.`;
+    return { message: `${who} cannot apply resolution '${args.resolution}' when aspect_ratio is 'auto' because the provider chooses the output size.`, next_step: `Set an aspect_ratio to control the size, or omit resolution.` };
   }
 
   if (args.outputFormat !== undefined && !caps.outputFormats.includes(args.outputFormat)) {
-    return `Error: ${who} does not support output_format '${args.outputFormat}'. Supported: ${caps.outputFormats.join(", ")}. Gemini models produce jpeg only; use gpt-image-2.5-flare or gpt-image-2.5-sunburst for png/webp.`;
+    return { message: `${who} does not support output_format '${args.outputFormat}'.`, next_step: `Use ${caps.outputFormats.join(", ")}, or choose gpt-image-2.5-flare or gpt-image-2.5-sunburst for png/webp.` };
   }
 
   if (args.quality !== undefined && !caps.qualities.includes(args.quality)) {
     if (caps.qualities.length === 0) {
-      return `Error: ${who} does not accept 'quality'; it is an OpenAI-only option. Omit it, or use gpt-image-2.5-flare / gpt-image-2.5-sunburst.`;
+      return { message: `${who} does not accept 'quality'; it is an OpenAI-only option.`, next_step: `Omit it, or use gpt-image-2.5-flare / gpt-image-2.5-sunburst.` };
     }
-    return `Error: ${who} does not support quality '${args.quality}'. Supported qualities: ${caps.qualities.join(", ")}.`;
+    return { message: `${who} does not support quality '${args.quality}'.`, next_step: `Choose one of these qualities: ${caps.qualities.join(", ")}.` };
   }
 
   if (args.temperature !== undefined && !caps.supportsTemperature) {
-    return `Error: ${who} does not accept 'temperature'; it is a Gemini-only option. Omit it, or use a gemini-* model.`;
+    return { message: `${who} does not accept 'temperature'; it is a Gemini-only option.`, next_step: `Omit it, or use a gemini-* model.` };
   }
 
   // Only `true` asks for something a model may not be able to do; `false` is
   // what every model does anyway.
   if (args.transparentBackground) {
     if (!caps.supportsTransparentBackground) {
-      return `Error: ${who} does not support transparent_background. Use gpt-image-2.5-flare or gpt-image-2.5-sunburst with output_format png or webp.`;
+      return { message: `${who} does not support transparent_background.`, next_step: `Use gpt-image-2.5-flare or gpt-image-2.5-sunburst with output_format png or webp.` };
     }
     if (args.outputFormat === "jpeg") {
-      return "Error: transparent_background requires output_format 'png' or 'webp' (JPEG has no alpha channel). Set output_format accordingly, or omit transparent_background.";
+      return { message: "transparent_background requires output_format 'png' or 'webp' (JPEG has no alpha channel).", next_step: "Set output_format accordingly, or omit transparent_background." };
     }
   }
 
@@ -362,7 +364,7 @@ export function getUnsupportedModelOptionMessage(args: {
       caps.maxInputImages < LIMITS.maxInputImages
         ? `, or use an OpenAI model (up to ${LIMITS.maxInputImages})`
         : "";
-    return `Error: ${who} accepts at most ${caps.maxInputImages} input images; ${args.inputImageCount} were given. Remove images${alternative}.`;
+    return { message: `${who} accepts at most ${caps.maxInputImages} input images; ${args.inputImageCount} were given.`, next_step: `Remove images${alternative}.` };
   }
 
   return null;
@@ -371,13 +373,13 @@ export function getUnsupportedModelOptionMessage(args: {
 /**
  * Pure validation helper for one loaded input image. The MIME type is only
  * known once the image has been read, so this runs per image in the edit tool
- * rather than in `getUnsupportedModelOptionMessage`.
+ * rather than in `getUnsupportedModelOption`.
  */
-export function getUnsupportedInputImageMessage(args: {
+export function getUnsupportedInputImage(args: {
   model: ImageModel;
   mimeType: string;
   path: string;
-}): string | null {
+}): Pick<ToolIssue, "message" | "next_step"> | null {
   const caps = IMAGE_MODEL_CAPABILITIES[args.model];
   if (caps.inputMimeTypes.includes(args.mimeType)) {
     return null;
@@ -385,5 +387,5 @@ export function getUnsupportedInputImageMessage(args: {
 
   const supported = caps.inputMimeTypes.map((mime) => mime.replace("image/", "")).join(", ");
   const alternative = caps.provider === "openai" ? ", or use a Gemini model" : "";
-  return `Error: Model '${args.model}' (${caps.label}) does not accept ${args.mimeType} input ('${args.path}'). Supported input formats: ${supported}. Convert the image${alternative}.`;
+  return { message: `Model '${args.model}' (${caps.label}) does not accept ${args.mimeType} input ('${args.path}'). Supported input formats: ${supported}.`, next_step: `Convert the image${alternative}.` };
 }

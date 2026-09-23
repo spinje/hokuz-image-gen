@@ -21,8 +21,8 @@ Follow `.claude/agents/REVIEW-PROTOCOL.md` (read it first). Lens-specifics on to
 ## This Repo's Test Conventions (canonical: `CLAUDE.md` → Testing)
 
 - **Runner:** Vitest, `environment: node`, colocated `__tests__/` directories, no setup file, no network. `npm run typecheck` covers test files via `tsconfig.test.json`; `npm run build` excludes them.
-- **Tool tests go through the real MCP path.** `connectTestClient()` (`src/__tests__/harness.ts`) builds the real server with `createServer()` and connects an SDK `Client` over `InMemoryTransport`. The SDK's input validation and output-schema validation run for real. Only the provider entry points are mocked, via `vi.mock("../../providers/index.js", async (importOriginal) => ({ ...await importOriginal(), generateImage: mock }))` — `validateGenerationConfig` stays real, so validation order is exercised for real.
-- **What may be mocked:** `@google/genai` and `openai` (the network), the service module in tool tests, global `fetch`, environment variables (`vi.stubEnv`). **What may not:** the MCP SDK, Zod, the filesystem (use `fs.mkdtemp` under `os.tmpdir()` and clean up), `resolveOutputPath`, `parseInteraction`.
+- **Tool tests go through the real MCP path.** `connectTestClient()` (`src/__tests__/harness.ts`) builds the real server with `createServer()` and connects an SDK `Client` over `InMemoryTransport`. The SDK's input validation and output-schema validation run for real. Provider I/O and credential preflight are mocked in ordinary tool tests; credential tests retain the real key checks. `validateGenerationConfig` stays real, so capability validation order is exercised for real.
+- **What may be mocked:** provider SDKs, service boundaries in tool tests, global `fetch`, environment variables, and narrowly injected I/O failures. Use real temporary files for normal filesystem behavior and clean them up. **What may not:** the MCP SDK, Zod, or the parser/path-policy implementation whose behavior the test claims to verify.
 - **The SDK reports schema failures as an `isError` result**, not a rejection. A test that expects `.rejects` for a bad argument is testing the wrong contract.
 - **Mutation-kill is the bar, not coverage.** The audit commit ran twelve mutations and required each to be killed by the specific test written for it. New tests are held to the same standard: name the mutation that kills it.
 
@@ -35,7 +35,7 @@ For each new or changed assertion: mentally (or actually) break the behaviour it
 Every "must not appear / must not be called / must not have property" needs a presence assertion in the same medium beside it, proving the medium could have shown it. `expect(response_format).not.toHaveProperty("aspect_ratio")` is valid only because a neighbouring test asserts the property IS present when defined.
 
 ### 3. Wrong Code Path
-A regression test must exercise the EXACT path that had the bug. A test of `resolveOutputPath` proves nothing about the tool handler's loop; a test that mocks the service proves nothing about the request shape. Check the layer.
+A regression test must exercise the EXACT path that had the bug. A test of `resolveOutputDestination` proves nothing about the tool handler's loop; a test that mocks the service proves nothing about the request shape. Check the layer.
 
 ### 4. Implementation vs Behaviour
 Flag assertions on internals a refactor may legitimately change: error-message ordering between two independent checks, whether an `undefined` key is present vs absent, internal call order. Behaviour is: what the client receives, what is on disk, what the SDK was called with.
@@ -56,7 +56,7 @@ If the diff touches `eslint.config.js`, `tsconfig*.json`, `vitest.config.ts`, CI
 One archetype test proves a pattern. A generate test restated for edit with no behavioural difference, three tests for one enum, or tests of Zod/SDK/Node behaviour are debt. Suggest removal.
 
 ### 9. Missing Negative Cases
-For every feature change: is the failure case tested with an exact assertion on `isError`, the error text, and `structuredContent.error`? Only happy paths = flag.
+For every feature change: is the failure case tested with an exact assertion on `isError`, the error text, and `structuredContent.issue`? Only happy paths = flag.
 
 ## What NOT to Flag (lens-specific — on top of the protocol's list)
 

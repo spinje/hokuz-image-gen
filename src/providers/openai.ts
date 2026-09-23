@@ -7,6 +7,7 @@
  * token; see `openaiSize` for the rule.
  */
 
+import { providerRequestError } from "./errors.js";
 import { throwIfImageCancelled } from "../services/image-operation.js";
 import OpenAI, { APIError, toFile } from "openai";
 import type { ImagesResponse } from "openai/resources/images";
@@ -24,7 +25,7 @@ import {
   type ImageResponse,
   type InputImage,
   type UsageReport,
-  McpError,
+  ToolError,
   ErrorType,
 } from "../types.js";
 
@@ -66,13 +67,14 @@ export function hasApiKey(): boolean {
 /**
  * Get the OpenAI API key, or explain which model cannot be used without it.
  */
-function getApiKey(model: ImageModel): string {
+export function getApiKey(model: ImageModel): string {
   const apiKey = process.env[ENV_VARS.openaiApiKey];
 
   if (!apiKey) {
-    throw new McpError(
+    throw new ToolError(
       ErrorType.MISSING_API_KEY,
-      `Error: ${ENV_VARS.openaiApiKey} is not set, so '${model}' cannot be used. Set ${ENV_VARS.openaiApiKey} in the MCP server's environment, or choose a Gemini model.`
+      `The server has no OpenAI API key, so '${model}' cannot be used.`,
+      `Have the server operator set ${ENV_VARS.openaiApiKey} in the server environment. Do not put API keys in tool arguments.`
     );
   }
 
@@ -153,10 +155,14 @@ export function parseImagesResponse(
   // A format we did not ask for would be saved under the requested extension
   // and misreported in `images[].format`, so refuse it instead.
   if (response.output_format && response.output_format !== config.outputFormat) {
-    throw new McpError(
-      ErrorType.API_ERROR,
-      `Error: OpenAI returned ${response.output_format} instead of the requested ${config.outputFormat}; nothing was saved. Retry, or request ${response.output_format} explicitly.`
-    );
+    return {
+      images: [], usage: toUsageReport(response.usage),
+      issue: {
+        code: ErrorType.API_ERROR,
+        message: `OpenAI returned ${response.output_format} instead of the requested ${config.outputFormat}; this response could not be used.`,
+        next_step: "Report the unexpected format. If another paid attempt is acceptable, submit a new request; the original request may still incur a charge.",
+      },
+    };
   }
 
   const mimeType = MIME_TYPES[config.outputFormat];
@@ -167,13 +173,6 @@ export function parseImagesResponse(
     if (image.b64_json) {
       images.push({ data: image.b64_json, mimeType, width, height });
     }
-  }
-
-  if (images.length === 0) {
-    throw new McpError(
-      ErrorType.API_ERROR,
-      "Error: OpenAI returned no image for this request. Retry, or rephrase the prompt."
-    );
   }
 
   return { images, usage: toUsageReport(response.usage) };
@@ -190,17 +189,15 @@ export async function generateImage(
   throwIfImageCancelled(signal);
   const client = getClient(config.model);
 
-  // Only the SDK call is mapped by handleApiError; parsing raises its own
-  // McpErrors and must not be relabelled as a request failure.
+  // Only the SDK call is mapped by handleApiError.
   let response: ImagesResponse;
   try {
     response = await client.images.generate({
       ...buildCommonParams(config),
       prompt,
-    }, { signal });
+    }, { signal, maxRetries: 0 });
   } catch (error) {
-    throwIfImageCancelled(signal);
-    handleApiError(error, config.model);
+    handleApiError(error, config.model, signal);
   }
 
   return parseImagesResponse(response, config);
@@ -237,108 +234,22 @@ export async function editImage(
       ...buildCommonParams(config),
       prompt,
       image,
-    }, { signal });
+    }, { signal, maxRetries: 0 });
   } catch (error) {
-    throwIfImageCancelled(signal);
-    handleApiError(error, config.model);
+    handleApiError(error, config.model, signal);
   }
 
   return parseImagesResponse(response, config);
 }
 
-/** The error body fields we read beyond what APIError exposes directly. */
-interface OpenAiErrorBody {
-  message?: string;
-  moderation_details?: {
-    moderation_stage?: string;
-    categories?: unknown;
-  };
-}
-
-/**
- * Map an OpenAI SDK error to an McpError whose message says what to do next.
- */
-function handleApiError(error: unknown, model: ImageModel): never {
-  // Preserve McpErrors we raised ourselves (e.g. missing key, no image back).
-  if (error instanceof McpError) {
-    throw error;
-  }
-
-  if (!(error instanceof APIError)) {
-    const message = error instanceof Error ? error.message : String(error);
-    throw new McpError(
-      ErrorType.API_ERROR,
-      `Error: OpenAI request failed: ${message}. Retry; if it persists, try the other provider.`,
-      error
-    );
-  }
-
-  const body = error.error as OpenAiErrorBody | undefined;
-  const apiMessage = body?.message ?? error.message;
-
-  if (error.code === "moderation_blocked") {
-    const details = body?.moderation_details;
-    const categories = Array.isArray(details?.categories)
-      ? details.categories.join(", ")
-      : "unspecified";
-    throw new McpError(
-      ErrorType.CONTENT_BLOCKED,
-      `Error: OpenAI's content moderation blocked this request (${details?.moderation_stage ?? "unknown stage"}; categories: ${categories}). Rephrase the prompt or change the input images.`,
-      error
-    );
-  }
-
-  switch (error.status) {
-    case 401:
-      throw new McpError(
-        ErrorType.MISSING_API_KEY,
-        `Error: OpenAI rejected the API key (401): ${apiMessage}. Check ${ENV_VARS.openaiApiKey}.`,
-        error
-      );
-    case 403:
-      throw new McpError(
-        ErrorType.API_ERROR,
-        `Error: OpenAI denied access (403): ${apiMessage}. GPT Image models may require organisation verification in the OpenAI dashboard; otherwise choose a Gemini model.`,
-        error,
-        { retryable: false }
-      );
-    case 404:
-      throw new McpError(
-        ErrorType.API_ERROR,
-        `Error: OpenAI reports model '${model}' was not found: ${apiMessage}. The model ID may have been retired; try the other OpenAI model or a Gemini model.`,
-        error,
-        { retryable: false }
-      );
-    case 429:
-      throw new McpError(
-        ErrorType.API_RATE_LIMIT,
-        `Error: OpenAI rate limit exceeded (429): ${apiMessage}. Wait a minute and retry, lower num_images, or use a Gemini model.`,
-        error
-      );
-  }
-
-  // 408 and 409 can clear on their own, so they fall through to the retryable
-  // tail; every other 4xx is the request itself being wrong.
-  if (
-    error.status !== undefined &&
-    error.status >= 400 &&
-    error.status < 500 &&
-    error.status !== 408 &&
-    error.status !== 409
-  ) {
-    throw new McpError(
-      ErrorType.API_ERROR,
-      `Error: OpenAI rejected the request: ${apiMessage}. Adjust the arguments accordingly.`,
-      error,
-      // A 4xx is the request itself being wrong; 408/409 and the tail below,
-      // which is a 5xx or a connection failure, stay retryable.
-      { retryable: false }
-    );
-  }
-
-  throw new McpError(
-    ErrorType.API_ERROR,
-    `Error: OpenAI request failed (${error.status ?? "network"}): ${apiMessage}. Retry; if it persists, try the other provider.`,
-    error
-  );
+/** Translate explicit provider evidence; never infer delivery from a missing status. */
+function handleApiError(error: unknown, model: ImageModel, signal?: AbortSignal): never {
+  const apiError = error instanceof APIError ? error : undefined;
+  throw providerRequestError("OpenAI", model, {
+    status: apiError?.status,
+    reason: apiError?.message.replace(/^\d{3} /, ""),
+    contentBlocked: apiError?.code === "moderation_blocked",
+    quotaExhausted: apiError?.code === "insufficient_quota",
+    cancelled: signal?.aborted,
+  }, error);
 }

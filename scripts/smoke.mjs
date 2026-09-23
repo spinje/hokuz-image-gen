@@ -43,7 +43,7 @@ async function callOk(client, tool, args) {
   const result = await client.callTool({ name: tool, arguments: args });
   assert(!result.isError, `tool returned an error: ${result.content?.[0]?.text}`);
   const output = result.structuredContent;
-  assert(output?.success === true, "structuredContent.success is not true");
+  assert(output?.status === "complete", "structuredContent.status is not complete");
   if (output.usage) costUsd += output.usage.estimated_cost_usd;
   return output;
 }
@@ -195,7 +195,7 @@ async function main() {
       const elapsed = Date.now() - started;
       const text = result.content?.[0]?.text ?? "";
       assert(result.isError === true, `expected an error result, got: ${text}`);
-      assert(text.startsWith("Error:"), `message does not start with 'Error:': ${text}`);
+      assert(result.structuredContent?.status === "failed" && result.structuredContent?.issue?.next_step, `missing failure/recovery information: ${text}`);
       assert(elapsed < 1000, `took ${elapsed}ms, so it was not rejected pre-flight`);
       return text.slice(0, 90);
     });
@@ -228,8 +228,8 @@ async function main() {
         const text = result.content?.[0]?.text ?? "";
         assert(result.isError === true, `expected an error result, got: ${text}`);
         assert(
-          result.structuredContent?.error_type === "MISSING_API_KEY",
-          `expected error_type MISSING_API_KEY, got ${result.structuredContent?.error_type}: ${text}`
+          result.structuredContent?.issue?.code === "MISSING_API_KEY",
+          `expected issue.code MISSING_API_KEY, got ${result.structuredContent?.issue?.code}: ${text}`
         );
         return text.slice(0, 90);
       } finally {

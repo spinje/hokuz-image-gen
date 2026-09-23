@@ -20,7 +20,7 @@ Follow `.claude/agents/REVIEW-PROTOCOL.md` (read it first). Lens-specifics on to
 
 ## This Repo's Shape (so you can tell convention from drift)
 
-- **Two tools, one archetype.** `generate-image.ts` and `edit-image.ts` are each: apply defaults → build `GenerationConfig` → `validateGenerationConfig` → (edit: load images) → `runImageTool`, wrapped in a `catch` that returns `imageToolError`. Everything after that point — the request loop, saving, usage, the warning, the response text and the failure result — lives once in `tools/image-tool.ts`, and the output schema once in `schemas/output.ts`. The finding is a handler that grows pipeline logic BESIDE `runImageTool` instead of inside it (its own loop, its own text formatting, its own catch shape), or the two mappings diverging without a reason.
+- **Two tools, one archetype.** `generate-image.ts` and `edit-image.ts` are each: apply defaults → build `GenerationConfig` → `validateGenerationConfig` → (edit: load images) → `runImageTool`, wrapped in a `catch` that returns `imageToolError`. Everything after that point — the request loop, saving, usage, the issue, the response text and the failure result — lives once in `tools/image-tool.ts`, and the output schema once in `schemas/output.ts`. The finding is a handler that grows pipeline logic BESIDE `runImageTool` instead of inside it (its own loop, its own text formatting, its own catch shape), or the two mappings diverging without a reason.
 - **Homes for extraction:** `src/services/` for behaviour, `src/constants.ts` for data, `src/types.ts` for shared shapes, `src/tools/image-tool.ts` for what both tool handlers do identically. A fifth home is a finding unless the deletion test says otherwise.
 - **The service boundary is intentionally thin:** one request → whatever it returns. `numImages` is deliberately NOT in `GenerationConfig`; the loop lives in the tool layer. Moving orchestration into the service or count logic into the service is a shape change, not a simplification.
 
@@ -35,7 +35,7 @@ Follow `.claude/agents/REVIEW-PROTOCOL.md` (read it first). Lens-specifics on to
 7. **Data shapes that obscure the invariant.** Needless optionals forcing `undefined` handling at every consumer; casts where a typed shape would delete branches; the same three fields travelling together — a type waiting to be born, flagged only when bundling deletes real noise at multiple sites.
 8. **Complexity moved, not deleted.** A refactor that rearranges the same concepts with the same branch count. Name the concrete reframing that makes branches disappear, or it isn't a finding.
 9. **Spaghetti growth in surrounding code.** One-off flags threaded into an existing handler, special cases dropped into the request loop. Judge the diff by what it does to the code around it.
-10. **Wrong home.** Capability built beside an existing seam instead of behind it (a second path-resolution rule outside `resolveOutputPath`, a second error-mapping outside `handleApiError`). Name the seam it should route through.
+10. **Wrong home.** Capability built beside an existing seam instead of behind it (a second path-resolution rule outside `resolveOutputDestination`, a second error-mapping outside `handleApiError`). Name the seam it should route through.
 
 ## What NOT to Flag (lens-specific — on top of the protocol's list)
 

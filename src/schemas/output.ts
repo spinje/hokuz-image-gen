@@ -1,6 +1,6 @@
 /**
  * Zod output schema shared by both image tools. They return the same shape:
- * the files written, an optional description, usage and warning, or the error.
+ * the files written, delivery status, optional description/usage and recovery issue.
  */
 
 import { z } from "zod";
@@ -11,7 +11,9 @@ import { ErrorType } from "../types.js";
  * Output schema for hokuz_generate_image and hokuz_edit_image
  */
 export const ImageToolOutputSchema = z.object({
-  success: z.boolean().describe("Whether the call succeeded"),
+  status: z.enum(["complete", "partial", "failed"]).describe(
+    "Delivery outcome: complete means all requested images were saved; partial means some were saved; failed means none were saved. A failed delivery does not mean generation never happened."
+  ),
   images: z
     .array(
       z.object({
@@ -43,7 +45,7 @@ export const ImageToolOutputSchema = z.object({
   description: z
     .string()
     .optional()
-    .describe("Model's text description of the result, when it gave one"),
+    .describe("Model response text, when present, including responses that contained no image"),
   usage: z
     .object({
       input_tokens: z
@@ -55,7 +57,7 @@ export const ImageToolOutputSchema = z.object({
       output_tokens: z
         .number()
         .optional()
-        .describe("Generated-image tokens, summed over the requests that reported them"),
+        .describe("Output tokens reported by the provider, summed across responses that reported them"),
       estimated_cost_usd: z
         .number()
         .describe(
@@ -66,41 +68,24 @@ export const ImageToolOutputSchema = z.object({
         .describe(
           "How estimated_cost_usd was arrived at. 'tokens': arithmetic over the counts above and a price table (OpenAI). 'per_image': Google's published price for the model and resolution (Gemini) — the counts above are real but did NOT produce this cost, and input and text tokens, a fraction of a cent, are not in it."
         ),
-      requests_succeeded: z
+      requests_completed: z
         .number()
         .describe(
-          "Provider requests that returned an image; num_images makes one request per image. A request that failed is not counted here and is described in warning instead."
+          "Provider requests that returned a completed response, including responses without usable images or whose images could not be saved. Request failures are excluded."
         ),
       requests_reported: z
         .number()
         .describe(
-          "How many of those requests estimated_cost_usd covers. Lower than requests_succeeded means it is a partial view of the call, not its whole cost. The token counts have their own scope: each is summed only over the requests that reported it, which can be fewer still."
+          "How many completed responses estimated_cost_usd covers. Lower than requests_completed means it is a partial view of the call, not its whole cost. Unreported charges may apply, including for failed or interrupted requests. The token counts have their own scope: each is summed only over the requests that reported it, which can be fewer still."
         ),
     })
     .optional()
     .describe("Token usage and an estimated cost for the requests that reported them"),
-  warning: z
-    .string()
-    .optional()
-    .describe(
-      "Set when fewer images than requested were produced. The call still succeeds and images holds what was produced, so retry only the shortfall. Carries the failing request's reason."
-    ),
-  error: z
-    .string()
-    .optional()
-    .describe("Error message when the call failed; starts with 'Error:'"),
-  error_type: z
-    .enum(ErrorType)
-    .optional()
-    .describe(
-      "Why the call failed, for choosing the next step. SERVER_BUSY: another image call is active; wait for it to finish before retrying. REQUEST_CANCELLED: the caller cancelled; do not automatically retry. INVALID_MODEL_OPTION, INVALID_IMAGE_PATH, IMAGE_TOO_LARGE: fix the arguments. CONTENT_BLOCKED: rephrase the prompt or change the input images. API_RATE_LIMIT: wait, then retry. MISSING_API_KEY: the provider's key is missing, invalid or denied; use the other provider. API_ERROR: the provider failed the request; read retryable rather than guessing from the message. FILE_WRITE_ERROR: fix output_path. UNKNOWN_ERROR: unexpected."
-    ),
-  retryable: z
-    .boolean()
-    .optional()
-    .describe(
-      "Whether repeating the identical call could succeed. false means it cannot: change the arguments, the prompt, or the server's configuration first. Wait before retrying API_RATE_LIMIT; for SERVER_BUSY, wait for the active image call to finish."
-    ),
+  issue: z.object({
+    code: z.enum(ErrorType).describe("Failure category; read message and next_step for the specific outcome and recovery"),
+    message: z.string().describe("What prevented completion, including any uncertainty about generation"),
+    next_step: z.string().describe("What to do next; preserve saved results and request only missing images if another attempt is appropriate"),
+  }).optional().describe("Present for partial or failed delivery; absent when complete"),
 });
 
 export type ImageToolOutput = z.infer<typeof ImageToolOutputSchema>;
