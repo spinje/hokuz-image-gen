@@ -39,7 +39,7 @@ Follow `.claude/agents/REVIEW-PROTOCOL.md` (read it first). Lens-specifics on to
 
 **Two tools, one archetype.** Generate and edit share every optional parameter, one output schema (`src/schemas/output.ts`) and one pipeline (`src/tools/image-tool.ts`), which is where response formatting and the failure result now live — a change there reaches both tools at once, so check it against both. What is still per tool is the `TOOL_DESCRIPTION`, the input schema, and the param → `GenerationConfig` mapping; a change to one tool's copy of those almost always belongs on the other. Diff them after reading: `diff <(sed -n '/^const TOOL_DESCRIPTION/,/^`;/p' src/tools/generate-image.ts) <(sed -n '/^const TOOL_DESCRIPTION/,/^`;/p' src/tools/edit-image.ts)` is a cheap start.
 
-**Error messages are part of the contract.** Every `McpError` message starts with `Error:` and must let an LLM fix the call: name the bad value, name the accepted values, or name the environment variable. The model-capability message is the standard to match: `Model 'X' (Label) does not support resolution 'Y'. Supported resolutions: A, B.`
+**Error messages are part of the contract.** Every `ToolError` carries `{ code, message, next_step }`. Explain the observed failure and a specific recovery action without exposing SDK internals or inventing a cause. The model-capability message is the standard to match: `Model 'X' (Label) does not support resolution 'Y'. Supported resolutions: A, B.`
 
 ## Review Checklist
 

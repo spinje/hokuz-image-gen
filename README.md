@@ -61,7 +61,7 @@ These are the prices the server estimates a Gemini result's cost with (`GEMINI_P
 | `xhigh`   | ~$0.09      | ~27 s        | ~47 s           |
 | `max`     | ~$0.21      | ~46 s        | ~85 s           |
 
-`2K` roughly doubles the output-token cost of the same quality. `output_format` does not change the price, but a PNG file is roughly 16x the size of the same image as JPEG on disk. Reference images on an edit cost about $0.01 each (~1000 input tokens per 1K image), versus a fraction of a cent on Gemini — for compositions with 4+ reference images prefer `gemini-3.1-flash-image`. OpenAI prices are token-based ($5 / $8 / $30 per million text-input / image-input / image-output tokens, **verify on the [OpenAI pricing page](https://developers.openai.com/api/docs/pricing)**). Results report an estimated cost: from the measured token counts on OpenAI models, from Google's per-image price for the requested resolution on Gemini models (input and text tokens, a fraction of a cent, are not included).
+`2K` roughly doubles the output-token cost of the same quality. Reference images on an edit cost about $0.01 each (~1000 input tokens per 1K image), versus a fraction of a cent on Gemini — for compositions with 4+ reference images prefer `gemini-3.1-flash-image`. OpenAI prices are token-based ($5 / $8 / $30 per million text-input / image-input / image-output tokens, **verify on the [OpenAI pricing page](https://developers.openai.com/api/docs/pricing)**). Results report an estimated cost: from the measured token counts on OpenAI models, from Google's per-image price for the requested resolution on Gemini models (input and text tokens, a fraction of a cent, are not included).
 
 **Rule of thumb:** default to **Flash** for everyday work; drop to **Lite** for drafts, thumbnails, and high-volume batches where speed and cost matter most; reach for **Pro** for hero shots, photorealism, and cinematic lighting where the extra time and cost are justified. Reach for **Flare** or **Sunburst** when the image carries text or must match a precise composition, and raise `quality` only as far as the result needs.
 
@@ -168,7 +168,7 @@ Generate images from text prompts.
 | `resolution` | string | No | `"1K"` | `0.5K`, `1K`, `2K`, `4K`. Rejected if unsupported by the chosen model (Lite is `1K` only; Pro is `1K`/`2K`/`4K`; OpenAI models are `1K`/`2K`, where `1K` ≈ 1 megapixel and `2K` ≈ 4, derived from `aspect_ratio` with each edge rounded to a multiple of 16) |
 | `output_format` | string | No | the `output_path` extension, else `jpeg` | `jpeg` (all models), `png` or `webp` (OpenAI models only). When omitted, a `.jpg`/`.jpeg`/`.png`/`.webp` extension on `output_path` selects the format; the saved file's extension always matches the format |
 | `quality` | string | No | `"medium"` (OpenAI models) | **OpenAI models only.** `low`, `medium`, `high`, `xhigh`, `max` — see the [cost table](#performance--cost). Rejected on Gemini models |
-| `transparent_background` | boolean | No | - | **OpenAI models only.** `true` renders a transparent background; requires `output_format` `png` or `webp` (JPEG has no alpha channel). Rejected on Gemini models |
+| `transparent_background` | boolean | No | - | `true` requires an OpenAI model and `png` or `webp`; `false` is accepted by every model |
 | `include_preview` | boolean | No | `false` | Include a bounded derived JPEG preview and original-pixel alpha measurements; requires MCP image display support |
 | `num_images` | number | No | `1` | Number of images (1-4). Produced via repeated requests |
 | `temperature` | number | No | `1.0` (Gemini models) | **Gemini models only.** Creativity (0.0-2.0). Rejected on OpenAI models |
@@ -184,7 +184,19 @@ output_path: ~/images/headshot.jpg
 aspect_ratio: 3:4
 ```
 
-**Returns** (both tools): `{ success, images: [{ path, format, width?, height?, preview?, preview_warning? }], description?, usage?, warning?, error?, error_type?, retryable? }`. `width`/`height` are each image's pixel size when available, parsed from Gemini's JPEG bytes or OpenAI's response size; if absent, inspect the saved file for exact dimensions. `usage` is `{ input_tokens?, output_tokens?, estimated_cost_usd, cost_basis, requests_succeeded, requests_reported }`, summed over the requests that reported anything. The cost is always estimated, never billed, and `cost_basis` says where it came from: `tokens` on OpenAI, where it is arithmetic over the counts, or `per_image` on Gemini, where it is Google's published price for the model and resolution — there the token counts are real but do **not** determine the cost, so do not report it as a price per token. The counts are optional because a provider can price a request without reporting them; a count no request gave is left out rather than reported as 0. `requests_reported` lower than `requests_succeeded` means `estimated_cost_usd` covers only part of the call; each token count has its own scope and is summed only over the requests that reported it. The text reply names the basis too, so a client that shows only text does not read the counts and the cost as one calculation. `warning` is set when fewer images than requested were produced; the call still succeeds and carries the failing request's error. `error_type` accompanies `error` with the failure class — `INVALID_MODEL_OPTION`, `INVALID_IMAGE_PATH`, `IMAGE_TOO_LARGE`, `CONTENT_BLOCKED`, `API_RATE_LIMIT`, `MISSING_API_KEY`, `API_ERROR`, `FILE_WRITE_ERROR`, `SERVER_BUSY`, `REQUEST_CANCELLED` or `UNKNOWN_ERROR` — so a caller can pick its next step without parsing the message, and `retryable` says whether repeating the identical call could succeed (`false` means change something first). It is worth reading wherever one class covers two different failures: `API_ERROR` spans a 500 and a rejected argument, and `INVALID_IMAGE_PATH` spans a wrong URL and a timed-out or failing image host.
+**Returns** (both tools): `{ status, images: [{ path, format, width?, height?, preview?, preview_warning? }], issue?: { code, message, next_step }, description?, usage? }`.
+
+- `complete`: every requested image was saved.
+- `partial`: some images were saved; keep them and read `issue` before requesting only the shortfall.
+- `failed`: no image was saved. This does **not** mean generation never happened or that no charge was incurred.
+
+`issue` explains what prevented completion and what to do next. The text response includes the same saved paths and recovery advice. Each provider response is saved before requesting another image; a save failure stops further generation. Unsaved images cannot be retrieved later through this tool. Generation requests are never automatically retried, and an interrupted request may have completed at the provider. SDK argument-validation errors remain standard MCP errors identifying the invalid fields.
+
+`images[].path` is authoritative. `width`/`height` describe the saved image when available; preview dimensions are separate. A preview failure leaves the original usable and adds `preview_warning`.
+
+`usage` contains optional `input_tokens`/`output_tokens`, `estimated_cost_usd`, `cost_basis`, `requests_succeeded`, and `requests_reported`. Estimates cover only reported responses, including images returned but not saved; charges for failed or interrupted requests are not included. `cost_basis` is `tokens` for OpenAI or `per_image` for Gemini. Missing token counts are omitted, not zero. `requests_reported` below `requests_succeeded` means the estimate covers only some requests that returned images.
+
+Version 2 replaces `success`, `warning`, `error`, `error_type`, and `retryable` with `status` and `issue`. MCP `isError` is true for failed delivery; partial delivery retains usable images and an issue.
 
 ### hokuz_edit_image
 
@@ -195,14 +207,14 @@ Edit existing images using text instructions. Generative edits on either provide
 | Parameter | Type | Required | Default | Description |
 |-----------|------|----------|---------|-------------|
 | `prompt` | string | Yes | - | Editing instruction |
-| `image_paths` | string[] | Yes | - | Array of image paths or URLs, in prompt order ("first image" / "second image"). Gemini models: up to 14 images, 7 MB each, jpeg/png/webp/gif/heic/heif. OpenAI models: up to 16 images, 50 MB each, jpeg/png/webp only. The count is checked before any image is read; the type as each one is loaded, still before any API call |
+| `image_paths` | string[] | Yes | - | Array of local image paths or public HTTP(S) URLs, in prompt order ("first image" / "second image"). Gemini models: up to 14 images, 7 MB each, jpeg/png/webp/gif/heic/heif. OpenAI models: up to 16 images, 50 MB each, jpeg/png/webp only. Combined inputs must fit 128 MiB. Count, type and size are checked before any provider call |
 | `output_path` | string | Yes | - | File path to save result (directory or full path). Its extension selects `output_format` when that is omitted, and the saved file's extension always matches the format. An existing file is never overwritten: `-2`, `-3`, … is appended |
 | `model` | string | No | `"gemini-3.1-flash-image"` | Model ID: `gemini-3.1-flash-image`, `gemini-3.1-flash-lite-image`, `gemini-3-pro-image`, `gpt-image-2.5-flare`, `gpt-image-2.5-sunburst` |
 | `aspect_ratio` | string | No | `"auto"` | `auto` or any generate target ratio. Gemini `auto` omits the ratio and still applies `resolution`; OpenAI `auto` lets the provider choose the size and rejects explicit `resolution`. Auto does not guarantee original framing. Rejected if unsupported by the chosen model |
 | `resolution` | string | No | `1K` (Gemini, or OpenAI with an explicit ratio) | `0.5K`, `1K`, `2K`, `4K`. Rejected if unsupported by the chosen model (Lite is `1K` only; Pro is `1K`/`2K`/`4K`; OpenAI models are `1K`/`2K`, where `1K` ≈ 1 megapixel and `2K` ≈ 4, derived from `aspect_ratio` with each edge rounded to a multiple of 16). No schema default here: on an OpenAI model it needs an explicit `aspect_ratio`, and `auto` plus a resolution is rejected |
 | `output_format` | string | No | the `output_path` extension, else `jpeg` | `jpeg` (all models), `png` or `webp` (OpenAI models only). When omitted, a `.jpg`/`.jpeg`/`.png`/`.webp` extension on `output_path` selects the format; the saved file's extension always matches the format |
 | `quality` | string | No | `"medium"` (OpenAI models) | **OpenAI models only.** `low`, `medium`, `high`, `xhigh`, `max` — see the [cost table](#performance--cost). Rejected on Gemini models |
-| `transparent_background` | boolean | No | - | **OpenAI models only.** `true` renders a transparent background; requires `output_format` `png` or `webp` (JPEG has no alpha channel). Rejected on Gemini models |
+| `transparent_background` | boolean | No | - | `true` requires an OpenAI model and `png` or `webp`; `false` is accepted by every model |
 | `include_preview` | boolean | No | `false` | Include a bounded derived JPEG preview and original-pixel alpha measurements; requires MCP image display support |
 | `num_images` | number | No | `1` | Number of variations (1-4). Produced via repeated requests |
 | `temperature` | number | No | `1.0` (Gemini models) | **Gemini models only.** Creativity (0.0-2.0). Rejected on OpenAI models |
@@ -223,35 +235,6 @@ image_paths: ["~/old-photos/grandma-1950.jpg"]
 output_path: ~/restored/
 ```
 
-## Use Cases
-
-### Basic Generation
-- Product mockups and visualizations
-- Social media graphics
-- Concept art and illustrations
-
-### Image Editing
-- Background removal/replacement
-- Color correction and enhancement
-- Object addition/removal
-
-### Style Transfer
-- Apply artistic styles to photographs
-- Create consistent visual branding
-- Transform images into different art styles
-
-### Stickers, Logos and Overlays
-- Transparent PNG or WebP output — `gpt-image-2.5-flare` with `transparent_background: true` and `output_format: "png"`
-
-### Text-Heavy and Branding Work
-- Posters, packaging mockups and social cards whose text must read correctly — `gpt-image-2.5-sunburst` at `quality: "high"`
-- Edits where approved details (faces, logos, layout) must survive unchanged
-
-### Multi-Image Composition
-- Combine product shots into catalogs
-- Create composite scenes
-- Maintain character consistency across images
-
 ## Local resource and file controls
 
 Optionally set `HOKUZ_OUTPUT_ROOT` to an existing absolute directory. Relative output paths then start in that directory; absolute paths, traversal and symlink targets outside it are rejected before provider work and checked again when saving. An empty or invalid root is rejected. Without this setting, output paths retain their existing behavior. `~` and `~/` expand to the current user's home (using the account home if `HOME` is unset); `~otheruser` is not expanded.
@@ -264,7 +247,7 @@ Each server process admits one generate/edit call at a time, including input loa
 
 Saved filenames are claimed with exclusive creation, including when different processes write to the same directory. Collisions try the next suffix without repeating the provider request, with a maximum of 10,000 candidate names. Other write failures stop immediately.
 
-Client cancellation is forwarded to provider requests and input reads, and stops subsequent image requests and previews. Already-returned provider images are still saved. Cancellation does not guarantee that the provider has stopped or refunded an in-flight request. Preview processing checks cancellation between metadata, statistics, resizing and encoding stages. An already-running native stage must finish before the active-call slot is released; cancellation prevents subsequent stages but does not terminate native decoding. `REQUEST_CANCELLED` is not automatically retryable.
+Client cancellation is forwarded to provider requests and input reads, and stops subsequent image requests and previews. Already-returned provider images are still saved. Cancellation does not guarantee that the provider has stopped or refunded an in-flight request. Preview processing checks cancellation between metadata, statistics, resizing and encoding stages. An already-running native stage must finish before the active-call slot is released; cancellation prevents subsequent stages but does not terminate native decoding. A cancellation issue advises against automatic retry.
 
 Public HTTP(S) image URLs remain enabled by default. Every connection and redirect must resolve only to public addresses; loopback, private/link-local, reserved and translation/tunnel address ranges are rejected. The transport checks the addresses supplied directly to the socket, follows at most five redirects within the existing 30-second deadline, and closes rejected responses. It uses direct connections without a proxy and requests identity HTTP content encoding; servers that insist on encoded responses are rejected. For private-network sources, download the image separately and pass its local path.
 
@@ -274,7 +257,7 @@ Set `include_preview: true` on either tool to inspect a reduced image in a clien
 
 `images[].preview` identifies the image block by its zero-based `content_index` and reports preview dimensions and original 8-bit alpha extrema. `has_channel` alone does not prove transparency: an opaque PNG can have an alpha channel. A minimum below 255 means some nonopaque pixels; 0 means at least one fully transparent pixel. No alpha channel is reported as effective opacity 255–255. These measurements do not establish a clean cutout or preservation of the reference.
 
-The optional native `sharp` dependency is installed by default on supported platforms. An already-built server can still generate/edit images when optional dependencies are omitted. Building, typechecking or testing this TypeScript checkout requires `sharp` installed, so use the normal install for development. Requested previews then carry a per-image `preview_warning`; inspect the already-saved original instead of repeating a paid call. The same nonfatal notice applies to decoding failures or preview limits. The existing top-level `warning` continues to describe a generation shortfall independently.
+The optional native `sharp` dependency is installed by default on supported platforms. An already-built server can still generate/edit images when optional dependencies are omitted. Building, typechecking or testing this TypeScript checkout requires `sharp` installed, so use the normal install for development. When the decoder is unavailable, requested previews carry a per-image `preview_warning`; inspect the already-saved original instead of repeating a paid call. The same nonfatal notice applies to decoding failures or preview limits. A top-level `issue` describes a delivery shortfall independently.
 
 Preview processing accepts single-frame, 8-bit JPEG/PNG/WebP up to 32 MiB, 25 million pixels and 16,384 pixels on either edge. Each panel fits within 512×512 without upscaling or cropping; a two-panel result is at most 1024×512. Each preview is at most 200 KiB of JPEG (at most four images / 800 KiB before base64 encoding per call). Processing is sequential, with a three-second native timeout per output pipeline, excluding native queue time; original statistics and metadata are bounded by input size/pixels, not that timeout; it is not a total-call deadline. Original generation and saving are not subject to these preview limits. Preview payloads can add client image-token costs; no additional provider request is made.
 
@@ -300,48 +283,13 @@ npm run clean        # Remove build artifacts
 
 npm run typecheck    # tsc --noEmit
 npm run lint         # ESLint (zero warnings allowed)
-npm test             # Vitest (no network; ~0.5 s)
+npm test             # Vitest (no network; includes native image tests)
 npm run check        # typecheck + lint + test — the gate CI runs on every pull request
 
 npm run build && npm run smoke   # paid live check against both providers (~10 cents)
 ```
 
-## Project Structure
-
-```
-.
-├── src/
-│   ├── index.ts              # Entry point (stdio startup)
-│   ├── server.ts             # createServer(): registers tools
-│   ├── constants.ts          # Models, capability registry, limits, defaults
-│   ├── types.ts              # TypeScript types and McpError
-│   ├── schemas/
-│   │   ├── generate.ts       # Generate tool input schema
-│   │   ├── edit.ts           # Edit tool input schema
-│   │   └── output.ts         # Output schema shared by both tools
-│   ├── providers/
-│   │   ├── index.ts          # Validation + dispatch on the registry's provider
-│   │   ├── gemini.ts         # Gemini Interactions API client
-│   │   ├── openai.ts         # OpenAI Images API client
-│   │   └── __tests__/
-│   ├── services/
-│   │   ├── file-utils.ts     # File operations
-│   │   └── __tests__/
-│   ├── tools/
-│   │   ├── generate-image.ts # Generate tool: description + param mapping
-│   │   ├── edit-image.ts     # Edit tool: description + param mapping
-│   │   ├── image-tool.ts     # Pipeline shared by both tools
-│   │   └── __tests__/
-│   └── __tests__/            # Server contract tests + in-memory MCP harness
-├── scripts/smoke.mjs         # npm run smoke: paid live check of the built server
-├── .github/workflows/ci.yml  # PR gate: build, typecheck, lint, test
-├── dist/                     # Compiled output (generated)
-├── eslint.config.js
-├── vitest.config.ts
-├── package.json
-├── tsconfig.json
-└── README.md
-```
+For the source layout and contributor guidance, see [CLAUDE.md](CLAUDE.md#project-structure).
 
 ## Troubleshooting
 
@@ -370,7 +318,7 @@ Gemini models take 14 reference images, OpenAI models 16. Remove images, or swit
 OpenAI models accept jpeg, png and webp only; GIF and HEIC are rejected before the API call. Convert the image, or use a Gemini model, which accepts both.
 
 ### "Model … does not accept 'quality'" / "does not accept 'temperature'"
-`quality` is OpenAI-only and `temperature` is Gemini-only. Omit the option, or switch to a model of the other provider. Neither has a schema default, so an option only reaches the request when you send it.
+`quality` is OpenAI-only and `temperature` is Gemini-only. Omit the option, or switch to a model of the other provider. Neither has a schema default; each provider applies its own default when its option is omitted.
 
 ### "Model … cannot apply resolution … when aspect_ratio is 'auto'"
 On OpenAI models the pixel size is derived from `aspect_ratio`, and `auto` (the `hokuz_edit_image` default) hands the choice to the provider, so a `resolution` could not be honoured. Set an `aspect_ratio` to request a target shape and resolution, or omit `resolution`. Gemini models apply `resolution` whatever the ratio.
@@ -382,19 +330,19 @@ GPT Image models may require organisation verification in the [OpenAI dashboard]
 The prompt or an input image tripped OpenAI's moderation. The message names the stage and categories; rephrase the prompt or change the inputs.
 
 ### "No images were generated" / "Gemini's safety filters blocked this request"
-The prompt may have triggered safety filters. Try rephrasing with less explicit or controversial content. Gemini returns a blocked request either as a response carrying no image (the first message) or as a 400 naming safety (the second); both come back as `error_type` `CONTENT_BLOCKED`.
+The server currently classifies both a Gemini response with no image and an explicit safety rejection as `CONTENT_BLOCKED`. A missing image alone does not establish that moderation caused it; inspect the returned message.
 
 ### "Gemini rejected the API key"
 Google answers an invalid key with a 400 rather than a 401. Check `GEMINI_API_KEY` (or `GOOGLE_API_KEY`) in the MCP server's environment — get a key at [AI Studio](https://aistudio.google.com/) — or use an OpenAI model.
 
 ### "Gemini denied the request (403)"
-The key is valid but not allowed to call this model: check the project's billing and API enablement in the Google Cloud console, or use an OpenAI model.
+The request was denied: check the project's billing and API enablement in the Google Cloud console, or use an OpenAI model.
 
 ### "Gemini reports model '…' was not found"
 A 404 means either the model ID has been retired or the requested resolution is not offered for it. Verify the ID against the [models list](https://ai.google.dev/gemini-api/docs/models), try another Gemini model, or use an OpenAI model.
 
 ### "Rate limit exceeded"
-You've made too many requests. Wait a few minutes before trying again. OpenAI tier-1 accounts allow about 5 images per minute, so `num_images: 4` on a GPT Image model is close to the ceiling.
+Wait before retrying. Limits depend on the provider, model and account tier.
 
 ### "Image file not found"
 Verify the image path is correct. Use absolute paths or paths relative to home (`~/`).
