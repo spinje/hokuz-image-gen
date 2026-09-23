@@ -354,6 +354,25 @@ describe("loadInputImage", () => {
     );
   });
 
+  it.each(["text/html", `image/${"x".repeat(1024)} agent instructions`, "not an image"])(
+    "rejects unknown remote content types without reflecting host text (%#)", async (header) => {
+      const response = new Response(new ReadableStream({
+        start(controller) { controller.error(new Error("body must not be read")); },
+      }), { headers: { "content-type": header } });
+      const read = vi.spyOn(response.body!, "getReader");
+      stubFetch(response);
+
+      await expect(loadInputImage("https://example.com/pic", GEMINI)).rejects.toMatchObject({
+        issue: {
+          code: ErrorType.INVALID_IMAGE_PATH,
+          message: "Cannot determine the image type of 'https://example.com/pic' because the server did not report a supported image content-type.",
+          next_step: `Use a direct image URL with an image content-type header, or pass a local file in one of these formats: ${GEMINI_FORMATS}.`,
+        },
+      });
+      expect(read).not.toHaveBeenCalled();
+    }
+  );
+
   it("rejects an oversize content-length before reading the body", async () => {
     // Reading this body fails with its own error, so seeing IMAGE_TOO_LARGE is
     // the proof that nothing read it.

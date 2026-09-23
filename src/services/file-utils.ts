@@ -302,6 +302,11 @@ async function fetchInputImage(
         "because the server did not report a content-type"
       );
     }
+    // Unknown host-supplied text is not useful format guidance for the caller.
+    if (!Object.values(INPUT_MIME_BY_EXTENSION).includes(mimeType)) {
+      throw unknownTypeError(imageUrl, model,
+        "because the server did not report a supported image content-type");
+    }
     assertModelAcceptsType(imageUrl, mimeType, model);
 
     const declaredLength = Number(response.headers.get("content-length"));

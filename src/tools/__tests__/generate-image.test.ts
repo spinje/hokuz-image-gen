@@ -25,16 +25,41 @@ let harness: Awaited<ReturnType<typeof connectTestClient>>;
 
 beforeEach(async () => {
   generateMock.mockReset();
+  vi.stubEnv("HOKUZ_OUTPUT_ROOT", undefined);
   tmp = await fs.mkdtemp(path.join(os.tmpdir(), "hokuz-gen-"));
   harness = await connectTestClient();
 });
 
 afterEach(async () => {
   await harness.close();
+  vi.unstubAllEnvs();
   await fs.rm(tmp, { recursive: true, force: true });
 });
 
 describe(TOOL, () => {
+  it.each(["child.jpg", "missing/child.jpg", ""])("rejects a file used as an output directory before generation (%s)", async (suffix) => {
+    const parent = path.join(tmp, "notes.txt");
+    await fs.writeFile(parent, "keep this");
+    generateMock.mockResolvedValue(okResponse());
+    const outputPath = `${parent}/${suffix}`;
+
+    const result = await harness.callTool(TOOL, { prompt: "p", output_path: outputPath });
+
+    expect(result.isError).toBe(true);
+    expect(result.structuredContent).toMatchObject({
+      status: "failed",
+      images: [],
+      issue: {
+        code: "FILE_WRITE_ERROR",
+        message: expect.stringContaining("Could not resolve an output directory"),
+        next_step: expect.stringContaining("accessible directories"),
+      },
+    });
+    expect(firstText(result)).toContain("Generation did not start.");
+    expect(generateMock).not.toHaveBeenCalled();
+    expect(await fs.readFile(parent, "utf8")).toBe("keep this");
+  });
+
   it("applies defaults when optional params are omitted and writes the file", async () => {
     generateMock.mockResolvedValue(okResponse("a lake"));
 

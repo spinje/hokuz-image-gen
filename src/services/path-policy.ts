@@ -9,7 +9,7 @@ export function expandHomePath(value: string): string {
   return value.replace(/^~(?=$|\/)/, process.env.HOME || os.homedir());
 }
 
-async function canonicalDestination(destination: string): Promise<string> {
+async function canonicalDestination(destination: string, requireDirectory = false): Promise<string> {
   let ancestor = destination;
   const missing: string[] = [];
   for (;;) {
@@ -24,7 +24,7 @@ async function canonicalDestination(destination: string): Promise<string> {
     }
     // A dangling symlink must fail here, not be treated as a missing directory.
     const canonical = await fs.realpath(ancestor);
-    if (missing.length && !(await fs.stat(canonical)).isDirectory()) {
+    if ((missing.length || requireDirectory) && !(await fs.stat(canonical)).isDirectory()) {
       throw new Error("An output parent is not a directory");
     }
     return path.join(canonical, ...missing);
@@ -40,7 +40,19 @@ export async function resolveOutputDestination(outputPath: string): Promise<stri
   if (outputPath.includes("\0")) throw new ToolError(ErrorType.FILE_WRITE_ERROR, "output_path contains a null byte.", "Remove the null byte from output_path.");
   const expanded = expandHomePath(outputPath);
   const configured = process.env[ENV_VARS.outputRoot];
-  if (configured === undefined) return path.resolve(expanded);
+  if (configured === undefined) {
+    const absolute = path.resolve(expanded);
+    // Validate directory intent, not a filename that exclusive creation can suffix.
+    const directory = /[\\/]$/.test(outputPath) ? absolute : path.dirname(absolute);
+    try {
+      await canonicalDestination(directory, true);
+    } catch (error) {
+      throw new ToolError(ErrorType.FILE_WRITE_ERROR,
+        `Could not resolve an output directory for '${outputPath}'.`,
+        "Choose an output_path whose existing directory components are accessible directories with valid symlink targets.", error);
+    }
+    return absolute;
+  }
   let root: string;
   try {
     const rootPath = expandHomePath(configured);
@@ -55,7 +67,7 @@ export async function resolveOutputDestination(outputPath: string): Promise<stri
   const absolute = path.resolve(root, expanded);
   let canonical: string;
   try {
-    canonical = await canonicalDestination(absolute);
+    canonical = await canonicalDestination(absolute, /[\\/]$/.test(outputPath));
   } catch (error) {
     throw new ToolError(ErrorType.FILE_WRITE_ERROR,
       `Could not resolve output_path '${outputPath}' within '${root}'.`,
