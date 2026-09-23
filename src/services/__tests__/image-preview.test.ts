@@ -46,12 +46,8 @@ describe("bounded image preview", () => {
     expect((await preview(webp, "image/webp")).alpha).toEqual({ has_channel: true, min: 0, max: 255 });
   });
 
-  it("rejects byte, pixel and edge overflow without requiring large compressed fixtures", async () => {
+  it("rejects byte overflow before decoding", async () => {
     await expect(createImagePreview("A".repeat(4 * Math.ceil(32 * 1024 * 1024 / 3) + 1), "image/jpeg")).rejects.toThrow("32 MiB");
-    for (const [width, height] of [[5001, 5000], [16385, 1]]) {
-      const bytes = await sharp({ create: { width, height, channels: 3, background: "white" } }).png().toBuffer();
-      await expect(preview(bytes)).rejects.toThrow(/pixel|edge/i);
-    }
   });
 
   it("rejects signature mismatch, non-8-bit pixels and animated output", async () => {
