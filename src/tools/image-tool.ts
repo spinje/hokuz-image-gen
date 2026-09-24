@@ -54,7 +54,8 @@ export const MODEL_GUIDE = `Models (~time, ~cost per 1K image):
 - gemini-3.1-flash-image (Nano Banana 2, DEFAULT): ~11s, ${usd("gemini-3.1-flash-image", "1K")} (0.5K ${usd("gemini-3.1-flash-image", "0.5K")}, 2K ${usd("gemini-3.1-flash-image", "2K")}, 4K ${usd("gemini-3.1-flash-image", "4K")}); the only model with 1:4, 4:1, 1:8, 8:1. Best everyday choice.
 - gemini-3-pro-image (Nano Banana Pro): ~17s, ${usd("gemini-3-pro-image", "1K")} (1K/2K; 4K ${usd("gemini-3-pro-image", "4K")}). Photorealism, hero shots, factual content.
 - gpt-image-2.5-flare (OpenAI): follows quality: low $0.006/10s, medium $0.013/14s, high $0.05/18s, xhigh $0.09/27s, max $0.21/46s; at low, the cheapest image overall. Single subjects and short text.
-- gpt-image-2.5-sunburst (OpenAI): same prices, 1.5-2x slower. Multi-element text layouts, branding, precise edits.`;
+- gpt-image-2.5-sunburst (OpenAI): same prices, 1.5-2x slower. Multi-element text layouts, branding, precise edits.
+Gemini outputs jpeg only; OpenAI outputs jpeg, png or webp, including transparent backgrounds.`;
 
 /** Annotations shared by both tools (same file-writing, never-overwriting behaviour). */
 export const IMAGE_TOOL_ANNOTATIONS = {

@@ -27,7 +27,7 @@ import { DEFAULTS } from "../constants.js";
  */
 const TOOL_DESCRIPTION = `Generate images from a text prompt with Google Nano Banana (Gemini) or OpenAI GPT Image 2.5 models and save them as files. Unsupported model/option combinations are rejected before any API call, naming the supported values; nothing is silently downgraded.
 
-- aspect_ratio is a target: check the returned width/height, which can differ slightly.
+- aspect_ratio is a target: check the returned width/height; the ratio can be off by a few percent (1:8 at 1K gives 352x2928).
 - status: complete, partial or failed; partial/failed carry an issue with what happened and the next step. Nothing is retried automatically.
 - SERVER_BUSY: one image call runs at a time; retry after it finishes. No request was sent.
 - A model whose provider key is not configured fails at call time.

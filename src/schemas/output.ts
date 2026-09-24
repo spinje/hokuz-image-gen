@@ -40,11 +40,11 @@ export const ImageToolOutputSchema = z.object({
         width: z
           .number()
           .optional()
-          .describe("Delivered width in pixels (measured from the file on Gemini, as reported by the provider on OpenAI); can differ slightly from the requested aspect ratio"),
+          .describe("Delivered width in pixels (measured from the file on Gemini, as reported by the provider on OpenAI); can differ from the requested aspect ratio by a few percent"),
         height: z
           .number()
           .optional()
-          .describe("Delivered height in pixels (measured from the file on Gemini, as reported by the provider on OpenAI); can differ slightly from the requested aspect ratio"),
+          .describe("Delivered height in pixels (measured from the file on Gemini, as reported by the provider on OpenAI); can differ from the requested aspect ratio by a few percent"),
       })
     )
     .describe("The images written to disk, in order"),

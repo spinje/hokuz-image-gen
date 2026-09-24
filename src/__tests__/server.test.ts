@@ -131,6 +131,10 @@ describe("published tool contract", () => {
         // Word boundaries: "low" is a substring of "follow", "high" of "xhigh".
         expect(tool.description).toMatch(new RegExp(`\\b${quality}\\b`));
       }
+      // Output formats decide the model for png/webp/transparent deliverables,
+      // so they sit beside the model choice, not only in output_format.
+      expect(tool.description).toContain("Gemini outputs jpeg only");
+      expect(tool.description).toMatch(/OpenAI outputs jpeg, png or webp, including transparent/);
     }
   });
 
