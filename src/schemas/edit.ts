@@ -15,9 +15,9 @@ import {
 import { OUTPUT_SIZES_DESCRIPTION } from "./output-sizes.js";
 
 /**
- * Extended aspect ratios for editing (includes 'auto' option)
+ * Aspect ratios for editing: 'auto' and 'match_input' as well as the explicit ones.
  */
-const EDIT_ASPECT_RATIOS = ["auto", ...ASPECT_RATIOS] as const;
+const EDIT_ASPECT_RATIOS = ["auto", "match_input", ...ASPECT_RATIOS] as const;
 
 /**
  * Input schema for hokuz_edit_image tool
@@ -81,10 +81,15 @@ export const EditImageInputSchema = z
       .enum(EDIT_ASPECT_RATIOS)
       .default("auto")
       .describe(
-        `Target aspect ratio; the delivered pixel size can differ from it by a few percent. Options: auto, ${ASPECT_RATIOS.join(", ")}. ` +
+        `Target aspect ratio; the delivered pixel size can differ from it by a few percent. Options: auto, match_input, ${ASPECT_RATIOS.join(", ")}. ` +
           "'auto' (default): Gemini omits the ratio and still applies resolution (1K unless set); OpenAI " +
           "chooses the output size itself and rejects an explicit resolution. Neither guarantees the original " +
-          "framing, and no size is known in advance; set an explicit ratio to request a target shape. The extreme ratios (1:4, 4:1, 1:8, 8:1) are " +
+          "framing, and no size is known in advance; set an explicit ratio to request a target shape. " +
+          "'match_input': the ratio this model supports nearest the first image's shape (JPEG EXIF orientation applied), then " +
+          "exactly as if that ratio were passed. It matches shape only: resolution still sets the pixel size, and OpenAI accepts " +
+          "resolution with it. For extreme shapes the nearest supported ratio can be far off (only gemini-3.1-flash-image has " +
+          "1:4-8:1); settings echoes the chosen ratio, matched_input_size and match_error_pct. The first image must be JPEG, " +
+          "PNG, WebP or GIF, not HEIC/HEIF. The extreme ratios (1:4, 4:1, 1:8, 8:1) are " +
           `supported only by gemini-3.1-flash-image; OpenAI models accept the other ten. ${OUTPUT_SIZES_DESCRIPTION} Default: auto`
       ),
 
@@ -98,7 +103,7 @@ export const EditImageInputSchema = z
           "1K/2K/4K; OpenAI 1K/2K). Gemini models request this resolution, 1K when omitted, including " +
           "with aspect_ratio 'auto'; higher resolution does not guarantee retention of input detail. " +
           "OpenAI models reject it while aspect_ratio is 'auto' (the default), because the provider " +
-          "then chooses the size itself; with an explicit aspect_ratio they accept it and apply 1K " +
+          "then chooses the size itself; with an explicit aspect_ratio or match_input they accept it and apply 1K " +
           "when omitted: 1K ~1 megapixel, 2K ~4 megapixels (about twice the cost), with dimensions derived from " +
           "aspect_ratio and each edge rounded to a multiple of 16."
       ),

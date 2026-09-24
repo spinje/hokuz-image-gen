@@ -48,7 +48,7 @@ Attack first the claims whose failure gives the caller a wrong image or a wrong 
 A careless, literal caller — not an attacker (that is `review-input-safety`'s). The standing arsenal:
 - **The real model ID.** Does `gemini-3.1-flash-lite-image` still resolve? (One cheap call per provider proves that family is alive — five IDs in two families; do not burn a call per model unless the change is about models.)
 - **The directory path and the file path.** `output_path: <tmpdir>/` and `<tmpdir>/x.png` — is the file where the response says, and is it `.jpg`?
-- **The edit with a real input.** Feed a small real JPEG (generate one first, reuse it) — does edit return an image, and does `aspect_ratio: "auto"` produce a sane result?
+- **The edit with a real input.** Feed a small real JPEG (generate one first, reuse it) — does edit return an image, and does `aspect_ratio: "auto"` produce a sane result, and does `match_input` on a portrait input come back portrait at the echoed ratio?
 - **The rejected combination.** Lite + `2K`, Flare + `4K`, Flare + `temperature`, or a Gemini model + `quality` must fail BEFORE any call (no cost) with the documented message — confirm zero API calls by timing or by an obviously invalid key.
 - **The second time.** `num_images: 2` into a directory — two distinct files, count matches text and structured output.
 - **The empty and the odd.** An empty description in the response, a prompt that yields text-only — what does the caller see?

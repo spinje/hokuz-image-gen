@@ -4,6 +4,7 @@ import * as os from "os";
 import * as path from "path";
 import sharp from "sharp";
 import { DEFAULTS } from "../../constants.js";
+import { pngHeader } from "../../__tests__/fixtures.js";
 
 const { editMock } = vi.hoisted(() => ({ editMock: vi.fn() }));
 
@@ -228,6 +229,74 @@ describe(TOOL, () => {
     expect(failed.isError).toBe(true);
     expect(firstText(failed)).toContain("An unexpected error prevented completion");
     expect(firstText(failed)).not.toContain("boom");
+  });
+
+  describe("aspect_ratio match_input", () => {
+    async function pngFile(name: string, width: number, height: number): Promise<string> {
+      const file = path.join(tmp, name);
+      await fs.writeFile(file, pngHeader(width, height));
+      return file;
+    }
+
+    it("sends the model's ratio nearest the first image's shape, with resolution accepted on OpenAI", async () => {
+      const portrait = await pngFile("portrait.png", 720, 1000);
+      const landscape = await pngFile("landscape.png", 1200, 896);
+
+      const gemini = await harness.callTool(TOOL, {
+        prompt: "p", image_paths: [portrait, landscape], output_path: tmp, aspect_ratio: "match_input",
+      });
+      expect(gemini.isError).toBeFalsy();
+      // The first image decides; the second only rides along.
+      expect(editMock.mock.calls[0][2]).toMatchObject({ aspectRatio: "3:4", resolution: undefined });
+
+      // 'auto' plus a resolution is rejected on OpenAI (the test below); match_input is an explicit ratio.
+      const openai = await harness.callTool(TOOL, {
+        prompt: "p", image_paths: [landscape], output_path: tmp, aspect_ratio: "match_input",
+        model: "gpt-image-2.5-flare", resolution: "2K",
+      });
+      expect(openai.isError).toBeFalsy();
+      expect(editMock.mock.calls[1][2]).toMatchObject({ aspectRatio: "4:3", resolution: "2K" });
+    });
+
+    it("still validates the other options before loading any image", async () => {
+      const result = await harness.callTool(TOOL, {
+        prompt: "p", image_paths: [path.join(tmp, "missing.png")], output_path: tmp,
+        aspect_ratio: "match_input", model: "gemini-3.1-flash-lite-image", resolution: "2K",
+      });
+      expect(firstText(result)).toMatch(/does not support resolution '2K'/);
+      expect(firstText(result)).not.toMatch(/not found/);
+      expect(editMock).not.toHaveBeenCalled();
+    });
+
+    it("rejects a first image whose size cannot be read before loading the rest or calling the provider", async () => {
+      const heic = path.join(tmp, "photo.heic");
+      await fs.writeFile(heic, "heic-bytes");
+      // "first-image" is not a PNG header, whatever its extension says.
+      for (const [source, message] of [
+        [heic, `aspect_ratio 'match_input' cannot read the pixel size of the HEIC/HEIF first image '${heic}'.`],
+        [first, `aspect_ratio 'match_input' could not read the pixel size of the first image '${first}': its header is not a readable JPEG, PNG, WebP or GIF.`],
+      ]) {
+        const result = await harness.callTool(TOOL, {
+          prompt: "p", image_paths: [source, path.join(tmp, "missing.png")], output_path: tmp, aspect_ratio: "match_input",
+        });
+        expect(result.isError).toBe(true);
+        expect(result.structuredContent).toMatchObject({
+          status: "failed",
+          issue: {
+            code: "INVALID_IMAGE_PATH",
+            message: `${message} Generation did not start.`,
+            next_step: "Pass an explicit aspect_ratio, or convert the first image to JPEG/PNG/WebP.",
+          },
+        });
+        expect(result.structuredContent).not.toHaveProperty("settings");
+      }
+      expect(editMock).not.toHaveBeenCalled();
+
+      // The same HEIC is a valid Gemini input with any other aspect_ratio.
+      const accepted = await harness.callTool(TOOL, { prompt: "p", image_paths: [heic], output_path: tmp });
+      expect(accepted.isError).toBeFalsy();
+      expect(editMock).toHaveBeenCalledTimes(1);
+    });
   });
 
   it("rejects an explicit resolution on an OpenAI model with the default 'auto' ratio", async () => {

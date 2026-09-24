@@ -69,6 +69,8 @@ export const IMAGE_TOOL_ANNOTATIONS = {
 export interface ImageToolRun {
   /** The validated config every request is sent with; echoed as `settings`. */
   config: GenerationConfig;
+  /** Edit match_input only: the first input's displayed size the ratio was chosen from. */
+  matchedInput?: { width: number; height: number };
   outputPath: string;
   requestedCount: number;
   includePreview?: boolean;
@@ -112,12 +114,19 @@ function sumUsage(usages: UsageReport[]): UsageReport | undefined {
  * the same `effectiveConfig` the provider builds its request from, so the echo
  * cannot drift from what was sent.
  */
-function settingsOutput(config: GenerationConfig): NonNullable<ImageToolOutput["settings"]> {
+function settingsOutput(
+  config: GenerationConfig,
+  matchedInput: ImageToolRun["matchedInput"]
+): NonNullable<ImageToolOutput["settings"]> {
   const sent = effectiveConfig(config);
   const size = expectedSize(config);
   return {
     model: sent.model,
     aspect_ratio: sent.aspectRatio ?? "auto",
+    ...(matchedInput && sent.aspectRatio && {
+      matched_input_size: `${matchedInput.width}x${matchedInput.height}`,
+      match_error_pct: aspectErrorPct(sent.aspectRatio, matchedInput.width, matchedInput.height),
+    }),
     ...(sent.resolution !== undefined && { resolution: sent.resolution }),
     ...(size !== undefined && { expected_size: size }),
     output_format: sent.outputFormat,
@@ -139,9 +148,14 @@ function aspectErrorPct(aspectRatio: AspectRatio, width: number, height: number)
   return Math.round((width / height / (w / h) - 1) * 10_000) / 100;
 }
 
+/** "+0.63%", "-3.83%": an aspect error as both text lines print it. */
+function signedPct(pct: number): string {
+  return `${pct > 0 ? "+" : ""}${pct}%`;
+}
+
 /** Save each response before requesting more; a later failure never hides files. */
 export async function runImageTool({
-  config, outputPath, requestedCount, includePreview = false, signal, produce,
+  config, matchedInput, outputPath, requestedCount, includePreview = false, signal, produce,
 }: ImageToolRun): Promise<CallToolResult> {
   const { outputFormat } = config;
   const outputImages: ImageToolOutput["images"] = [];
@@ -233,7 +247,7 @@ export async function runImageTool({
   return formatImageResult({
     status: issue ? (outputImages.length ? "partial" : "failed") : "complete",
     images: outputImages,
-    settings: settingsOutput(config),
+    settings: settingsOutput(config, matchedInput),
     ...(issue && { issue }),
     ...(descriptions.length && { description: [...new Set(descriptions)].join("\n---\n") }),
     ...(usage && { usage: {
@@ -279,10 +293,18 @@ function formatImageResult(
 
 /** The text twin of structured `settings`: same fields, same omissions. */
 function settingsLine(settings: NonNullable<ImageToolOutput["settings"]>, sizesListed: boolean): string {
-  const target = sizesListed ? " (target; delivered pixel size per image above)" : " (target)";
+  const matchError = settings.match_error_pct;
+  const note = [
+    matchError === undefined ? undefined
+      : Math.abs(matchError) > ASPECT_NOTE_THRESHOLD_PCT
+        ? `nearest supported to input ${settings.matched_input_size}, ${signedPct(matchError)} vs ${settings.aspect_ratio}`
+        : `matched to input ${settings.matched_input_size}`,
+    "target",
+    sizesListed ? "delivered pixel size per image above" : undefined,
+  ].filter((part) => part !== undefined).join("; ");
   return "Settings: " + [
     settings.model,
-    `aspect_ratio ${settings.aspect_ratio}${settings.aspect_ratio === "auto" ? "" : target}`,
+    `aspect_ratio ${settings.aspect_ratio}${settings.aspect_ratio === "auto" ? "" : ` (${note})`}`,
     settings.resolution,
     settings.expected_size !== undefined ? `expected_size ${settings.expected_size}` : undefined,
     settings.output_format,
@@ -305,7 +327,7 @@ function imageLine(image: ImageToolOutput["images"][number], settings: ImageTool
   return `${image.path} (` + [
     size,
     pct !== undefined && Math.abs(pct) > ASPECT_NOTE_THRESHOLD_PCT
-      ? `${pct > 0 ? "+" : ""}${pct}% vs ${settings?.aspect_ratio}` : undefined,
+      ? `${signedPct(pct)} vs ${settings?.aspect_ratio}` : undefined,
     settings?.expected_size !== undefined && settings.expected_size !== size
       ? `expected ${settings.expected_size}` : undefined,
   ].filter((part) => part !== undefined).join("; ") + ")";

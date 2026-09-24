@@ -48,7 +48,7 @@ export const ImageToolOutputSchema = z.object({
         aspect_error_pct: z
           .number()
           .optional()
-          .describe("How far the delivered ratio (width/height) is from the requested aspect_ratio, in percent, signed, 2 decimals: negative is narrower (taller) than requested, positive wider. 1:8 delivered as 352x2928 is -3.83. Present only when an explicit aspect_ratio was requested and width/height are known. Resize or crop when an exact ratio matters; do not describe the image as exactly the requested ratio"),
+          .describe("How far the delivered ratio (width/height) is from the requested aspect_ratio, in percent, signed, 2 decimals: negative is narrower (taller) than requested, positive wider. 1:8 delivered as 352x2928 is -3.83. Present only when an explicit aspect_ratio (or edit match_input) was requested and width/height are known. Resize or crop when an exact ratio matters; do not describe the image as exactly the requested ratio"),
       })
     )
     .describe("The images written to disk, in order"),
@@ -57,7 +57,16 @@ export const ImageToolOutputSchema = z.object({
       model: z.enum(IMAGE_MODELS).describe("Model this call's requests were built for"),
       aspect_ratio: z
         .enum(["auto", ...ASPECT_RATIOS])
-        .describe("The requested target ratio, or auto (edit). A request, not a measurement: images[].width/height are the delivered size"),
+        .describe("The requested target ratio, or auto (edit); for an edit with match_input, the ratio chosen for the first input. A request, not a measurement: images[].width/height are the delivered size"),
+      matched_input_size: z
+        .string()
+        .regex(/^\d+x\d+$/)
+        .optional()
+        .describe("Edit with aspect_ratio match_input only: the first input image's displayed pixel size (WxH) that aspect_ratio was chosen from"),
+      match_error_pct: z
+        .number()
+        .optional()
+        .describe("Edit with aspect_ratio match_input only: how far the first input's displayed ratio is from the aspect_ratio chosen for it, in percent, signed, 2 decimals, like images[].aspect_error_pct: negative means the input is narrower (taller) than that ratio. Large when the model supports no ratio near the input's shape (a 256x2048 input on OpenAI gets 9:16 at -77.78); crop or pad the input, or pick a model with the extreme ratios, when the shape must be kept"),
       resolution: z
         .enum(RESOLUTIONS)
         .optional()
