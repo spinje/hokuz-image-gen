@@ -17,6 +17,7 @@ import {
   MIME_TYPES,
   OPENAI_PRICE_PER_MILLION_TOKENS,
   type ImageModel,
+  type Quality,
   type Resolution,
 } from "../constants.js";
 import {
@@ -99,19 +100,39 @@ function getClient(model: ImageModel): OpenAI {
 }
 
 /**
+ * The settings a request is built from, which the tools also echo in their
+ * result: the options OpenAI takes, with its defaults for the ones the caller
+ * omitted. Without an aspect ratio (edit "auto") the provider chooses the size,
+ * so no resolution applies. temperature is not sent (validation rejects it).
+ */
+export function effectiveConfig(
+  config: GenerationConfig
+): GenerationConfig & { quality: Quality; transparentBackground: boolean } {
+  return {
+    model: config.model,
+    aspectRatio: config.aspectRatio,
+    resolution: config.aspectRatio ? config.resolution ?? DEFAULTS.resolution : undefined,
+    outputFormat: config.outputFormat,
+    quality: config.quality ?? DEFAULTS.quality,
+    transparentBackground: config.transparentBackground ?? false,
+  };
+}
+
+/**
  * The request fields both images.generate and images.edit share.
  *
  * `background` is always explicit so the provider never picks for us; a
  * transparent one is rejected in validation unless the format has alpha.
  */
 function buildCommonParams(config: GenerationConfig) {
+  const request = effectiveConfig(config);
   return {
-    model: config.model,
+    model: request.model,
     n: 1,
-    size: openaiSize(config),
-    quality: config.quality ?? DEFAULTS.quality,
-    output_format: config.outputFormat,
-    background: config.transparentBackground ? ("transparent" as const) : ("opaque" as const),
+    size: openaiSize(request),
+    quality: request.quality,
+    output_format: request.outputFormat,
+    background: request.transparentBackground ? ("transparent" as const) : ("opaque" as const),
   };
 }
 

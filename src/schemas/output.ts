@@ -4,7 +4,13 @@
  */
 
 import { z } from "zod";
-import { OUTPUT_FORMATS } from "../constants.js";
+import {
+  ASPECT_RATIOS,
+  IMAGE_MODELS,
+  OUTPUT_FORMATS,
+  QUALITIES,
+  RESOLUTIONS,
+} from "../constants.js";
 import { ErrorType } from "../types.js";
 
 /**
@@ -34,14 +40,31 @@ export const ImageToolOutputSchema = z.object({
         width: z
           .number()
           .optional()
-          .describe("Image width in pixels"),
+          .describe("Delivered width in pixels (measured from the file on Gemini, as reported by the provider on OpenAI); can differ slightly from the requested aspect ratio"),
         height: z
           .number()
           .optional()
-          .describe("Image height in pixels"),
+          .describe("Delivered height in pixels (measured from the file on Gemini, as reported by the provider on OpenAI); can differ slightly from the requested aspect ratio"),
       })
     )
     .describe("The images written to disk, in order"),
+  settings: z
+    .object({
+      model: z.enum(IMAGE_MODELS).describe("Model this call's requests were built for"),
+      aspect_ratio: z
+        .enum(["auto", ...ASPECT_RATIOS])
+        .describe("The requested target ratio, or auto (edit). A request, not a measurement: images[].width/height are the delivered size"),
+      resolution: z
+        .enum(RESOLUTIONS)
+        .optional()
+        .describe("Requested resolution; absent when an OpenAI model chose the size itself (edit with aspect_ratio auto)"),
+      output_format: z.enum(OUTPUT_FORMATS).describe("Format requested and saved"),
+      quality: z.enum(QUALITIES).optional().describe("OpenAI models only: the quality requested, including the default when none was given"),
+      temperature: z.number().optional().describe("Gemini models only: the temperature requested, including the default when none was given"),
+      transparent_background: z.boolean().optional().describe("OpenAI models only: whether a transparent background was requested"),
+    })
+    .optional()
+    .describe("The settings this call's provider requests were built with, including provider defaults for options the call omitted; cite these rather than the call's arguments. Present whenever generation started, even if no request completed; absent when the call was rejected before that"),
   description: z
     .string()
     .optional()

@@ -25,22 +25,18 @@ import { DEFAULTS } from "../constants.js";
 /**
  * Tool description for LLM discoverability
  */
-const TOOL_DESCRIPTION = `Generate images from text prompts with Google's Nano Banana (Gemini) or OpenAI's GPT Image 2.5 models; pick with \`model\`. Unsupported combinations (model x resolution / aspect ratio / output format / provider-only option) are rejected before any API call as an error result naming the supported values; nothing is silently downgraded.
+const TOOL_DESCRIPTION = `Generate images from a text prompt with Google Nano Banana (Gemini) or OpenAI GPT Image 2.5 models and save them as files. Unsupported model/option combinations are rejected before any API call, naming the supported values; nothing is silently downgraded.
+
+- aspect_ratio is a target: check the returned width/height, which can differ slightly.
+- status: complete, partial or failed; partial/failed carry an issue with what happened and the next step. Nothing is retried automatically.
+- SERVER_BUSY: one image call runs at a time; retry after it finishes. No request was sent.
+- A model whose provider key is not configured fails at call time.
 
 ${MODEL_GUIDE}
 
-Rules the schema cannot express:
-- Only one image call runs at a time per server process. SERVER_BUSY means wait for the active call to finish before retrying; no provider request was started for the rejected call.
-- include_preview is optional and off by default. When true, results may include a reduced JPEG preview; nonopaque images are shown on white (left) and navy (right). The saved original is unchanged. Preview alpha measurements describe original pixels, not whether the image is a clean cutout. If preview processing is unavailable or exceeds its bounds, the image call still succeeds with a preview_warning; inspect the saved file instead of regenerating it. Clients must support MCP image content to display previews.
-- output_path: a trailing slash or an existing directory means a timestamped file inside it; otherwise it is the file to write. Parent directories are created. An existing file is never overwritten: -2, -3, ... is appended. When output_format is omitted the path's extension (.jpg/.png/.webp) selects it, else jpeg; the saved extension always matches the format. A .png/.webp path therefore needs an OpenAI model; with a Gemini model use .jpg or a directory. The returned path is authoritative and differs from output_path when a suffix was needed.
-- quality and transparent_background are OpenAI-only; temperature is Gemini-only. An explicit value on the other provider is rejected, not ignored. Omit them and the provider applies its default (medium / 1.0). transparent_background: false is accepted everywhere.
-- num_images makes that many separate requests, one after another, so time and cost scale linearly and the whole call blocks until the last one returns (4 sunburst images at max quality is several minutes). Each response is saved before requesting another image. A later generation or save failure stops the batch and preserves saved files. Results report status complete, partial, or failed; partial/failed results include an issue with what happened and what to do next. Generation requests are never automatically retried. An interrupted request may still incur a charge; follow the issue advice and request only missing images if another attempt is appropriate.
-
 Examples:
-- Draft: model="gpt-image-2.5-flare", quality="low", output_path="~/drafts/"
-- Poster with text: model="gpt-image-2.5-sunburst", quality="high", aspect_ratio="2:3"
 - Sticker: model="gpt-image-2.5-flare", transparent_background=true, output_path="~/stickers/logo.png"
-- Hero shot: model="gemini-3-pro-image", aspect_ratio="16:9", resolution="2K"`;
+- Poster with text: model="gpt-image-2.5-sunburst", quality="high", aspect_ratio="2:3"`;
 
 /**
  * Register the generate_image tool with the MCP server
@@ -94,7 +90,7 @@ export function registerGenerateImageTool(server: McpServer): void {
 
         pipelineStarted = true;
         return await runImageTool({
-          outputFormat,
+          config,
           outputPath: params.output_path,
           requestedCount: params.num_images ?? DEFAULTS.numImages,
           includePreview: params.include_preview ?? false,

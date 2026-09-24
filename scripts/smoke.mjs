@@ -44,6 +44,8 @@ async function callOk(client, tool, args) {
   assert(!result.isError, `tool returned an error: ${result.content?.[0]?.text}`);
   const output = result.structuredContent;
   assert(output?.status === "complete", "structuredContent.status is not complete");
+  // Every smoke call names its model; the result must report the one used.
+  assert(output.settings?.model === args.model, `settings.model is ${output.settings?.model}, expected ${args.model}`);
   if (output.usage) costUsd += output.usage.estimated_cost_usd;
   return output;
 }

@@ -34,11 +34,12 @@ export const GenerateImageInputSchema = z
       .min(1, "Output path is required")
       .describe(
         "Where to save the generated image. If HOKUZ_OUTPUT_ROOT is configured, paths must stay within it and relative paths start there. A trailing slash, or a path that is already a directory, " +
-          "means a timestamped file inside it; anything else is the file to write. When output_format " +
-          "is omitted this path's extension chooses the format, so a .png or .webp path needs an " +
-          "OpenAI model; when output_format is set, the extension is replaced to match it. An existing " +
+          "means a timestamped file inside it; anything else is the file to write. Missing parent " +
+          "directories are created. When output_format is omitted this path's extension chooses the " +
+          "format, so a .png or .webp path needs an OpenAI model (with a Gemini model use .jpg or a " +
+          "directory); when output_format is set, the extension is replaced to match it. An existing " +
           "file is never overwritten (-2, -3 is appended, which is also how num_images names its " +
-          "files), so use the path returned in the result. '~' is expanded."
+          "files), so the path returned in the result is authoritative. '~' is expanded."
       ),
 
     model: z
@@ -67,7 +68,7 @@ export const GenerateImageInputSchema = z
       .describe(
         `Output resolution. Options: ${RESOLUTIONS.join(", ")}. Gemini: Flash is 0.5K-4K and the only ` +
           "model with 0.5K, Lite is 1K only, Pro is 1K/2K/4K. " +
-          "OpenAI models: 1K (~1 megapixel) or 2K (~4 megapixels) only; requested dimensions are derived from " +
+          "OpenAI models: 1K (~1 megapixel) or 2K (~4 megapixels, about twice the cost) only; requested dimensions are derived from " +
           "aspect_ratio and rounded to multiples of 16. For exact layouts, check returned width/height " +
           `when available, or inspect the saved file. Default: ${DEFAULTS.resolution}`
       ),
@@ -99,13 +100,16 @@ export const GenerateImageInputSchema = z
       .optional()
       .describe(
         "OpenAI models only; requires output_format png or webp (or a .png/.webp output_path). " +
-          "false is accepted on every model. Default: false (opaque)."
+          "Gemini models reject true; false is accepted on every model. Default: false (opaque)."
       ),
 
     include_preview: z.boolean().default(false).describe(
-      "Include a bounded derived JPEG preview in the tool result for clients that display MCP images. " +
-      "Transparent pixels are shown on white and navy backgrounds; alpha extrema describe the original " +
-      "8-bit pixels. Adds local processing and image payload, never another provider request. Default: false."
+      "Include a reduced JPEG preview of each saved image in the tool result, for clients that display " +
+      "MCP image content. Images that are not fully opaque are shown on white (left) and navy (right). " +
+      "The saved original is unchanged and remains authoritative; the alpha measurements describe its " +
+      "pixels, not whether a cutout is clean. Adds local processing and payload, never another provider " +
+      "request. If a preview cannot be made, the call still succeeds with images[].preview_warning: " +
+      "inspect the saved file instead of regenerating. Default: false."
     ),
 
     num_images: z
@@ -118,7 +122,11 @@ export const GenerateImageInputSchema = z
       )
       .default(DEFAULTS.numImages)
       .describe(
-        `Number of images to generate (1-${LIMITS.maxOutputImages}). Default: ${DEFAULTS.numImages}`
+        `Number of images to generate (1-${LIMITS.maxOutputImages}). Each image is a separate provider request, made ` +
+          "one after another: time and cost scale linearly and the call blocks until the last one returns " +
+          "(4 sunburst images at max quality take several minutes). Each image is saved before the next is " +
+          "requested; a failure stops the batch, and images already saved are kept and reported. " +
+          `Default: ${DEFAULTS.numImages}`
       ),
 
     temperature: z

@@ -20,7 +20,8 @@
 
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { enabledProviders, providerLabel } from "./providers/index.js";
-import { createServer, SERVER_NAME, SERVER_VERSION } from "./server.js";
+import { createServer } from "./server.js";
+import { SERVER_NAME, SERVER_VERSION } from "./package-info.js";
 import { ENV_VARS } from "./constants.js";
 
 /**

@@ -29,12 +29,13 @@ Follow `.claude/agents/REVIEW-PROTOCOL.md` (read it first). Lens-specifics on to
 | Zod input schema + `.describe()` | `src/schemas/generate.ts`, `src/schemas/edit.ts` | hand |
 | Published JSON Schema (enums, `default`, `required`) | derived by the MCP SDK from the Zod schema | generated — but `.default()` decides `required`; dropping it makes the field required unless it is `.optional()` (gotcha 7) |
 | Handler defaults (`params.x ?? DEFAULTS.x`) | `src/tools/generate-image.ts`, `src/tools/edit-image.ts` | hand |
-| `TOOL_DESCRIPTION` template (model guidance with speed/cost, the rules the schema cannot express, examples — deliberately **not** an Args list) | top of each tool file; the shared `MODEL_GUIDE` paragraph both embed lives in `src/tools/image-tool.ts` and interpolates its Gemini prices from `GEMINI_PRICE_PER_IMAGE_USD` | hand |
+| `TOOL_DESCRIPTION` template (purpose, the cross-field rules a caller must act on, model guidance with speed/cost, at most two examples — deliberately **not** an Args list; ≤ 2,048 characters because Claude Code truncates there, gotcha 8, so a rule about one field belongs in its `.describe()`) | top of each tool file; the shared `MODEL_GUIDE` paragraph both embed lives in `src/tools/image-tool.ts` and interpolates its Gemini prices from `GEMINI_PRICE_PER_IMAGE_USD` | hand |
+| Server `instructions` (shown before a tool schema is loaded; same 2,048 cap) | `src/server.ts` | hand |
 | Output Zod schema vs what the handler actually returns | `src/schemas/output.ts` vs the `output` objects in `src/tools/image-tool.ts` | hand, both sides |
 | `DEFAULTS`, `LIMITS`, `IMAGE_MODEL_CAPABILITIES`, `GEMINI_PRICE_PER_IMAGE_USD` | `src/constants.ts` | hand |
 | README parameter tables, model table, cost table | `README.md` | hand |
 | `CLAUDE.md` gotchas and constants reference | `CLAUDE.md` | hand |
-| Contract tests | `src/__tests__/server.test.ts` (enums, defaults, required, output shape), request-shape `toEqual` in `src/providers/__tests__/gemini.test.ts` and `openai.test.ts` | hand |
+| Contract tests | `src/__tests__/server.test.ts` (enums, defaults, required, output shape, the 2,048-character cap), `src/tools/__tests__/settings.test.ts` (echoed `settings` equal the request sent), request-shape `toEqual` in `src/providers/__tests__/gemini.test.ts` and `openai.test.ts` | hand |
 | Review lens files that cite the fact | `.claude/agents/review-*.md` | hand |
 
 **Two tools, one archetype.** Generate and edit share every optional parameter, one output schema (`src/schemas/output.ts`) and one pipeline (`src/tools/image-tool.ts`), which is where response formatting and the failure result now live — a change there reaches both tools at once, so check it against both. What is still per tool is the `TOOL_DESCRIPTION`, the input schema, and the param → `GenerationConfig` mapping; a change to one tool's copy of those almost always belongs on the other. Diff them after reading: `diff <(sed -n '/^const TOOL_DESCRIPTION/,/^`;/p' src/tools/generate-image.ts) <(sed -n '/^const TOOL_DESCRIPTION/,/^`;/p' src/tools/edit-image.ts)` is a cheap start.

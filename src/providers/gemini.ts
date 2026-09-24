@@ -85,6 +85,25 @@ function getClient(): GoogleGenAI {
   return clientInstance;
 }
 
+/** A config with this provider's defaults applied: what a request is built from. */
+type GeminiRequestConfig = GenerationConfig & { resolution: Resolution; temperature: number };
+
+/**
+ * The settings a request is built from, which the tools also echo in their
+ * result: the options Gemini takes, with its defaults for the ones the caller
+ * omitted. quality and transparent_background are not sent (validation rejects
+ * a value other than false), so they are not part of it.
+ */
+export function effectiveConfig(config: GenerationConfig): GeminiRequestConfig {
+  return {
+    model: config.model,
+    aspectRatio: config.aspectRatio,
+    resolution: config.resolution ?? DEFAULTS.resolution,
+    outputFormat: config.outputFormat,
+    temperature: config.temperature ?? DEFAULTS.temperature,
+  };
+}
+
 /**
  * Build the `response_format` object for an image interaction.
  *
@@ -92,12 +111,11 @@ function getClient(): GoogleGenAI {
  *   rejects any other value (verified live: "image/png" returns a 400).
  * - `aspect_ratio` is only included when defined (edit "auto" leaves the
  *   ratio to the model).
- * - a config without a resolution gets this provider's default.
  */
-function buildResponseFormat(config: GenerationConfig) {
+function buildResponseFormat(config: GeminiRequestConfig) {
   return {
     type: "image" as const,
-    image_size: IMAGE_SIZE_API_VALUES[config.resolution ?? DEFAULTS.resolution],
+    image_size: IMAGE_SIZE_API_VALUES[config.resolution],
     mime_type: MIME_TYPES[config.outputFormat] as "image/jpeg",
     ...(config.aspectRatio ? { aspect_ratio: config.aspectRatio } : {}),
   };
@@ -233,8 +251,8 @@ export function parseInteraction(
  * the price table does not carry (unreachable: validation guarantees the
  * resolution is supported and `constants.test.ts` guarantees it has a price).
  */
-function imagePriceUsd(config: GenerationConfig): number | undefined {
-  return GEMINI_PRICE_PER_IMAGE_USD[config.model]?.[config.resolution ?? DEFAULTS.resolution];
+function imagePriceUsd(config: GeminiRequestConfig): number | undefined {
+  return GEMINI_PRICE_PER_IMAGE_USD[config.model]?.[config.resolution];
 }
 
 /**
@@ -247,19 +265,20 @@ export async function generateImage(
 ): Promise<ImageResponse> {
   throwIfImageCancelled(signal);
   const client = getClient();
+  const request = effectiveConfig(config);
 
   let interaction: InteractionLike;
   try {
     interaction = await client.interactions.create({
       model: config.model,
       input: prompt,
-      response_format: buildResponseFormat(config),
-      generation_config: { temperature: config.temperature ?? DEFAULTS.temperature },
+      response_format: buildResponseFormat(request),
+      generation_config: { temperature: request.temperature },
     }, { signal, maxRetries: 0 });
   } catch (error) {
     handleApiError(error, config.model, signal);
   }
-  return parseInteraction(interaction, imagePriceUsd(config));
+  return parseInteraction(interaction, imagePriceUsd(request));
 }
 
 /**
@@ -273,6 +292,7 @@ export async function editImage(
 ): Promise<ImageResponse> {
   throwIfImageCancelled(signal);
   const client = getClient();
+  const request = effectiveConfig(config);
 
   // Input images first (preserving order for "first image" / "second image"
   // references), then the editing instruction.
@@ -290,13 +310,13 @@ export async function editImage(
     interaction = await client.interactions.create({
       model: config.model,
       input,
-      response_format: buildResponseFormat(config),
-      generation_config: { temperature: config.temperature ?? DEFAULTS.temperature },
+      response_format: buildResponseFormat(request),
+      generation_config: { temperature: request.temperature },
     }, { signal, maxRetries: 0 });
   } catch (error) {
     handleApiError(error, config.model, signal);
   }
-  return parseInteraction(interaction, imagePriceUsd(config));
+  return parseInteraction(interaction, imagePriceUsd(request));
 }
 
 /**
