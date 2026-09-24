@@ -319,6 +319,11 @@ export const IMAGE_MODEL_CAPABILITIES: Record<ImageModel, ImageModelCapabilities
   },
 };
 
+/** Every model that satisfies `supports`, in registry order, for a next_step to name. */
+function modelsWhere(supports: (caps: ImageModelCapabilities) => boolean): string {
+  return IMAGE_MODELS.filter((model) => supports(IMAGE_MODEL_CAPABILITIES[model])).join(", ");
+}
+
 /**
  * Pure validation helper. Returns a diagnosis and next step if the
  * combination of options is unsupported by the model, otherwise null.
@@ -342,11 +347,11 @@ export function getUnsupportedModelOption(args: {
   const who = `Model '${args.model}' (${caps.label})`;
 
   if (args.resolution !== undefined && !caps.resolutions.includes(args.resolution)) {
-    return { message: `${who} does not support resolution '${args.resolution}'. Supported resolutions: ${caps.resolutions.join(", ")}.`, next_step: `Choose one of those, or a model that supports '${args.resolution}'.` };
+    return { message: `${who} does not support resolution '${args.resolution}'. Supported resolutions: ${caps.resolutions.join(", ")}.`, next_step: `Choose one of those, or a model that supports '${args.resolution}': ${modelsWhere((c) => c.resolutions.includes(args.resolution!))}.` };
   }
 
   if (args.aspectRatio && !caps.aspectRatios.includes(args.aspectRatio)) {
-    return { message: `${who} does not support aspect ratio '${args.aspectRatio}'. Supported aspect ratios: ${caps.aspectRatios.join(", ")}.`, next_step: `Choose one of those, or a model that supports '${args.aspectRatio}'.` };
+    return { message: `${who} does not support aspect ratio '${args.aspectRatio}'. Supported aspect ratios: ${caps.aspectRatios.join(", ")}.`, next_step: `Choose one of those, or a model that supports '${args.aspectRatio}': ${modelsWhere((c) => c.aspectRatios.includes(args.aspectRatio!))}.` };
   }
 
   // OpenAI derives the pixel size from the aspect ratio; without one it sends
@@ -360,25 +365,25 @@ export function getUnsupportedModelOption(args: {
   }
 
   if (args.outputFormat !== undefined && !caps.outputFormats.includes(args.outputFormat)) {
-    return { message: `${who} does not support output_format '${args.outputFormat}'.`, next_step: `Use ${caps.outputFormats.join(", ")}, or choose gpt-image-2.5-flare or gpt-image-2.5-sunburst for png/webp.` };
+    return { message: `${who} does not support output_format '${args.outputFormat}'.`, next_step: `Use ${caps.outputFormats.join(", ")}, or a model that supports '${args.outputFormat}': ${modelsWhere((c) => c.outputFormats.includes(args.outputFormat!))}.` };
   }
 
   if (args.quality !== undefined && !caps.qualities.includes(args.quality)) {
     if (caps.qualities.length === 0) {
-      return { message: `${who} does not accept 'quality'; it is an OpenAI-only option.`, next_step: `Omit it, or use gpt-image-2.5-flare / gpt-image-2.5-sunburst.` };
+      return { message: `${who} does not accept 'quality'; it is an OpenAI-only option.`, next_step: `Omit it, or use a model that accepts it: ${modelsWhere((c) => c.qualities.length > 0)}.` };
     }
     return { message: `${who} does not support quality '${args.quality}'.`, next_step: `Choose one of these qualities: ${caps.qualities.join(", ")}.` };
   }
 
   if (args.temperature !== undefined && !caps.supportsTemperature) {
-    return { message: `${who} does not accept 'temperature'; it is a Gemini-only option.`, next_step: `Omit it, or use a gemini-* model.` };
+    return { message: `${who} does not accept 'temperature'; it is a Gemini-only option.`, next_step: `Omit it, or use a model that accepts it: ${modelsWhere((c) => c.supportsTemperature)}.` };
   }
 
   // Only `true` asks for something a model may not be able to do; `false` is
   // what every model does anyway.
   if (args.transparentBackground) {
     if (!caps.supportsTransparentBackground) {
-      return { message: `${who} does not support transparent_background.`, next_step: `Use gpt-image-2.5-flare or gpt-image-2.5-sunburst with output_format png or webp.` };
+      return { message: `${who} does not support transparent_background.`, next_step: `Use a model that supports it (${modelsWhere((c) => c.supportsTransparentBackground)}) with output_format png or webp.` };
     }
     if (args.outputFormat === "jpeg") {
       return { message: "transparent_background requires output_format 'png' or 'webp' (JPEG has no alpha channel).", next_step: "Set output_format accordingly, or omit transparent_background." };
