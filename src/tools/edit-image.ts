@@ -17,14 +17,15 @@ import {
   inferOutputFormatFromPath,
   loadInputImage,
 } from "../services/file-utils.js";
-import type { GenerationConfig, InputImage } from "../types.js";
+import { ErrorType, ToolError, type GenerationConfig, type InputImage } from "../types.js";
 import {
   IMAGE_TOOL_ANNOTATIONS,
   MODEL_GUIDE,
   imageToolError,
   runImageTool,
 } from "./image-tool.js";
-import { DEFAULTS, LIMITS } from "../constants.js";
+import { DEFAULTS, IMAGE_MODEL_CAPABILITIES, LIMITS, nearestAspectRatio } from "../constants.js";
+import { displayedPixelSize, type PixelSize } from "../services/image-size.js";
 
 /**
  * Tool description for LLM discoverability
@@ -39,6 +40,24 @@ const TOOL_DESCRIPTION = `Edit or combine images from a text instruction with Ge
 - A model whose provider key is not configured fails at call time.
 
 ${MODEL_GUIDE}`;
+
+/**
+ * The displayed size of the first input, which match_input shapes the output
+ * to. Read from header bytes already in memory; no provider request has been
+ * made when this throws.
+ */
+function firstInputSize(image: InputImage, source: string): PixelSize {
+  const size = displayedPixelSize(Buffer.from(image.data, "base64"));
+  if (size) return size;
+  const heif = image.mimeType === "image/heic" || image.mimeType === "image/heif";
+  throw new ToolError(
+    ErrorType.INVALID_IMAGE_PATH,
+    heif
+      ? `aspect_ratio 'match_input' cannot read the pixel size of the HEIC/HEIF first image '${source}'.`
+      : `aspect_ratio 'match_input' could not read the pixel size of the first image '${source}': its header is not a readable JPEG, PNG, WebP or GIF.`,
+    "Pass an explicit aspect_ratio, or convert the first image to JPEG/PNG/WebP."
+  );
+}
 
 /**
  * Register the edit_image tool with the MCP server
@@ -61,9 +80,7 @@ export function registerEditImageTool(server: McpServer): void {
         // are defence in depth only. Optionality is decided by .default() in the schema.
         const model = params.model ?? DEFAULTS.model;
         const aspectRatioParam = params.aspect_ratio ?? "auto";
-        // "auto" -> let the provider decide the ratio/size.
-        const aspectRatio =
-          aspectRatioParam === "auto" ? undefined : aspectRatioParam;
+        const matchInput = aspectRatioParam === "match_input";
         // Explicit output_format wins; otherwise the output_path's extension
         // picks the format, so 'logo.png' on a Gemini model is rejected below
         // rather than saved as a JPEG named logo.jpg.
@@ -75,9 +92,11 @@ export function registerEditImageTool(server: McpServer): void {
         // Provider-specific options carry no schema default and are passed
         // through as given: the provider that owns the option applies its own
         // default, so an option the caller did not ask for stays undefined.
-        const config: GenerationConfig = {
+        let config: GenerationConfig = {
           model,
-          aspectRatio,
+          // "auto" -> undefined: the provider decides the ratio/size.
+          // "match_input" is resolved once the first image is loaded.
+          aspectRatio: aspectRatioParam === "auto" || matchInput ? undefined : aspectRatioParam,
           // No schema default: OpenAI rejects "auto" plus an explicit resolution,
           // which the handler could not tell from a filled-in default.
           resolution: params.resolution,
@@ -87,10 +106,14 @@ export function registerEditImageTool(server: McpServer): void {
           transparentBackground: params.transparent_background,
         };
 
-        // Validate model options before loading images / any API call (fail fast)
-        validateGenerationConfig(config, {
-          inputImageCount: params.image_paths.length,
-        });
+        // Validate model options before loading images / any API call (fail
+        // fast). match_input will resolve to one of the model's own ratios, so
+        // any of them stands in for it here: it is an explicit ratio as far as
+        // the other rules (OpenAI's resolution rule) are concerned.
+        validateGenerationConfig(
+          matchInput ? { ...config, aspectRatio: IMAGE_MODEL_CAPABILITIES[model].aspectRatios[0] } : config,
+          { inputImageCount: params.image_paths.length }
+        );
         throwIfImageCancelled(signal);
         requireProviderKey(model);
         release = acquireImageOperation();
@@ -100,15 +123,23 @@ export function registerEditImageTool(server: McpServer): void {
         // and size against the model before reading it.
         const inputImages: InputImage[] = [];
         let remainingInputBytes = LIMITS.maxTotalInputImageBytes;
+        let matchedInput: PixelSize | undefined;
         for (const imagePath of params.image_paths) {
           const image = await loadInputImage(imagePath, model, signal, remainingInputBytes);
           remainingInputBytes -= Buffer.byteLength(image.data, "base64");
           inputImages.push(image);
+          if (matchInput && inputImages.length === 1) {
+            // Before the remaining inputs load: an unreadable size fails fast.
+            matchedInput = firstInputSize(image, imagePath);
+            config = { ...config, aspectRatio: nearestAspectRatio(model, matchedInput.width, matchedInput.height) };
+            validateGenerationConfig(config, { inputImageCount: params.image_paths.length });
+          }
         }
 
         pipelineStarted = true;
         return await runImageTool({
           config,
+          matchedInput,
           outputPath: params.output_path,
           requestedCount: params.num_images ?? DEFAULTS.numImages,
           includePreview: params.include_preview ?? false,

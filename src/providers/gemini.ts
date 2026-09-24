@@ -7,6 +7,7 @@
 
 import { providerRequestError } from "./errors.js";
 import { throwIfImageCancelled } from "../services/image-operation.js";
+import { jpegPixelSize } from "../services/image-size.js";
 import { GoogleGenAI } from "@google/genai";
 import {
   DEFAULTS,
@@ -170,41 +171,6 @@ export interface InteractionLike {
 }
 
 /**
- * Read a JPEG's pixel size from its SOF segment. The API reports no dimensions,
- * and these models return JPEG only (gotcha 3), so this is the whole decoder:
- * anything that is not a JPEG we can walk gets no width/height.
- */
-function jpegDimensions(buf: Buffer): { width: number; height: number } | undefined {
-  if (buf.length < 4 || buf[0] !== 0xff || buf[1] !== 0xd8) return undefined;
-  let i = 2;
-  while (i + 9 < buf.length) {
-    if (buf[i] !== 0xff) return undefined; // lost marker sync
-    const marker = buf[i + 1];
-    if (marker === 0xff) {
-      i++; // fill byte
-      continue;
-    }
-    if (marker === 0xd8 || (marker >= 0xd0 && marker <= 0xd7) || marker === 0x01) {
-      i += 2; // standalone marker, no length
-      continue;
-    }
-    if (marker === 0xd9 || marker === 0xda) return undefined; // EOI or scan data before any SOF
-    const length = buf.readUInt16BE(i + 2);
-    const isSof =
-      marker >= 0xc0 && marker <= 0xcf && marker !== 0xc4 && marker !== 0xc8 && marker !== 0xcc;
-    if (isSof) {
-      const height = buf.readUInt16BE(i + 5);
-      const width = buf.readUInt16BE(i + 7);
-      // A zero edge means we misread the segment; report nothing rather than
-      // publish a 0x0 that the response text would silently drop anyway.
-      return width > 0 && height > 0 ? { width, height } : undefined;
-    }
-    i += 2 + length;
-  }
-  return undefined;
-}
-
-/**
  * Extract images, text description and usage from an interaction response.
  *
  * `imagePriceUsd` is what Google charges for one image of the requested model
@@ -226,7 +192,8 @@ export function parseInteraction(
     images.push({
       data,
       mimeType: mimeType ?? "image/jpeg",
-      ...jpegDimensions(Buffer.from(data, "base64")),
+      // The API reports no dimensions, and these models return JPEG only (gotcha 3).
+      ...jpegPixelSize(Buffer.from(data, "base64")),
     });
   };
 

@@ -11,6 +11,7 @@ import * as os from "node:os";
 import * as path from "node:path";
 import { DEFAULTS } from "../../constants.js";
 import type { ImageToolOutput } from "../../schemas/output.js";
+import { pngHeader } from "../../__tests__/fixtures.js";
 
 const sdk = vi.hoisted(() => ({ interactions: vi.fn(), generate: vi.fn(), edit: vi.fn() }));
 vi.mock("@google/genai", () => ({
@@ -163,6 +164,62 @@ describe("settings echo", () => {
     expect(settingsLineOf(result)).toBe(
       "Settings: gpt-image-2.5-flare, aspect_ratio auto, jpeg, quality medium, transparent_background false"
     );
+  });
+
+  describe("edit match_input", () => {
+    it("echoes on Gemini the ratio it sent and the input it matched, within the note threshold", async () => {
+      // 1200x896 is 1.3393: +0.45% from 4:3, inside the 0.5% the text calls a match.
+      await fs.writeFile(input, pngHeader(1200, 896));
+      const result = await harness.callTool("hokuz_edit_image", {
+        prompt: "p", image_paths: [input], output_path: tmp, aspect_ratio: "match_input",
+      });
+
+      const [request] = sdk.interactions.mock.calls[0];
+      expect(request.response_format).toMatchObject({ aspect_ratio: "4:3", image_size: "1K" });
+      expect(settingsOf(result)).toEqual({
+        model: DEFAULTS.model,
+        aspect_ratio: request.response_format.aspect_ratio,
+        matched_input_size: "1200x896",
+        match_error_pct: 0.45,
+        resolution: request.response_format.image_size,
+        expected_size: "1200x896",
+        output_format: "jpeg",
+        temperature: DEFAULTS.temperature,
+      });
+      expect(settingsLineOf(result)).toBe(
+        "Settings: gemini-3.1-flash-image, aspect_ratio 4:3 (matched to input 1200x896; target), 1K, expected_size 1200x896, jpeg, temperature 1"
+      );
+    });
+
+    it("echoes on OpenAI the size it requested and does not call a far-off shape matched", async () => {
+      // 1:8 has no OpenAI ratio: the nearest is 9:16, and the input is 77.78% narrower than it.
+      await fs.writeFile(input, pngHeader(256, 2048));
+      sdk.edit.mockResolvedValue({ created: 0, data: [{ b64_json: IMG }], size: "1536x2736" });
+
+      const result = await harness.callTool("hokuz_edit_image", {
+        prompt: "p", image_paths: [input], output_path: tmp, aspect_ratio: "match_input",
+        model: "gpt-image-2.5-flare", resolution: "2K",
+      });
+
+      const [request] = sdk.edit.mock.calls[0];
+      expect(request.size).toBe("1536x2736");
+      expect(settingsOf(result)).toEqual({
+        model: "gpt-image-2.5-flare",
+        aspect_ratio: "9:16",
+        matched_input_size: "256x2048",
+        match_error_pct: -77.78,
+        resolution: "2K",
+        expected_size: request.size,
+        output_format: "jpeg",
+        quality: DEFAULTS.quality,
+        transparent_background: false,
+      });
+      // aspect_error_pct is still measured against the ratio sent (1536x2736 is -0.19% from 9:16).
+      expect((result.structuredContent as ImageToolOutput).images[0]).toMatchObject({ width: 1536, height: 2736, aspect_error_pct: -0.19 });
+      expect(settingsLineOf(result)).toBe(
+        "Settings: gpt-image-2.5-flare, aspect_ratio 9:16 (nearest supported to input 256x2048, -77.78% vs 9:16; target; delivered pixel size per image above), 2K, expected_size 1536x2736, jpeg, quality medium, transparent_background false"
+      );
+    });
   });
 
   it("carries no settings when the call is rejected before generation", async () => {

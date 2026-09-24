@@ -356,7 +356,7 @@ export function getUnsupportedModelOption(args: {
     args.aspectRatio === undefined &&
     args.resolution !== undefined
   ) {
-    return { message: `${who} cannot apply resolution '${args.resolution}' when aspect_ratio is 'auto' because the provider chooses the output size.`, next_step: `Set an aspect_ratio to control the size, or omit resolution.` };
+    return { message: `${who} cannot apply resolution '${args.resolution}' when aspect_ratio is 'auto' because the provider chooses the output size.`, next_step: `Set an aspect_ratio to control the size (match_input keeps the first image's shape), or omit resolution.` };
   }
 
   if (args.outputFormat !== undefined && !caps.outputFormats.includes(args.outputFormat)) {
@@ -414,4 +414,23 @@ export function getUnsupportedInputImage(args: {
   const supported = caps.inputMimeTypes.map((mime) => mime.replace("image/", "")).join(", ");
   const alternative = caps.provider === "openai" ? ", or use a Gemini model" : "";
   return { message: `Model '${args.model}' (${caps.label}) does not accept ${args.mimeType} input ('${args.path}'). Supported input formats: ${supported}.`, next_step: `Convert the image${alternative}.` };
+}
+
+/**
+ * The aspect ratio `model` supports that is closest to a width x height shape,
+ * by the smallest |ln(shape / ratio)|, so 2:1 and 1:2 are equally far from 1:1.
+ * An exact tie goes to the ratio the model lists first, which is the earlier
+ * one in ASPECT_RATIOS (the epsilon absorbs floating-point noise in the logs).
+ */
+export function nearestAspectRatio(model: ImageModel, width: number, height: number): AspectRatio {
+  const supported = IMAGE_MODEL_CAPABILITIES[model].aspectRatios;
+  const distance = (ratio: AspectRatio) => {
+    const [w, h] = ratio.split(":").map(Number);
+    return Math.abs(Math.log(width / height / (w / h)));
+  };
+  let best = supported[0];
+  for (const ratio of supported) {
+    if (distance(ratio) < distance(best) - 1e-12) best = ratio;
+  }
+  return best;
 }

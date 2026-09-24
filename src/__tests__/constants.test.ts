@@ -6,6 +6,7 @@ import {
   IMAGE_MODEL_CAPABILITIES,
   getUnsupportedInputImage,
   getUnsupportedModelOption,
+  nearestAspectRatio,
   type Quality,
 } from "../constants.js";
 
@@ -52,7 +53,7 @@ describe("getUnsupportedModelOption", () => {
     expect(
       getUnsupportedModelOption({ model: "gpt-image-2.5-flare", resolution: "2K" })
     ).toEqual(
-      { message: "Model 'gpt-image-2.5-flare' (GPT Image 2.5 Flare) cannot apply resolution '2K' when aspect_ratio is 'auto' because the provider chooses the output size.", next_step: "Set an aspect_ratio to control the size, or omit resolution." }
+      { message: "Model 'gpt-image-2.5-flare' (GPT Image 2.5 Flare) cannot apply resolution '2K' when aspect_ratio is 'auto' because the provider chooses the output size.", next_step: "Set an aspect_ratio to control the size (match_input keeps the first image's shape), or omit resolution." }
     );
     // Gemini applies the resolution whatever the ratio, so the same call is fine there.
     expect(
@@ -312,5 +313,36 @@ describe("GEMINI_PRICE_PER_IMAGE_USD", () => {
         priced: [...IMAGE_MODEL_CAPABILITIES[model].resolutions].sort(),
       });
     }
+  });
+});
+
+describe("nearestAspectRatio", () => {
+  it("picks the exact ratio, or the nearest one, in the input's orientation", () => {
+    expect(nearestAspectRatio("gemini-3.1-flash-image", 1024, 1024)).toBe("1:1");
+    expect(nearestAspectRatio("gemini-3.1-flash-image", 1920, 1080)).toBe("16:9");
+    // The input from the usability study: 1.339 is 4:3 (1.333), not 5:4 or 3:2.
+    expect(nearestAspectRatio("gpt-image-2.5-flare", 1200, 896)).toBe("4:3");
+    // The same shape turned portrait.
+    expect(nearestAspectRatio("gpt-image-2.5-flare", 896, 1200)).toBe("3:4");
+    // 0.72 sits between 2:3 (0.667) and 3:4 (0.75), nearer 3:4 by log distance.
+    expect(nearestAspectRatio("gemini-3.1-flash-lite-image", 720, 1000)).toBe("3:4");
+  });
+
+  it("chooses only among the model's own ratios, so the extremes differ by model", () => {
+    // 1:7 is nearest 1:8 where it exists; elsewhere the narrowest base portrait ratio.
+    expect(nearestAspectRatio("gemini-3.1-flash-image", 100, 700)).toBe("1:8");
+    expect(nearestAspectRatio("gemini-3-pro-image", 100, 700)).toBe("9:16");
+    expect(nearestAspectRatio("gpt-image-2.5-sunburst", 100, 700)).toBe("9:16");
+    expect(nearestAspectRatio("gpt-image-2.5-sunburst", 5000, 400)).toBe("21:9");
+    for (const model of IMAGE_MODELS) {
+      for (const [w, h] of [[1, 1], [3000, 10], [10, 3000], [1234, 567]]) {
+        expect(IMAGE_MODEL_CAPABILITIES[model].aspectRatios).toContain(nearestAspectRatio(model, w, h));
+      }
+    }
+  });
+
+  it("breaks an exact tie toward the ratio listed first in ASPECT_RATIOS", () => {
+    // 3:8 (0.375) is exactly a factor of 1.5 from both 9:16 (0.5625) and 1:4 (0.25).
+    expect(nearestAspectRatio("gemini-3.1-flash-image", 300, 800)).toBe("9:16");
   });
 });

@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { createRequire } from "module";
-import { IMAGE_MODELS, IMAGE_MODEL_CAPABILITIES, QUALITIES, type ImageModel } from "../constants.js";
+import { ASPECT_RATIOS, IMAGE_MODELS, IMAGE_MODEL_CAPABILITIES, QUALITIES, type ImageModel } from "../constants.js";
 import { expectedSize } from "../providers/index.js";
 import { ErrorType } from "../types.js";
 import { connectTestClient } from "./harness.js";
@@ -89,6 +89,8 @@ describe("published tool contract", () => {
       expect(Object.keys(settings.properties).sort()).toEqual([
         "aspect_ratio",
         "expected_size",
+        "match_error_pct",
+        "matched_input_size",
         "model",
         "output_format",
         "quality",
@@ -196,6 +198,8 @@ describe("published tool contract", () => {
     ]);
     expect(props.model.default).toBe("gemini-3.1-flash-image");
     expect(props.aspect_ratio.default).toBe("1:1");
+    // Generate has no input whose shape could be matched.
+    expect(props.aspect_ratio.enum).toEqual([...ASPECT_RATIOS]);
     expect(props.resolution.default).toBe("1K");
     expect(props.num_images.default).toBe(1);
     expect(props.include_preview).toMatchObject({ type: "boolean", default: false });
@@ -216,9 +220,10 @@ describe("published tool contract", () => {
     const edit = tools.find((t) => t.name === "hokuz_edit_image")!;
     const editProps = edit.inputSchema.properties as Record<
       string,
-      { default?: unknown; maxItems?: number }
+      { default?: unknown; enum?: string[]; maxItems?: number }
     >;
     expect(editProps.aspect_ratio.default).toBe("auto");
+    expect(editProps.aspect_ratio.enum).toEqual(["auto", "match_input", ...ASPECT_RATIOS]);
     expect(editProps.include_preview).toMatchObject({ type: "boolean", default: false });
     // Edit's resolution is optional with no default (gotcha 7): "auto" plus an
     // explicit resolution is rejected, which a filled-in default would hide.

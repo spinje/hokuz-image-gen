@@ -1,8 +1,9 @@
 #!/usr/bin/env node
 /**
  * Paid live check of the built server over stdio: `npm run build && npm run smoke`.
- * One cheap generate and edit per provider whose key is set, one transparent
- * PNG, and the pre-flight rejections that must cost nothing (5 paid calls, ~10c).
+ * One cheap generate and edit per provider whose key is set, a Gemini edit that
+ * matches a portrait input's shape, one transparent PNG, and the pre-flight
+ * rejections that must cost nothing (6 paid calls, ~13c).
  * Keys are passed to the child process and never printed. This is a CLI, not
  * the server, so stdout is its report channel.
  */
@@ -13,6 +14,7 @@ import * as fs from "node:fs/promises";
 import * as os from "node:os";
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
+import * as zlib from "node:zlib";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const SERVER = path.join(HERE, "..", "dist", "index.js");
@@ -48,6 +50,38 @@ async function callOk(client, tool, args) {
   assert(output.settings?.model === args.model, `settings.model is ${output.settings?.model}, expected ${args.model}`);
   if (output.usage) costUsd += output.usage.estimated_cost_usd;
   return output;
+}
+
+/**
+ * A real, decodable RGB PNG: the top half sky blue, the bottom half green. Built
+ * here so the match_input step needs no paid generate and no image library.
+ */
+function portraitPng(width, height) {
+  const chunk = (type, data) => {
+    const length = Buffer.alloc(4);
+    length.writeUInt32BE(data.length);
+    const body = Buffer.concat([Buffer.from(type, "latin1"), data]);
+    const crc = Buffer.alloc(4);
+    crc.writeUInt32BE(zlib.crc32(body));
+    return Buffer.concat([length, body, crc]);
+  };
+  const ihdr = Buffer.alloc(13);
+  ihdr.writeUInt32BE(width, 0);
+  ihdr.writeUInt32BE(height, 4);
+  ihdr.set([8, 2, 0, 0, 0], 8); // 8-bit truecolour, no interlace
+  const rows = [];
+  for (let y = 0; y < height; y++) {
+    const row = Buffer.alloc(1 + width * 3); // filter byte 0, then RGB
+    const [r, g, b] = y < height / 2 ? [135, 190, 235] : [70, 140, 60];
+    for (let x = 0; x < width; x++) row.set([r, g, b], 1 + x * 3);
+    rows.push(row);
+  }
+  return Buffer.concat([
+    PNG_SIGNATURE,
+    chunk("IHDR", ihdr),
+    chunk("IDAT", zlib.deflateSync(Buffer.concat(rows))),
+    chunk("IEND", Buffer.alloc(0)),
+  ]);
 }
 
 async function assertJpeg(file) {
@@ -121,6 +155,29 @@ async function main() {
       await assertJpeg(image.path);
       return `${image.path} ${image.width}x${image.height}`;
     });
+
+    await step("Gemini Lite edit, match_input on a 720x1000 portrait", async () => {
+      const portrait = path.join(dir, "portrait.png");
+      await fs.writeFile(portrait, portraitPng(720, 1000));
+      const out = await callOk(client, "hokuz_edit_image", {
+        prompt: "Add a small white cloud in the sky",
+        image_paths: [portrait],
+        output_path: path.join(dir, "gemini-match.jpg"),
+        model: "gemini-3.1-flash-lite-image",
+        aspect_ratio: "match_input",
+      });
+      // 0.72 is nearest 3:4; the measured Gemini 1K size for 3:4 is 896x1200.
+      assert(out.settings.aspect_ratio === "3:4", `settings.aspect_ratio is ${out.settings.aspect_ratio}, expected 3:4`);
+      assert(out.settings.matched_input_size === "720x1000", `settings.matched_input_size is ${out.settings.matched_input_size}`);
+      // 0.72 is 4% narrower than 3:4.
+      assert(out.settings.match_error_pct === -4, `settings.match_error_pct is ${out.settings.match_error_pct}, expected -4`);
+      const [image] = out.images;
+      const size = `${image.width}x${image.height}`;
+      assert(out.settings.expected_size === "896x1200", `settings.expected_size is ${out.settings.expected_size}`);
+      assert(size === out.settings.expected_size, `expected ${out.settings.expected_size}, delivered ${size}`);
+      await assertJpeg(image.path);
+      return `${image.path} ${size}`;
+    });
   }
 
   let flareImage;
@@ -181,6 +238,9 @@ async function main() {
   }
 
   const missing = Array.from({ length: 15 }, (_, i) => path.join(dir, `nope-${i}.png`));
+  // A HEIC's size has no cheap header, so match_input rejects it after loading, before any request.
+  const heic = path.join(dir, "photo.heic");
+  await fs.writeFile(heic, "not really a heic");
   const rejections = [
     ["Lite + 2K", "hokuz_generate_image", { model: "gemini-3.1-flash-lite-image", resolution: "2K" }],
     ["Flare + 4K", "hokuz_generate_image", { model: "gpt-image-2.5-flare", resolution: "4K" }],
@@ -202,6 +262,25 @@ async function main() {
       const text = result.content?.[0]?.text ?? "";
       assert(result.isError === true, `expected an error result, got: ${text}`);
       assert(result.structuredContent?.status === "failed" && result.structuredContent?.issue?.next_step, `missing failure/recovery information: ${text}`);
+      assert(elapsed < 1000, `took ${elapsed}ms, so it was not rejected pre-flight`);
+      return text.slice(0, 90);
+    });
+  }
+
+  // Needs the Gemini key: without it the call fails on MISSING_API_KEY before the image loads.
+  if (HAS_GEMINI) {
+    await step("reject Gemini edit match_input on HEIC", async () => {
+      const started = Date.now();
+      const result = await client.callTool({
+        name: "hokuz_edit_image",
+        arguments: { prompt: "a placeholder prompt", output_path: dir, image_paths: [heic], aspect_ratio: "match_input" },
+      });
+      const elapsed = Date.now() - started;
+      const text = result.content?.[0]?.text ?? "";
+      const issue = result.structuredContent?.issue;
+      assert(result.isError === true, `expected an error result, got: ${text}`);
+      assert(issue?.code === "INVALID_IMAGE_PATH", `expected issue.code INVALID_IMAGE_PATH, got ${issue?.code}: ${text}`);
+      assert(issue.message.includes("match_input"), `the message does not name match_input: ${issue.message}`);
       assert(elapsed < 1000, `took ${elapsed}ms, so it was not rejected pre-flight`);
       return text.slice(0, 90);
     });
