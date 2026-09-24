@@ -11,7 +11,9 @@ import { GoogleGenAI } from "@google/genai";
 import {
   DEFAULTS,
   ENV_VARS,
+  GEMINI_OUTPUT_SIZE_1K,
   GEMINI_PRICE_PER_IMAGE_USD,
+  IMAGE_MODEL_CAPABILITIES,
   MIME_TYPES,
   type ImageModel,
   type Resolution,
@@ -102,6 +104,33 @@ export function effectiveConfig(config: GenerationConfig): GeminiRequestConfig {
     outputFormat: config.outputFormat,
     temperature: config.temperature ?? DEFAULTS.temperature,
   };
+}
+
+/**
+ * How the measured 1K grid scales to each resolution whose size is published.
+ * 2K is exactly twice 1K on both edges (verified live on Flash for 1:1, 16:9,
+ * 1:8 and 21:9, and on Pro for 16:9; Lite has no 2K).
+ * 0.5K and 4K were not measured, so no size is published for them.
+ */
+const MEASURED_SCALE: Partial<Record<Resolution, number>> = { "1K": 1, "2K": 2 };
+
+/**
+ * The pixel size ("WxH") a request is expected to come back at, or undefined
+ * when there is no measurement to stand behind: edit "auto", an unmeasured
+ * resolution, or a combination the model does not support.
+ */
+export function expectedSize(config: GenerationConfig): string | undefined {
+  const request = effectiveConfig(config);
+  const caps = IMAGE_MODEL_CAPABILITIES[request.model];
+  const scale = MEASURED_SCALE[request.resolution];
+  if (
+    !request.aspectRatio || scale === undefined ||
+    !caps.aspectRatios.includes(request.aspectRatio) || !caps.resolutions.includes(request.resolution)
+  ) {
+    return undefined;
+  }
+  const [width, height] = GEMINI_OUTPUT_SIZE_1K[request.aspectRatio];
+  return `${width * scale}x${height * scale}`;
 }
 
 /**

@@ -26,7 +26,7 @@ vi.mock("openai", async (importOriginal) => {
 
 vi.stubEnv("OPENAI_API_KEY", "test-key");
 
-const { editImage, generateImage, openaiSize } = await import("../openai.js");
+const { editImage, expectedSize, generateImage, openaiSize } = await import("../openai.js");
 
 const IMG_A = Buffer.from("image-a").toString("base64");
 const IMG_B = Buffer.from("image-b").toString("base64");
@@ -89,6 +89,26 @@ describe("openaiSize", () => {
         expect(width / height).toBeLessThanOrEqual(3);
       }
     }
+  });
+});
+
+describe("expectedSize", () => {
+  it("is the size the request is sent with, for every model, ratio and resolution", () => {
+    for (const model of ["gpt-image-2.5-flare", "gpt-image-2.5-sunburst"] as const) {
+      const caps = IMAGE_MODEL_CAPABILITIES[model];
+      for (const aspectRatio of caps.aspectRatios) {
+        for (const resolution of caps.resolutions) {
+          const config = { ...baseConfig, model, aspectRatio, resolution };
+          expect({ model, aspectRatio, resolution, size: expectedSize(config) })
+            .toEqual({ model, aspectRatio, resolution, size: openaiSize(config) });
+        }
+      }
+    }
+  });
+
+  it("applies the default resolution the request applies, and is absent when the provider chooses", () => {
+    expect(expectedSize({ ...baseConfig, resolution: undefined })).toBe("1360x768");
+    expect(expectedSize({ ...baseConfig, aspectRatio: undefined, resolution: undefined })).toBeUndefined();
   });
 });
 

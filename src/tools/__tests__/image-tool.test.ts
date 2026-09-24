@@ -266,6 +266,72 @@ describe("image tool pipeline", () => {
     expect(firstText(result)).not.toMatch(/\d+ output/);
   });
 
+  describe("per-image size line", () => {
+    const deliver = (width: number, height: number) =>
+      generateMock.mockResolvedValue({ images: [{ data: IMG, mimeType: "image/jpeg", width, height }] });
+    const call = (args: Record<string, unknown>) => harness.callTool(TOOL, { prompt: "p", output_path: tmp, ...args });
+    const imagesOf = (result: { structuredContent?: Record<string, unknown> }) =>
+      (result.structuredContent as ImageToolOutput).images;
+    /** The text line of each saved image, in order. */
+    const imageLinesOf = (result: Parameters<typeof firstText>[0] & { structuredContent?: Record<string, unknown> }) =>
+      imagesOf(result).map((image) => firstText(result).split("\n").find((line) => line.startsWith(image.path)));
+
+    it("states a negative drift beyond the threshold against the requested ratio", async () => {
+      deliver(352, 2928);
+      const result = await call({ aspect_ratio: "1:8" });
+
+      expect(imagesOf(result)[0].aspect_error_pct).toBe(-3.83);
+      // Delivered equals settings.expected_size, so no "expected" part.
+      expect(imageLinesOf(result)).toEqual([`${imagesOf(result)[0].path} (352x2928; -3.83% vs 1:8)`]);
+      expect(firstText(result)).toContain(
+        "Settings: gemini-3.1-flash-image, aspect_ratio 1:8 (target; delivered pixel size per image above), 1K, expected_size 352x2928, jpeg, temperature 1"
+      );
+    });
+
+    it("states a positive drift with its sign", async () => {
+      deliver(2928, 352);
+      const result = await call({ aspect_ratio: "8:1" });
+
+      expect(imagesOf(result)[0].aspect_error_pct).toBe(3.98);
+      expect(imageLinesOf(result)).toEqual([`${imagesOf(result)[0].path} (2928x352; +3.98% vs 8:1)`]);
+    });
+
+    it("states drift just above the threshold but not just below it", async () => {
+      deliver(1264, 848);
+      const above = await call({ aspect_ratio: "3:2" });
+      expect(imagesOf(above)[0].aspect_error_pct).toBe(-0.63);
+      expect(imageLinesOf(above)).toEqual([`${imagesOf(above)[0].path} (1264x848; -0.63% vs 3:2)`]);
+
+      deliver(1200, 896);
+      const below = await call({ aspect_ratio: "4:3" });
+      expect(imagesOf(below)[0].aspect_error_pct).toBe(0.45);
+      expect(imageLinesOf(below)).toEqual([`${imagesOf(below)[0].path} (1200x896)`]);
+    });
+
+    it("names the expected size on each image delivered at a different one", async () => {
+      generateMock
+        .mockResolvedValueOnce({ images: [{ data: IMG, mimeType: "image/jpeg", width: 1264, height: 848 }] })
+        .mockResolvedValueOnce({ images: [{ data: IMG, mimeType: "image/jpeg", width: 1536, height: 1024 }] });
+      const result = await call({ model: "gpt-image-2.5-flare", aspect_ratio: "3:2", num_images: 2 });
+
+      expect((result.structuredContent as ImageToolOutput).settings?.expected_size).toBe("1248x832");
+      const [first, second] = imagesOf(result);
+      expect(imageLinesOf(result)).toEqual([
+        `${first.path} (1264x848; -0.63% vs 3:2; expected 1248x832)`,
+        `${second.path} (1536x1024; expected 1248x832)`,
+      ]);
+    });
+
+    it("says the size is unknown rather than leave the expected size to be read as delivered", async () => {
+      generateMock.mockResolvedValue(okResponse());
+      const result = await call({ aspect_ratio: "1:8" });
+
+      expect((result.structuredContent as ImageToolOutput).settings?.expected_size).toBe("352x2928");
+      expect(imageLinesOf(result)).toEqual([`${imagesOf(result)[0].path} (size unknown; inspect the file)`]);
+      expect(firstText(result)).toContain("aspect_ratio 1:8 (target), 1K, expected_size 352x2928");
+    });
+  });
+
   it("omits usage and dimensions for a provider that reports neither", async () => {
     generateMock.mockResolvedValue(okResponse());
 
@@ -294,7 +360,7 @@ describe("inline previews through MCP", () => {
       expect(result.isError).toBeFalsy();
       expect(result.content).toHaveLength(1);
       const output = result.structuredContent as ImageToolOutput;
-      expect(output.images[0]).toEqual({ path: path.join(tmp, option.include_preview === false ? "out-2.jpg" : "out.jpg"), format: "jpeg", width: 1024, height: 256 });
+      expect(output.images[0]).toEqual({ path: path.join(tmp, option.include_preview === false ? "out-2.jpg" : "out.jpg"), format: "jpeg", width: 1024, height: 256, aspect_error_pct: 300 });
       expect(await fs.readFile(output.images[0].path)).toEqual(bytes);
     }
     expect(decoder).not.toHaveBeenCalled();

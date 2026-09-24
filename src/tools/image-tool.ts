@@ -10,13 +10,14 @@
 import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
 import {
   GEMINI_PRICE_PER_IMAGE_USD,
+  type AspectRatio,
   type ImageModel,
   type Resolution,
 } from "../constants.js";
 import { createImagePreview, PreviewUnavailable } from "../services/image-preview.js";
 import { throwIfImageCancelled } from "../services/image-operation.js";
 import type { ImageToolOutput } from "../schemas/output.js";
-import { effectiveConfig } from "../providers/index.js";
+import { effectiveConfig, expectedSize } from "../providers/index.js";
 import { saveBase64Image } from "../services/file-utils.js";
 import {
   ErrorType,
@@ -105,21 +106,37 @@ function sumUsage(usages: UsageReport[]): UsageReport | undefined {
 }
 
 /**
- * The settings the provider received, as the result reports them. Derived from
+ * The settings the provider requests were built with, as the result reports
+ * them, plus the size they are expected to deliver (exact on OpenAI, a
+ * measured prediction on Gemini). Derived from
  * the same `effectiveConfig` the provider builds its request from, so the echo
  * cannot drift from what was sent.
  */
 function settingsOutput(config: GenerationConfig): NonNullable<ImageToolOutput["settings"]> {
   const sent = effectiveConfig(config);
+  const size = expectedSize(config);
   return {
     model: sent.model,
     aspect_ratio: sent.aspectRatio ?? "auto",
     ...(sent.resolution !== undefined && { resolution: sent.resolution }),
+    ...(size !== undefined && { expected_size: size }),
     output_format: sent.outputFormat,
     ...(sent.quality !== undefined && { quality: sent.quality }),
     ...(sent.temperature !== undefined && { temperature: sent.temperature }),
     ...(sent.transparentBackground !== undefined && { transparent_background: sent.transparentBackground }),
   };
+}
+
+/** Beyond this |aspect_error_pct| an image's text line states it. */
+const ASPECT_NOTE_THRESHOLD_PCT = 0.5;
+
+/**
+ * How far a delivered width/height ratio is from the requested one, in signed
+ * percent to 2 decimals: negative is narrower than requested, positive wider.
+ */
+function aspectErrorPct(aspectRatio: AspectRatio, width: number, height: number): number {
+  const [w, h] = aspectRatio.split(":").map(Number);
+  return Math.round((width / height / (w / h) - 1) * 10_000) / 100;
 }
 
 /** Save each response before requesting more; a later failure never hides files. */
@@ -160,7 +177,12 @@ export async function runImageTool({
       // Even after cancellation, save images already returned by the provider.
       for (const image of images) {
         const filePath = await saveBase64Image(image.data, outputPath, outputFormat, outputImages.length);
-        outputImages.push({ path: filePath, format: outputFormat, width: image.width, height: image.height });
+        outputImages.push({
+          path: filePath, format: outputFormat, width: image.width, height: image.height,
+          ...(config.aspectRatio && image.width && image.height && {
+            aspect_error_pct: aspectErrorPct(config.aspectRatio, image.width, image.height),
+          }),
+        });
         if (includePreview) previewInputs.push(image);
         savedFromResponse++;
       }
@@ -234,9 +256,7 @@ function formatImageResult(
   const { images, issue, usage } = output;
   const count = requestedCount === undefined ? "" : ` of ${requestedCount} requested`;
   const lines = [`${output.status}: ${images.length}${count} image(s) saved.`];
-  for (const image of images) {
-    lines.push(image.width && image.height ? `${image.path} (${image.width}x${image.height})` : image.path);
-  }
+  for (const image of images) lines.push(imageLine(image, output.settings));
   if (output.settings) lines.push(settingsLine(output.settings, images.some((image) => image.width && image.height)));
   if (issue) lines.push(`\n${issue.message}`, `Next step: ${issue.next_step}`);
   if (usage) {
@@ -264,11 +284,31 @@ function settingsLine(settings: NonNullable<ImageToolOutput["settings"]>, sizesL
     settings.model,
     `aspect_ratio ${settings.aspect_ratio}${settings.aspect_ratio === "auto" ? "" : target}`,
     settings.resolution,
+    settings.expected_size !== undefined ? `expected_size ${settings.expected_size}` : undefined,
     settings.output_format,
     settings.quality !== undefined ? `quality ${settings.quality}` : undefined,
     settings.temperature !== undefined ? `temperature ${settings.temperature}` : undefined,
     settings.transparent_background !== undefined ? `transparent_background ${settings.transparent_background}` : undefined,
   ].filter((part) => part !== undefined).join(", ");
+}
+
+/**
+ * One saved image as the text reports it: its delivered size, then its
+ * aspect_error_pct when beyond the note threshold, then settings.expected_size
+ * when the delivered size differs from it. An unknown size says so, so the
+ * expected size is never read as the delivered one.
+ */
+function imageLine(image: ImageToolOutput["images"][number], settings: ImageToolOutput["settings"]): string {
+  if (!image.width || !image.height) return `${image.path} (size unknown; inspect the file)`;
+  const size = `${image.width}x${image.height}`;
+  const pct = image.aspect_error_pct;
+  return `${image.path} (` + [
+    size,
+    pct !== undefined && Math.abs(pct) > ASPECT_NOTE_THRESHOLD_PCT
+      ? `${pct > 0 ? "+" : ""}${pct}% vs ${settings?.aspect_ratio}` : undefined,
+    settings?.expected_size !== undefined && settings.expected_size !== size
+      ? `expected ${settings.expected_size}` : undefined,
+  ].filter((part) => part !== undefined).join("; ") + ")";
 }
 
 function issueFromError(error: unknown): ToolIssue {

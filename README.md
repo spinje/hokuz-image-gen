@@ -34,7 +34,34 @@ Select a model with the optional `model` parameter on either tool. The default i
 | `gpt-image-2.5-flare` | OpenAI | GPT Image 2.5 Flare | Text rendering, prompt adherence | `1K`, `2K` | No | ~14 s (medium) | set by `quality` |
 | `gpt-image-2.5-sunburst` | OpenAI | GPT Image 2.5 Sunburst | Text-heavy posters, branding, faithful edits | `1K`, `2K` | No | ~18 s (medium) | set by `quality` |
 
-OpenAI models take `quality` and `transparent_background` instead of `temperature`, and their requested pixel size is derived from `aspect_ratio` + `resolution` (`1K` ≈ 1 megapixel, `2K` ≈ 4), with each edge rounded to a multiple of 16. Aspect ratios are targets: OpenAI rounding and Gemini output can produce different file ratios. For exact layouts, check returned `width`/`height` when available, or inspect the saved file. Gemini models take `temperature` and reject the OpenAI-only options; the reverse also holds. Input images: Gemini takes up to 14 at 7 MB each (jpeg/png/webp/gif/heic/heif), OpenAI up to 16 at 50 MB each (jpeg/png/webp only).
+OpenAI models take `quality` and `transparent_background` instead of `temperature`, and their requested pixel size is derived from `aspect_ratio` + `resolution` (`1K` ≈ 1 megapixel, `2K` ≈ 4), with each edge rounded to a multiple of 16. Aspect ratios are targets: OpenAI rounding and Gemini output can produce different file ratios; see [Output sizes](#output-sizes). Gemini models take `temperature` and reject the OpenAI-only options; the reverse also holds. Input images: Gemini takes up to 14 at 7 MB each (jpeg/png/webp/gif/heic/heif), OpenAI up to 16 at 50 MB each (jpeg/png/webp only).
+
+## Output sizes
+
+The pixel size a call is expected to deliver is published before the call (in the `aspect_ratio` field description) and echoed after it (`settings.expected_size`). Both come from one function, `expectedSize` in `src/providers/`:
+
+| Ratio | Gemini 1K (measured) | OpenAI 1K (exact) |
+|-------|----------------------|-------------------|
+| `1:1` | 1024x1024 | 1024x1024 |
+| `2:3` | 848x1264 | 832x1248 |
+| `3:2` | 1264x848 | 1248x832 |
+| `3:4` | 896x1200 | 880x1184 |
+| `4:3` | 1200x896 | 1184x880 |
+| `4:5` | 928x1152 | 912x1152 |
+| `5:4` | 1152x928 | 1152x912 |
+| `9:16` | 768x1376 | 768x1360 |
+| `16:9` | 1376x768 | 1360x768 |
+| `21:9` | 1584x672 | 1568x672 |
+| `1:4` | 512x2064 | _n/a_ |
+| `4:1` | 2064x512 | _n/a_ |
+| `1:8` | 352x2928 | _n/a_ |
+| `8:1` | 2928x352 | _n/a_ |
+
+- **OpenAI** sizes are what the server sends as `size`: 1K ≈ 1 megapixel, 2K ≈ 4, each edge rounded to a multiple of 16 (so 2K is close to, not exactly, twice 1K: 16:9 at 2K is 2736x1536).
+- **Gemini** sizes are chosen by Google, which publishes no table; these were measured with live calls on 2026-09-24 (all ratios on Flash; spot checks found the same grid on Lite and Pro). 2K is exactly twice 1K (verified on Flash and Pro). 0.5K and 4K were not measured, so no size is published and `settings.expected_size` is absent there (the ratio is still applied).
+- `aspect_ratio: "auto"` on an edit has no expected size.
+
+Neither provider's grid matches every ratio exactly (1:8 at 1K is 352x2928, about 1:8.32). Each saved image reports `aspect_error_pct`, the signed percentage by which its delivered ratio misses the requested one; resize or crop when an exact ratio matters.
 
 ## Performance & cost
 
@@ -166,7 +193,7 @@ Generate images from text prompts.
 | `prompt` | string | Yes | - | Text description of the image to generate |
 | `output_path` | string | Yes | - | File path to save the image (directory or full path). Its extension selects `output_format` when that is omitted, and the saved file's extension always matches the format. An existing file is never overwritten: `-2`, `-3`, … is appended. Missing parent directories are created |
 | `model` | string | No | `"gemini-3.1-flash-image"` | Model ID: `gemini-3.1-flash-image`, `gemini-3.1-flash-lite-image`, `gemini-3-pro-image`, `gpt-image-2.5-flare`, `gpt-image-2.5-sunburst` |
-| `aspect_ratio` | string | No | `"1:1"` | Target ratio; actual pixel dimensions can differ. `1:1`, `2:3`, `3:2`, `3:4`, `4:3`, `4:5`, `5:4`, `9:16`, `16:9`, `21:9`; plus `1:4`, `4:1`, `1:8`, `8:1` (flash only). OpenAI models accept the ten base ratios. Rejected if unsupported by the chosen model |
+| `aspect_ratio` | string | No | `"1:1"` | Target ratio; the delivered pixel size can differ from it by a few percent (the description lists the expected size per ratio; see [Output sizes](#output-sizes)). `1:1`, `2:3`, `3:2`, `3:4`, `4:3`, `4:5`, `5:4`, `9:16`, `16:9`, `21:9`; plus `1:4`, `4:1`, `1:8`, `8:1` (flash only). OpenAI models accept the ten base ratios. Rejected if unsupported by the chosen model |
 | `resolution` | string | No | `"1K"` | `0.5K`, `1K`, `2K`, `4K`. Rejected if unsupported by the chosen model (Lite is `1K` only; Pro is `1K`/`2K`/`4K`; OpenAI models are `1K`/`2K`, where `1K` ≈ 1 megapixel and `2K` ≈ 4, derived from `aspect_ratio` with each edge rounded to a multiple of 16) |
 | `output_format` | string | No | the `output_path` extension, else `jpeg` | `jpeg` (all models), `png` or `webp` (OpenAI models only). When omitted, a `.jpg`/`.jpeg`/`.png`/`.webp` extension on `output_path` selects the format; the saved file's extension always matches the format |
 | `quality` | string | No | `"medium"` (OpenAI models) | **OpenAI models only.** `low`, `medium`, `high`, `xhigh`, `max` — see the [cost table](#performance--cost). Rejected on Gemini models |
@@ -186,7 +213,7 @@ output_path: ~/images/headshot.jpg
 aspect_ratio: 3:4
 ```
 
-**Returns** (both tools): `{ status, images: [{ path, format, width?, height?, preview?, preview_warning? }], settings?, issue?: { code, message, next_step }, description?, usage? }`.
+**Returns** (both tools): `{ status, images: [{ path, format, width?, height?, aspect_error_pct?, preview?, preview_warning? }], settings?, issue?: { code, message, next_step }, description?, usage? }`.
 
 - `complete`: every requested image was saved.
 - `partial`: some images were saved; keep them and read `issue` before requesting only the shortfall.
@@ -194,9 +221,9 @@ aspect_ratio: 3:4
 
 `issue` explains what prevented completion and what to do next. The text response includes the same saved paths and recovery advice. Each provider response is saved before requesting another image; a save failure stops further generation. Unsaved images cannot be retrieved later through this tool. Generation requests are never automatically retried, and an interrupted request may have completed at the provider. SDK argument-validation errors remain standard MCP errors identifying the invalid fields.
 
-`images[].path` is authoritative. `width`/`height` describe the saved image when available and can differ from the requested aspect ratio by a few percent (1:8 at 1K gives 352x2928, about 1:8.3); preview dimensions are separate. A preview failure leaves the original usable and adds `preview_warning`.
+`images[].path` is authoritative. `width`/`height` describe the saved image when available and can differ from the requested aspect ratio by a few percent (1:8 at 1K gives 352x2928, about 1:8.32); preview dimensions are separate. `aspect_error_pct` (added in 2.2.0) is that difference: (delivered width/height ÷ requested ratio − 1) × 100, signed and rounded to 2 decimals, so 352x2928 for 1:8 is `-3.83` (narrower than requested). It is present only when an explicit ratio was requested and the image's size is known. A preview failure leaves the original usable and adds `preview_warning`.
 
-`settings` (added in 2.1.0) reports the settings the call's requests were built with; cite it rather than the call's arguments: `{ model, aspect_ratio, resolution?, output_format, quality?, temperature?, transparent_background? }`. Provider defaults are filled in, so an omitted `quality` on an OpenAI model is reported as `medium` and an omitted `temperature` on a Gemini model as `1`. `quality` and `transparent_background` appear only for OpenAI models, `temperature` only for Gemini models. `aspect_ratio` is the requested target (`auto` for an edit that left it to the model); `resolution` is absent only when an OpenAI edit with `auto` let the provider choose the size. `settings` is present whenever generation started, including partial and failed results (even when no request completed), and absent when a call was rejected before that. The text response carries the same facts on one line, for example `Settings: gpt-image-2.5-flare, aspect_ratio 16:9 (target; delivered pixel size per image above), 1K, png, quality medium, transparent_background true`.
+`settings` (added in 2.1.0) reports the settings the call's requests were built with; cite it rather than the call's arguments: `{ model, aspect_ratio, resolution?, expected_size?, output_format, quality?, temperature?, transparent_background? }`. `expected_size` (added in 2.2.0) is the `WxH` from [Output sizes](#output-sizes), absent when no size is known in advance (`auto`, or Gemini 0.5K/4K, where no measured size is published). Provider defaults are filled in, so an omitted `quality` on an OpenAI model is reported as `medium` and an omitted `temperature` on a Gemini model as `1`. `quality` and `transparent_background` appear only for OpenAI models, `temperature` only for Gemini models. `aspect_ratio` is the requested target (`auto` for an edit that left it to the model); `resolution` is absent only when an OpenAI edit with `auto` let the provider choose the size. `settings` is present whenever generation started, including partial and failed results (even when no request completed), and absent when a call was rejected before that. The text response carries the same facts on one line, for example `Settings: gpt-image-2.5-flare, aspect_ratio 16:9 (target; delivered pixel size per image above), 1K, expected_size 1360x768, png, quality medium, transparent_background true`. Each saved image's own text line gives its delivered size, followed by its `aspect_error_pct` when that is beyond ±0.5% and by the expected size when delivery differs from it, for example `~/img/poster.jpg (1264x848; -0.63% vs 3:2; expected 1248x832)`. An image whose size is unknown reads `~/img/poster.jpg (size unknown; inspect the file)`.
 
 `usage` contains optional `input_tokens`/`output_tokens`, `estimated_cost_usd`, `cost_basis`, `requests_completed`, and `requests_reported`. Estimates cover only reported responses, including responses without usable images or whose images could not be saved. Unreported charges may apply, including for failed or interrupted requests. `cost_basis` is `tokens` for OpenAI or `per_image` for Gemini. Missing token counts are omitted, not zero. `requests_reported` below `requests_completed` means the estimate covers only some completed requests.
 
@@ -214,7 +241,7 @@ Edit existing images using text instructions. Generative edits on either provide
 | `image_paths` | string[] | Yes | - | Array of local image paths or public HTTP(S) URLs (pass a URL directly; no need to download it first), in prompt order ("first image" / "second image"). Gemini models: up to 14 images, 7 MB each, jpeg/png/webp/gif/heic/heif. OpenAI models: up to 16 images, 50 MB each, jpeg/png/webp only. Combined inputs must fit 128 MiB. Count, type and size are checked before any provider call. Each reference costs ~$0.01 on OpenAI and a fraction of a cent on Gemini, so prefer `gemini-3.1-flash-image` for 4+ references |
 | `output_path` | string | Yes | - | File path to save result (directory or full path). Its extension selects `output_format` when that is omitted, and the saved file's extension always matches the format. An existing file is never overwritten: `-2`, `-3`, … is appended. Missing parent directories are created |
 | `model` | string | No | `"gemini-3.1-flash-image"` | Model ID: `gemini-3.1-flash-image`, `gemini-3.1-flash-lite-image`, `gemini-3-pro-image`, `gpt-image-2.5-flare`, `gpt-image-2.5-sunburst` |
-| `aspect_ratio` | string | No | `"auto"` | `auto` or any generate target ratio. Gemini `auto` omits the ratio and still applies `resolution`; OpenAI `auto` lets the provider choose the size and rejects explicit `resolution`. Auto does not guarantee original framing. Rejected if unsupported by the chosen model |
+| `aspect_ratio` | string | No | `"auto"` | `auto` or any generate target ratio (expected sizes as in [Output sizes](#output-sizes); none for `auto`). Gemini `auto` omits the ratio and still applies `resolution`; OpenAI `auto` lets the provider choose the size and rejects explicit `resolution`. Auto does not guarantee original framing. Rejected if unsupported by the chosen model |
 | `resolution` | string | No | `1K` (Gemini, or OpenAI with an explicit ratio) | `0.5K`, `1K`, `2K`, `4K`. Rejected if unsupported by the chosen model (Lite is `1K` only; Pro is `1K`/`2K`/`4K`; OpenAI models are `1K`/`2K`, where `1K` ≈ 1 megapixel and `2K` ≈ 4, derived from `aspect_ratio` with each edge rounded to a multiple of 16). No schema default here: on an OpenAI model it needs an explicit `aspect_ratio`, and `auto` plus a resolution is rejected |
 | `output_format` | string | No | the `output_path` extension, else `jpeg` | `jpeg` (all models), `png` or `webp` (OpenAI models only). When omitted, a `.jpg`/`.jpeg`/`.png`/`.webp` extension on `output_path` selects the format; the saved file's extension always matches the format |
 | `quality` | string | No | `"medium"` (OpenAI models) | **OpenAI models only.** `low`, `medium`, `high`, `xhigh`, `max` — see the [cost table](#performance--cost). Rejected on Gemini models |

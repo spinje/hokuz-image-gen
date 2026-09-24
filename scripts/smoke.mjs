@@ -80,16 +80,19 @@ async function main() {
 
   let geminiImage;
   if (HAS_GEMINI) {
-    await step("Gemini Lite generate 1K", async () => {
+    await step("Gemini Lite generate 1K 4:3", async () => {
       const out = await callOk(client, "hokuz_generate_image", {
         prompt: "A single red apple on a white table, studio lighting",
         output_path: path.join(dir, "gemini.jpg"),
         model: "gemini-3.1-flash-lite-image",
         resolution: "1K",
+        aspect_ratio: "4:3",
       });
       const [image] = out.images;
       const size = `${image.width}x${image.height}`;
-      assert(size === "1024x1024", `expected 1024x1024, got ${size}`);
+      assert(size === "1200x896", `expected 1200x896, got ${size}`);
+      // The measured Gemini grid (GEMINI_OUTPUT_SIZE_1K) against a live delivery.
+      assert(out.settings.expected_size === size, `settings.expected_size is ${out.settings.expected_size}, delivered ${size}`);
       assert(
         out.usage?.estimated_cost_usd === 0.0336,
         `expected an estimated cost of $0.0336, got ${out.usage?.estimated_cost_usd}`
@@ -133,6 +136,7 @@ async function main() {
       const [image] = out.images;
       const size = `${image.width}x${image.height}`;
       assert(size === "1360x768", `expected 1360x768, got ${size}`);
+      assert(out.settings.expected_size === size, `settings.expected_size is ${out.settings.expected_size}, delivered ${size}`);
       assert(out.usage?.estimated_cost_usd > 0, "no estimated cost reported");
       // The only live observation that this provider prices by token.
       assert(
