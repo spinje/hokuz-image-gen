@@ -56,6 +56,8 @@ export interface ProviderModule {
   getApiKey(model: ImageModel): string;
   /** The config a request is built from: the provider's defaults applied to the options it owns. */
   effectiveConfig(config: GenerationConfig): GenerationConfig;
+  /** The "WxH" a request built from this config is expected to deliver; undefined when the provider chooses. */
+  expectedSize(config: GenerationConfig): string | undefined;
   generateImage(prompt: string, config: GenerationConfig, signal?: AbortSignal): Promise<ImageResponse>;
   editImage(
     prompt: string,
@@ -83,6 +85,19 @@ export function requireProviderKey(model: ImageModel): void {
  */
 export function effectiveConfig(config: GenerationConfig): GenerationConfig {
   return providerFor(config.model).effectiveConfig(config);
+}
+
+/**
+ * The pixel size ("WxH") this config's requests are expected to deliver: on
+ * OpenAI the size sent, on Gemini the measured output grid. Undefined when the
+ * provider chooses the size. The single source for both the aspect_ratio
+ * describe strings and `settings.expected_size`. Gemini returns a size only
+ * for combinations its model supports; OpenAI returns one for any ratio and
+ * resolution (no capability gating), so callers reach it only after
+ * `validateGenerationConfig` has rejected unsupported ones.
+ */
+export function expectedSize(config: GenerationConfig): string | undefined {
+  return providerFor(config.model).expectedSize(config);
 }
 
 /** Human-readable name of a provider. */

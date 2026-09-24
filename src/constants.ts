@@ -162,6 +162,32 @@ export const GEMINI_PRICE_PER_IMAGE_USD: Partial<
   "gemini-3-pro-image": { "1K": 0.134, "2K": 0.134, "4K": 0.24 },
 };
 
+/**
+ * Gemini's output pixel size [width, height] at 1K, by aspect ratio. Google
+ * publishes no size table, so these are measured: live probes of
+ * gemini-3.1-flash-image on 2026-09-24, all 14 ratios. Spot checks found the
+ * same grid on gemini-3-pro-image (16:9, 2:3) and gemini-3.1-flash-lite-image
+ * (9:16, 21:9, 4:3). `expectedSize` in `providers/gemini.ts` owns which
+ * resolutions it is published for. Hand-maintained: a new Gemini model or a
+ * provider change needs a live probe before these are trusted for it.
+ */
+export const GEMINI_OUTPUT_SIZE_1K: Record<AspectRatio, readonly [number, number]> = {
+  "1:1": [1024, 1024],
+  "2:3": [848, 1264],
+  "3:2": [1264, 848],
+  "3:4": [896, 1200],
+  "4:3": [1200, 896],
+  "4:5": [928, 1152],
+  "5:4": [1152, 928],
+  "9:16": [768, 1376],
+  "16:9": [1376, 768],
+  "21:9": [1584, 672],
+  "1:4": [512, 2064],
+  "4:1": [2064, 512],
+  "1:8": [352, 2928],
+  "8:1": [2928, 352],
+};
+
 /** MIME types for output formats */
 export const MIME_TYPES: Record<OutputFormat, string> = {
   jpeg: "image/jpeg",

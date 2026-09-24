@@ -1,4 +1,5 @@
 import { describe, it, expect, beforeEach, vi } from "vitest";
+import { ASPECT_RATIOS, IMAGE_MODELS, IMAGE_MODEL_CAPABILITIES, RESOLUTIONS } from "../../constants.js";
 import { ErrorType } from "../../types.js";
 
 const { createMock } = vi.hoisted(() => ({ createMock: vi.fn() }));
@@ -13,6 +14,7 @@ vi.stubEnv("GEMINI_API_KEY", "test-key");
 
 const {
   editImage,
+  expectedSize,
   generateImage,
   parseInteraction,
 } = await import("../gemini.js");
@@ -30,6 +32,40 @@ const baseConfig = {
 
 beforeEach(() => {
   createMock.mockReset();
+});
+
+describe("expectedSize", () => {
+  // Measured by live probes on gemini-3.1-flash-image at 1K (2026-09-24).
+  // Typed here rather than imported so a change to the table has to be deliberate.
+  const MEASURED_1K: Record<string, string> = {
+    "1:1": "1024x1024", "2:3": "848x1264", "3:2": "1264x848", "3:4": "896x1200",
+    "4:3": "1200x896", "4:5": "928x1152", "5:4": "1152x928", "9:16": "768x1376",
+    "16:9": "1376x768", "21:9": "1584x672", "1:4": "512x2064", "4:1": "2064x512",
+    "1:8": "352x2928", "8:1": "2928x352",
+  };
+  const doubled = (size: string) => size.split("x").map((edge) => Number(edge) * 2).join("x");
+
+  it("publishes the measured 1K size, and exactly twice it at 2K, for exactly the combinations each model supports", () => {
+    for (const model of IMAGE_MODELS.filter((m) => IMAGE_MODEL_CAPABILITIES[m].provider === "google")) {
+      const caps = IMAGE_MODEL_CAPABILITIES[model];
+      for (const aspectRatio of ASPECT_RATIOS) {
+        for (const resolution of RESOLUTIONS) {
+          const supported = caps.aspectRatios.includes(aspectRatio) && caps.resolutions.includes(resolution);
+          const expected = !supported ? undefined
+            : resolution === "1K" ? MEASURED_1K[aspectRatio]
+            : resolution === "2K" ? doubled(MEASURED_1K[aspectRatio])
+            : undefined; // 0.5K and 4K were not measured
+          const size = expectedSize({ ...baseConfig, model, aspectRatio, resolution });
+          expect({ model, aspectRatio, resolution, size }).toEqual({ model, aspectRatio, resolution, size: expected });
+        }
+      }
+    }
+  });
+
+  it("uses the default resolution the request is built with, and has no size for edit auto", () => {
+    expect(expectedSize({ ...baseConfig, resolution: undefined })).toBe("1376x768");
+    expect(expectedSize({ ...baseConfig, aspectRatio: undefined })).toBeUndefined();
+  });
 });
 
 describe("parseInteraction", () => {

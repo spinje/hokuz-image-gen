@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { createRequire } from "module";
-import { IMAGE_MODELS, QUALITIES } from "../constants.js";
+import { IMAGE_MODELS, IMAGE_MODEL_CAPABILITIES, QUALITIES, type ImageModel } from "../constants.js";
+import { expectedSize } from "../providers/index.js";
 import { ErrorType } from "../types.js";
 import { connectTestClient } from "./harness.js";
 
@@ -51,6 +52,7 @@ describe("published tool contract", () => {
       expect(items.properties).not.toHaveProperty("dataUrl");
       // Pixel size stays optional: a JPEG header we cannot walk yields none.
       expect(Object.keys(items.properties).sort()).toEqual([
+        "aspect_error_pct",
         "format",
         "height",
         "path",
@@ -86,6 +88,7 @@ describe("published tool contract", () => {
       const settings = outputProperties.settings as { properties: Record<string, unknown>; required: string[] };
       expect(Object.keys(settings.properties).sort()).toEqual([
         "aspect_ratio",
+        "expected_size",
         "model",
         "output_format",
         "quality",
@@ -135,6 +138,27 @@ describe("published tool contract", () => {
       // so they sit beside the model choice, not only in output_format.
       expect(tool.description).toContain("Gemini outputs jpeg only");
       expect(tool.description).toMatch(/OpenAI outputs jpeg, png or webp, including transparent/);
+    }
+  });
+
+  it("lists in both aspect_ratio fields the 1K sizes a result reports as expected_size", async () => {
+    // What a caller reads before paying must be what settings.expected_size
+    // says afterwards: one list per provider, built from the same function.
+    const listFor = (model: ImageModel) => IMAGE_MODEL_CAPABILITIES[model].aspectRatios
+      .map((aspectRatio) => `${aspectRatio} ${expectedSize({ model, aspectRatio, resolution: "1K", outputFormat: "jpeg" })}`)
+      .join(", ");
+    const { tools } = await harness.client.listTools();
+    expect(tools).toHaveLength(2);
+    for (const tool of tools) {
+      const aspect = (tool.inputSchema.properties as Record<string, { description?: string }>).aspect_ratio.description;
+      expect(aspect).toContain(`Gemini (measured on Flash for every ratio; Pro and Lite matched in spot checks): ${listFor("gemini-3.1-flash-image")}.`);
+      expect(aspect).toContain(`OpenAI (exact; the size requested): ${listFor("gpt-image-2.5-flare")}.`);
+      expect(aspect).toContain(
+        `OpenAI 16:9 is ${expectedSize({ model: "gpt-image-2.5-flare", aspectRatio: "16:9", resolution: "2K", outputFormat: "jpeg" })}.`
+      );
+      // The two providers' grids differ, so the lists above are not one list twice.
+      expect(aspect).toContain("16:9 1376x768");
+      expect(aspect).toContain("16:9 1360x768");
     }
   });
 

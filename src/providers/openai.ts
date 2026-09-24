@@ -118,6 +118,12 @@ export function effectiveConfig(
   };
 }
 
+/** The size a request is sent with, which the API returns; undefined when the provider chooses ("auto"). */
+export function expectedSize(config: GenerationConfig): string | undefined {
+  const size = openaiSize(effectiveConfig(config));
+  return size === "auto" ? undefined : size;
+}
+
 /**
  * The request fields both images.generate and images.edit share.
  *

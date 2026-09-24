@@ -63,12 +63,31 @@ describe("settings echo", () => {
       model: DEFAULTS.model,
       aspect_ratio: request.response_format.aspect_ratio,
       resolution: request.response_format.image_size,
+      // The measured Gemini size for 1:1 at 1K (GEMINI_OUTPUT_SIZE_1K).
+      expected_size: "1024x1024",
       output_format: "jpeg",
       temperature: request.generation_config.temperature,
     });
     expect(settingsLineOf(result)).toBe(
-      "Settings: gemini-3.1-flash-image, aspect_ratio 1:1 (target), 1K, jpeg, temperature 1"
+      "Settings: gemini-3.1-flash-image, aspect_ratio 1:1 (target), 1K, expected_size 1024x1024, jpeg, temperature 1"
     );
+  });
+
+  it("echoes the measured Gemini size for the ratio and resolution requested, and none where it was not measured", async () => {
+    const pro = await harness.callTool("hokuz_generate_image", {
+      prompt: "p", output_path: tmp, model: "gemini-3-pro-image", aspect_ratio: "16:9", resolution: "2K",
+    });
+    expect(sdk.interactions.mock.calls[0][0].response_format).toMatchObject({ aspect_ratio: "16:9", image_size: "2K" });
+    // 2K is exactly twice the measured 1K size (1376x768).
+    expect(settingsOf(pro)).toMatchObject({ resolution: "2K", expected_size: "2752x1536" });
+
+    const quarter = await harness.callTool("hokuz_generate_image", {
+      prompt: "p", output_path: tmp, aspect_ratio: "1:8", resolution: "0.5K",
+    });
+    expect(sdk.interactions.mock.calls[1][0].response_format).toMatchObject({ aspect_ratio: "1:8", image_size: "512" });
+    expect(settingsOf(quarter)).toMatchObject({ aspect_ratio: "1:8", resolution: "0.5K" });
+    expect(settingsOf(quarter)).not.toHaveProperty("expected_size");
+    expect(settingsLineOf(quarter)).toBe("Settings: gemini-3.1-flash-image, aspect_ratio 1:8 (target), 0.5K, jpeg, temperature 1");
   });
 
   it("echoes OpenAI's quality default and the transparent background it sent", async () => {
@@ -87,12 +106,13 @@ describe("settings echo", () => {
       model: "gpt-image-2.5-flare",
       aspect_ratio: "16:9",
       resolution: "1K",
+      expected_size: request.size,
       output_format: request.output_format,
       quality: request.quality,
       transparent_background: true,
     });
     expect(settingsLineOf(result)).toBe(
-      "Settings: gpt-image-2.5-flare, aspect_ratio 16:9 (target; delivered pixel size per image above), 1K, png, quality medium, transparent_background true"
+      "Settings: gpt-image-2.5-flare, aspect_ratio 16:9 (target; delivered pixel size per image above), 1K, expected_size 1360x768, png, quality medium, transparent_background true"
     );
   });
 
@@ -136,6 +156,10 @@ describe("settings echo", () => {
       model: "gpt-image-2.5-flare", aspect_ratio: "auto", output_format: "jpeg",
       quality: DEFAULTS.quality, transparent_background: false,
     });
+    // The delivered size is known, but with no requested ratio there is no error to report.
+    expect((result.structuredContent as ImageToolOutput).images).toEqual([
+      { path: expect.any(String), format: "jpeg", width: 1536, height: 1024 },
+    ]);
     expect(settingsLineOf(result)).toBe(
       "Settings: gpt-image-2.5-flare, aspect_ratio auto, jpeg, quality medium, transparent_background false"
     );

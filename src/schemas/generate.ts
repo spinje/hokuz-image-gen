@@ -12,6 +12,7 @@ import {
   DEFAULTS,
   LIMITS,
 } from "../constants.js";
+import { OUTPUT_SIZES_DESCRIPTION } from "./output-sizes.js";
 
 /**
  * Input schema for hokuz_generate_image tool
@@ -57,9 +58,9 @@ export const GenerateImageInputSchema = z
       .enum(ASPECT_RATIOS)
       .default(DEFAULTS.aspectRatio)
       .describe(
-        `Target aspect ratio; actual pixel dimensions can differ. Options: ${ASPECT_RATIOS.join(", ")}. The extreme ratios (1:4, 4:1, 1:8, 8:1) are ` +
+        `Target aspect ratio; the delivered pixel size can differ from it by a few percent. Options: ${ASPECT_RATIOS.join(", ")}. The extreme ratios (1:4, 4:1, 1:8, 8:1) are ` +
           "supported only by gemini-3.1-flash-image; OpenAI models accept the other ten. " +
-          `Default: ${DEFAULTS.aspectRatio}`
+          `${OUTPUT_SIZES_DESCRIPTION} Default: ${DEFAULTS.aspectRatio}`
       ),
 
     resolution: z
@@ -69,8 +70,8 @@ export const GenerateImageInputSchema = z
         `Output resolution. Options: ${RESOLUTIONS.join(", ")}. Gemini: Flash is 0.5K-4K and the only ` +
           "model with 0.5K, Lite is 1K only, Pro is 1K/2K/4K. " +
           "OpenAI models: 1K (~1 megapixel) or 2K (~4 megapixels, about twice the cost) only; requested dimensions are derived from " +
-          "aspect_ratio and rounded to multiples of 16. For exact layouts, check returned width/height " +
-          `when available, or inspect the saved file. Default: ${DEFAULTS.resolution}`
+          "aspect_ratio and rounded to multiples of 16. " +
+          `Default: ${DEFAULTS.resolution}`
       ),
 
     // No .default(): see gotcha 7. With one, the handler could not tell an

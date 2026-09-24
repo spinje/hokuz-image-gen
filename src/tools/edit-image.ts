@@ -33,9 +33,9 @@ const TOOL_DESCRIPTION = `Edit or combine images from a text instruction with Ge
 
 - Edits are generative, not pixel-identical: details beyond the request can change. There is no mask: name the region to change and what must stay, then inspect the result before reporting what changed.
 - "Remove the background" only replaces it; a transparent result needs an OpenAI model, transparent_background=true and png/webp.
-- aspect_ratio is a target: check the returned width/height; the ratio can be off by a few percent (1:8 at 1K gives 352x2928).
+- aspect_ratio is a target: its field lists sizes per ratio; images[].aspect_error_pct is the drift. Resize or crop for an exact ratio.
 - status: complete, partial or failed; partial/failed carry an issue with what happened and the next step. Nothing is retried automatically.
-- SERVER_BUSY: one image call runs at a time; retry after it finishes. No input was loaded and no request sent.
+- SERVER_BUSY: one image call runs at a time; retry after it finishes. No input loaded, no request sent.
 - A model whose provider key is not configured fails at call time.
 
 ${MODEL_GUIDE}`;

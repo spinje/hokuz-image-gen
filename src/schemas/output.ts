@@ -45,6 +45,10 @@ export const ImageToolOutputSchema = z.object({
           .number()
           .optional()
           .describe("Delivered height in pixels (measured from the file on Gemini, as reported by the provider on OpenAI); can differ from the requested aspect ratio by a few percent"),
+        aspect_error_pct: z
+          .number()
+          .optional()
+          .describe("How far the delivered ratio (width/height) is from the requested aspect_ratio, in percent, signed, 2 decimals: negative is narrower (taller) than requested, positive wider. 1:8 delivered as 352x2928 is -3.83. Present only when an explicit aspect_ratio was requested and width/height are known. Resize or crop when an exact ratio matters; do not describe the image as exactly the requested ratio"),
       })
     )
     .describe("The images written to disk, in order"),
@@ -58,6 +62,11 @@ export const ImageToolOutputSchema = z.object({
         .enum(RESOLUTIONS)
         .optional()
         .describe("Requested resolution; absent when an OpenAI model chose the size itself (edit with aspect_ratio auto)"),
+      expected_size: z
+        .string()
+        .regex(/^\d+x\d+$/)
+        .optional()
+        .describe("Pixel size (WxH) the requests were expected to deliver: on OpenAI the exact size requested; on Gemini a prediction from sizes measured on Flash at 1K (2K exactly double; Pro and Lite matched in spot checks). Absent when no size is known in advance: aspect_ratio auto, or Gemini 0.5K/4K, where no measured size is published (the ratio is still applied). images[].width/height are what was delivered; a different delivered size is also named on that image's text line"),
       output_format: z.enum(OUTPUT_FORMATS).describe("Format requested and saved"),
       quality: z.enum(QUALITIES).optional().describe("OpenAI models only: the quality requested, including the default when none was given"),
       temperature: z.number().optional().describe("Gemini models only: the temperature requested, including the default when none was given"),

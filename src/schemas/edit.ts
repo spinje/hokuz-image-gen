@@ -12,6 +12,7 @@ import {
   DEFAULTS,
   LIMITS,
 } from "../constants.js";
+import { OUTPUT_SIZES_DESCRIPTION } from "./output-sizes.js";
 
 /**
  * Extended aspect ratios for editing (includes 'auto' option)
@@ -80,11 +81,11 @@ export const EditImageInputSchema = z
       .enum(EDIT_ASPECT_RATIOS)
       .default("auto")
       .describe(
-        `Target aspect ratio; actual pixel dimensions can differ. Options: auto, ${ASPECT_RATIOS.join(", ")}. ` +
+        `Target aspect ratio; the delivered pixel size can differ from it by a few percent. Options: auto, ${ASPECT_RATIOS.join(", ")}. ` +
           "'auto' (default): Gemini omits the ratio and still applies resolution (1K unless set); OpenAI " +
           "chooses the output size itself and rejects an explicit resolution. Neither guarantees the original " +
-          "framing; set an explicit ratio to request a target shape. The extreme ratios (1:4, 4:1, 1:8, 8:1) are " +
-          "supported only by gemini-3.1-flash-image; OpenAI models accept the other ten. Default: auto"
+          "framing, and no size is known in advance; set an explicit ratio to request a target shape. The extreme ratios (1:4, 4:1, 1:8, 8:1) are " +
+          `supported only by gemini-3.1-flash-image; OpenAI models accept the other ten. ${OUTPUT_SIZES_DESCRIPTION} Default: auto`
       ),
 
     // No .default(): see gotcha 7. With one, an explicit resolution could not
@@ -99,7 +100,7 @@ export const EditImageInputSchema = z
           "OpenAI models reject it while aspect_ratio is 'auto' (the default), because the provider " +
           "then chooses the size itself; with an explicit aspect_ratio they accept it and apply 1K " +
           "when omitted: 1K ~1 megapixel, 2K ~4 megapixels (about twice the cost), with dimensions derived from " +
-          "aspect_ratio and each edge rounded to a multiple of 16. For exact layouts, check returned width/height when available, or inspect the saved file."
+          "aspect_ratio and each edge rounded to a multiple of 16."
       ),
 
     // No .default(): see gotcha 7. With one, the handler could not tell an
