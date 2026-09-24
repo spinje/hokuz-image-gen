@@ -42,12 +42,14 @@ export const EditImageInputSchema = z
         `Maximum ${LIMITS.maxInputImages} input images allowed`
       )
       .describe(
-        "Array of local file paths or public HTTP(S) image URLs; private network destinations and redirects to them are rejected. Gemini models: up to 14 images, 7 MB " +
-          "each (jpeg/png/webp/gif/heic/heif). OpenAI models: up to 16 images, 50 MB each, jpeg/png/webp " +
-          `only (gif/heic are rejected before the API call). Local combined limit: ${LIMITS.maxTotalInputImageBytes / (1024 * 1024)} MiB per edit. ` +
-          "Order matters: 'first image'/'second " +
-          "image' in the prompt refer to this order. For style transfer, provide the content image " +
-          "first, then the style reference. '~' is expanded; a URL must be publicly reachable."
+        "Array of local file paths or public HTTP(S) image URLs. Pass a URL directly; there is no need to " +
+          "download it first. Private network destinations, and redirects to them, are rejected. Gemini " +
+          "models: up to 14 images, 7 MB each (jpeg/png/webp/gif/heic/heif). OpenAI models: up to 16 images, " +
+          `50 MB each, jpeg/png/webp only. All references combined must fit ${LIMITS.maxTotalInputImageBytes / (1024 * 1024)} MiB. ` +
+          "Each is checked for type and size before any API call, and the first bad one fails the whole call. " +
+          "Order matters: 'first image'/'second image' in the prompt refer to this order; for style transfer, " +
+          "give the content image first, then the style reference. Each reference costs ~$0.01 on OpenAI and " +
+          "a fraction of a cent on Gemini, so prefer gemini-3.1-flash-image for 4+ references. '~' is expanded."
       ),
 
     output_path: z
@@ -55,11 +57,12 @@ export const EditImageInputSchema = z
       .min(1, "Output path is required")
       .describe(
         "Where to save the edited image. If HOKUZ_OUTPUT_ROOT is configured, paths must stay within it and relative paths start there. A trailing slash, or a path that is already a directory, " +
-          "means a timestamped file inside it; anything else is the file to write. When output_format " +
-          "is omitted this path's extension chooses the format, so a .png or .webp path needs an " +
-          "OpenAI model; when output_format is set, the extension is replaced to match it. An existing " +
+          "means a timestamped file inside it; anything else is the file to write. Missing parent " +
+          "directories are created. When output_format is omitted this path's extension chooses the " +
+          "format, so a .png or .webp path needs an OpenAI model (with a Gemini model use .jpg or a " +
+          "directory); when output_format is set, the extension is replaced to match it. An existing " +
           "file is never overwritten (-2, -3 is appended, which is also how num_images names its " +
-          "files), so use the path returned in the result. '~' is expanded."
+          "files), so the path returned in the result is authoritative. '~' is expanded."
       ),
 
     model: z
@@ -78,8 +81,9 @@ export const EditImageInputSchema = z
       .default("auto")
       .describe(
         `Target aspect ratio; actual pixel dimensions can differ. Options: auto, ${ASPECT_RATIOS.join(", ")}. ` +
-          "'auto' (default) omits the ratio on Gemini and lets OpenAI choose the size; neither guarantees " +
-          "the original framing. The extreme ratios (1:4, 4:1, 1:8, 8:1) are " +
+          "'auto' (default): Gemini omits the ratio and still applies resolution (1K unless set); OpenAI " +
+          "chooses the output size itself and rejects an explicit resolution. Neither guarantees the original " +
+          "framing; set an explicit ratio to request a target shape. The extreme ratios (1:4, 4:1, 1:8, 8:1) are " +
           "supported only by gemini-3.1-flash-image; OpenAI models accept the other ten. Default: auto"
       ),
 
@@ -94,7 +98,8 @@ export const EditImageInputSchema = z
           "with aspect_ratio 'auto'; higher resolution does not guarantee retention of input detail. " +
           "OpenAI models reject it while aspect_ratio is 'auto' (the default), because the provider " +
           "then chooses the size itself; with an explicit aspect_ratio they accept it and apply 1K " +
-          "when omitted. For exact layouts, check returned width/height when available, or inspect the saved file."
+          "when omitted: 1K ~1 megapixel, 2K ~4 megapixels (about twice the cost), with dimensions derived from " +
+          "aspect_ratio and each edge rounded to a multiple of 16. For exact layouts, check returned width/height when available, or inspect the saved file."
       ),
 
     // No .default(): see gotcha 7. With one, the handler could not tell an
@@ -124,13 +129,16 @@ export const EditImageInputSchema = z
       .optional()
       .describe(
         "OpenAI models only; requires output_format png or webp (or a .png/.webp output_path). " +
-          "false is accepted on every model. Default: false (opaque)."
+          "Gemini models reject true; false is accepted on every model. Default: false (opaque)."
       ),
 
     include_preview: z.boolean().default(false).describe(
-      "Include a bounded derived JPEG preview in the tool result for clients that display MCP images. " +
-      "Transparent pixels are shown on white and navy backgrounds; alpha extrema describe the original " +
-      "8-bit pixels. Adds local processing and image payload, never another provider request. Default: false."
+      "Include a reduced JPEG preview of each saved image in the tool result, for clients that display " +
+      "MCP image content. Images that are not fully opaque are shown on white (left) and navy (right). " +
+      "The saved original is unchanged and remains authoritative; the alpha measurements describe its " +
+      "pixels, not whether a cutout is clean. Adds local processing and payload, never another provider " +
+      "request. If a preview cannot be made, the call still succeeds with images[].preview_warning: " +
+      "inspect the saved file instead of regenerating. Default: false."
     ),
 
     num_images: z
@@ -143,7 +151,11 @@ export const EditImageInputSchema = z
       )
       .default(DEFAULTS.numImages)
       .describe(
-        `Number of output variations to generate (1-${LIMITS.maxOutputImages}). Default: ${DEFAULTS.numImages}`
+        `Number of output variations to generate (1-${LIMITS.maxOutputImages}). Each image is a separate provider request, made ` +
+          "one after another: time and cost scale linearly and the call blocks until the last one returns " +
+          "(4 sunburst images at max quality take several minutes). Each image is saved before the next is " +
+          "requested; a failure stops the batch, and images already saved are kept and reported. " +
+          `Default: ${DEFAULTS.numImages}`
       ),
 
     temperature: z

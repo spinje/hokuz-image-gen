@@ -5,6 +5,10 @@ import * as https from "node:https";
 import { BlockList, isIP, type LookupFunction } from "node:net";
 import { Readable } from "node:stream";
 import { ErrorType, ToolError } from "../types.js";
+import { SERVER_NAME, SERVER_VERSION } from "../package-info.js";
+
+// Some public hosts (upload.wikimedia.org) answer 403 to a request without one.
+const USER_AGENT = `${SERVER_NAME}/${SERVER_VERSION} (+https://github.com/spinje/hokuz-image-gen)`;
 
 // Conservative policy based on IANA's special-purpose address registries.
 // https://www.iana.org/assignments/iana-ipv4-special-registry/
@@ -67,7 +71,7 @@ function request(url: URL, signal: AbortSignal): Promise<http.IncomingMessage> {
       // No pooled connection bypasses the checked lookup. The original URL
       // retains the correct HTTP Host and TLS server name/certificate checks.
       agent: false,
-      headers: { accept: "image/*", "accept-encoding": "identity" },
+      headers: { accept: "image/*", "accept-encoding": "identity", "user-agent": USER_AGENT },
     }, resolve).on("error", reject);
   });
 }

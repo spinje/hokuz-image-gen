@@ -112,7 +112,7 @@ describe("image tool pipeline", () => {
     expect(result.isError).toBe(true);
     expect(result.structuredContent).toEqual({ status: "failed", images: [], issue: {
       code: "CONTENT_BLOCKED", message: "The provider reported a moderation block.", next_step: "Revise the prompt.",
-    } });
+    }, settings: expect.objectContaining({ model: "gemini-3.1-flash-image" }) });
     expect(firstText(result)).toContain("Revise the prompt.");
     expect(firstText(result)).not.toContain("Generation did not start");
   });
@@ -276,6 +276,7 @@ describe("image tool pipeline", () => {
     expect(result.structuredContent).toEqual({
       status: "complete",
       images: [{ path: expect.any(String), format: "jpeg" }],
+      settings: expect.any(Object),
     });
     expect(firstText(result)).not.toContain("Usage (");
     expect(firstText(result)).toContain("complete: 1 of 1 requested image(s) saved.");

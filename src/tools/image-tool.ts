@@ -11,17 +11,18 @@ import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
 import {
   GEMINI_PRICE_PER_IMAGE_USD,
   type ImageModel,
-  type OutputFormat,
   type Resolution,
 } from "../constants.js";
 import { createImagePreview, PreviewUnavailable } from "../services/image-preview.js";
 import { throwIfImageCancelled } from "../services/image-operation.js";
 import type { ImageToolOutput } from "../schemas/output.js";
+import { effectiveConfig } from "../providers/index.js";
 import { saveBase64Image } from "../services/file-utils.js";
 import {
   ErrorType,
   ToolError,
   type GeneratedImage,
+  type GenerationConfig,
   type ImageResponse,
   type ToolIssue,
   type UsageReport,
@@ -42,19 +43,19 @@ function usd(model: ImageModel, resolution: Resolution): string {
 }
 
 /**
- * The model guidance both TOOL_DESCRIPTIONs embed verbatim: which model to pick,
- * and what every model does regardless of which tool is calling. The Gemini
- * figures come from the price table the server bills its estimates against; the
- * OpenAI ones are hand-maintained benchmark estimates with nothing to derive
- * them from. Anything that differs between the two tools stays in the tool file.
+ * The model guidance both TOOL_DESCRIPTIONs embed verbatim: which model to pick.
+ * The Gemini figures come from the price table the server bills its estimates
+ * against; the OpenAI ones are hand-maintained benchmark estimates with nothing
+ * to derive them from. Both descriptions have a character budget (CLAUDE.md
+ * gotcha 8): a rule about one field belongs in its describe string, not here.
  */
-export const MODEL_GUIDE = `Models (approximate time and cost for one 1K image):
-- gemini-3.1-flash-lite-image (Nano Banana 2 Lite): ~5s, ~${usd("gemini-3.1-flash-lite-image", "1K")}, 1K only. Cheapest Gemini model; drafts and batches.
-- gemini-3.1-flash-image (Nano Banana 2, DEFAULT): ~11s, ~${usd("gemini-3.1-flash-image", "0.5K")} (0.5K) / ${usd("gemini-3.1-flash-image", "1K")} (1K) / ${usd("gemini-3.1-flash-image", "2K")} (2K) / ${usd("gemini-3.1-flash-image", "4K")} (4K); the only model with 1:4, 4:1, 1:8, 8:1. Best everyday choice.
-- gemini-3-pro-image (Nano Banana Pro): ~17s, ~${usd("gemini-3-pro-image", "1K")} (1K/2K) to ~${usd("gemini-3-pro-image", "4K")} (4K). Photorealism, hero shots, factual content.
-- gpt-image-2.5-flare (OpenAI): cost and time follow \`quality\`: low ~$0.006/10s, medium ~$0.013/14s, high ~$0.05/18s, xhigh ~$0.09/27s, max ~$0.21/46s. The cheapest image overall is flare at low. Single subjects and short text.
-- gpt-image-2.5-sunburst (OpenAI): same prices, about 1.5-2x slower (high ~30s, max ~85s). Multi-element text layouts, branding, and edits where precision matters.
-OpenAI models take 1K (~1 megapixel) or 2K (~4 megapixels, about twice the cost) at the ten base ratios; requested dimensions are derived from the ratio and rounded to multiples of 16. Aspect ratios are targets: OpenAI rounding and Gemini output can produce different file ratios. For exact layouts, check returned width/height when available, or inspect the saved file. Results carry each image's pixel size and an estimated cost (Google's per-image price on Gemini, token-based on OpenAI); either is omitted rather than guessed when the response does not carry it. Gemini models produce jpeg only; OpenAI models produce jpeg, png or webp and can render a transparent background (png/webp only). A model whose provider key is not configured on the server fails at call time with an error naming the variable.`;
+export const MODEL_GUIDE = `Models (~time, ~cost per 1K image):
+- gemini-3.1-flash-lite-image (Nano Banana 2 Lite): ~5s, ${usd("gemini-3.1-flash-lite-image", "1K")}; 1K only. Cheapest Gemini; drafts and batches.
+- gemini-3.1-flash-image (Nano Banana 2, DEFAULT): ~11s, ${usd("gemini-3.1-flash-image", "1K")} (0.5K ${usd("gemini-3.1-flash-image", "0.5K")}, 2K ${usd("gemini-3.1-flash-image", "2K")}, 4K ${usd("gemini-3.1-flash-image", "4K")}); the only model with 1:4, 4:1, 1:8, 8:1. Best everyday choice.
+- gemini-3-pro-image (Nano Banana Pro): ~17s, ${usd("gemini-3-pro-image", "1K")} (1K/2K; 4K ${usd("gemini-3-pro-image", "4K")}). Photorealism, hero shots, factual content.
+- gpt-image-2.5-flare (OpenAI): follows quality: low $0.006/10s, medium $0.013/14s, high $0.05/18s, xhigh $0.09/27s, max $0.21/46s; at low, the cheapest image overall. Single subjects and short text.
+- gpt-image-2.5-sunburst (OpenAI): same prices, 1.5-2x slower. Multi-element text layouts, branding, precise edits.
+Gemini outputs jpeg only; OpenAI outputs jpeg, png or webp, including transparent backgrounds.`;
 
 /** Annotations shared by both tools (same file-writing, never-overwriting behaviour). */
 export const IMAGE_TOOL_ANNOTATIONS = {
@@ -65,8 +66,8 @@ export const IMAGE_TOOL_ANNOTATIONS = {
 } as const;
 
 export interface ImageToolRun {
-  /** Decides the saved file's extension and the format reported for it. */
-  outputFormat: OutputFormat;
+  /** The validated config every request is sent with; echoed as `settings`. */
+  config: GenerationConfig;
   outputPath: string;
   requestedCount: number;
   includePreview?: boolean;
@@ -103,10 +104,29 @@ function sumUsage(usages: UsageReport[]): UsageReport | undefined {
   };
 }
 
+/**
+ * The settings the provider received, as the result reports them. Derived from
+ * the same `effectiveConfig` the provider builds its request from, so the echo
+ * cannot drift from what was sent.
+ */
+function settingsOutput(config: GenerationConfig): NonNullable<ImageToolOutput["settings"]> {
+  const sent = effectiveConfig(config);
+  return {
+    model: sent.model,
+    aspect_ratio: sent.aspectRatio ?? "auto",
+    ...(sent.resolution !== undefined && { resolution: sent.resolution }),
+    output_format: sent.outputFormat,
+    ...(sent.quality !== undefined && { quality: sent.quality }),
+    ...(sent.temperature !== undefined && { temperature: sent.temperature }),
+    ...(sent.transparentBackground !== undefined && { transparent_background: sent.transparentBackground }),
+  };
+}
+
 /** Save each response before requesting more; a later failure never hides files. */
 export async function runImageTool({
-  outputFormat, outputPath, requestedCount, includePreview = false, signal, produce,
+  config, outputPath, requestedCount, includePreview = false, signal, produce,
 }: ImageToolRun): Promise<CallToolResult> {
+  const { outputFormat } = config;
   const outputImages: ImageToolOutput["images"] = [];
   const previewInputs: GeneratedImage[] = [];
   const descriptions: string[] = [];
@@ -191,6 +211,7 @@ export async function runImageTool({
   return formatImageResult({
     status: issue ? (outputImages.length ? "partial" : "failed") : "complete",
     images: outputImages,
+    settings: settingsOutput(config),
     ...(issue && { issue }),
     ...(descriptions.length && { description: [...new Set(descriptions)].join("\n---\n") }),
     ...(usage && { usage: {
@@ -216,6 +237,7 @@ function formatImageResult(
   for (const image of images) {
     lines.push(image.width && image.height ? `${image.path} (${image.width}x${image.height})` : image.path);
   }
+  if (output.settings) lines.push(settingsLine(output.settings, images.some((image) => image.width && image.height)));
   if (issue) lines.push(`\n${issue.message}`, `Next step: ${issue.next_step}`);
   if (usage) {
     const counts = [
@@ -233,6 +255,20 @@ function formatImageResult(
     structuredContent: output,
     ...(output.status === "failed" && { isError: true }),
   };
+}
+
+/** The text twin of structured `settings`: same fields, same omissions. */
+function settingsLine(settings: NonNullable<ImageToolOutput["settings"]>, sizesListed: boolean): string {
+  const target = sizesListed ? " (target; delivered pixel size per image above)" : " (target)";
+  return "Settings: " + [
+    settings.model,
+    `aspect_ratio ${settings.aspect_ratio}${settings.aspect_ratio === "auto" ? "" : target}`,
+    settings.resolution,
+    settings.output_format,
+    settings.quality !== undefined ? `quality ${settings.quality}` : undefined,
+    settings.temperature !== undefined ? `temperature ${settings.temperature}` : undefined,
+    settings.transparent_background !== undefined ? `transparent_background ${settings.transparent_background}` : undefined,
+  ].filter((part) => part !== undefined).join(", ");
 }
 
 function issueFromError(error: unknown): ToolIssue {

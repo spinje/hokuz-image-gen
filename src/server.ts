@@ -5,27 +5,30 @@
  * in-memory transport without triggering the stdio startup in main().
  */
 
-import { createRequire } from "module";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { registerGenerateImageTool } from "./tools/generate-image.js";
 import { registerEditImageTool } from "./tools/edit-image.js";
+import { SERVER_NAME, SERVER_VERSION } from "./package-info.js";
 
-/** Server metadata. The version is read from package.json so it cannot drift. */
-const pkg = createRequire(import.meta.url)("../package.json") as {
-  name: string;
-  version: string;
-};
-export const SERVER_NAME = pkg.name;
-export const SERVER_VERSION = pkg.version;
+/**
+ * Shown by clients before any tool schema is loaded (Claude Code defers MCP
+ * tools behind a search), so it says what a caller must know before preparing
+ * inputs. Same character budget as the descriptions (CLAUDE.md gotcha 8).
+ */
+const INSTRUCTIONS = "hokuz_generate_image and hokuz_edit_image generate and edit images with Gemini or OpenAI models and save them as local files. " +
+  "Load a tool's schema before preparing its inputs: hokuz_edit_image accepts public HTTP(S) image URLs in image_paths " +
+  "directly, so do not download them first. In results, images[].path is authoritative, and width/height are the delivered " +
+  "pixel size, which can differ from the requested aspect_ratio by a few percent. settings gives the model and options the requests " +
+  "were built with, including defaults; cite it rather than your own arguments.";
 
 /**
  * Create and configure the MCP server with all tools registered.
  */
 export function createServer(): McpServer {
-  const server = new McpServer({
-    name: SERVER_NAME,
-    version: SERVER_VERSION,
-  });
+  const server = new McpServer(
+    { name: SERVER_NAME, version: SERVER_VERSION },
+    { instructions: INSTRUCTIONS }
+  );
 
   registerGenerateImageTool(server);
   registerEditImageTool(server);

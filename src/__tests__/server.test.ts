@@ -4,6 +4,13 @@ import { IMAGE_MODELS, QUALITIES } from "../constants.js";
 import { ErrorType } from "../types.js";
 import { connectTestClient } from "./harness.js";
 
+/**
+ * Claude Code truncates (verified in 2.1.281, whose changelog added an override) each MCP tool description and the
+ * server instructions at 2,048 characters; the rest never reaches the model.
+ * Field describe strings are delivered in full, so field rules belong there.
+ */
+const CLAUDE_CODE_TEXT_CAP = 2048;
+
 let harness: Awaited<ReturnType<typeof connectTestClient>>;
 
 beforeEach(async () => {
@@ -73,6 +80,20 @@ describe("published tool contract", () => {
         "requests_completed",
         "requests_reported",
       ]);
+      // settings is what a caller cites as "made with": only the options that
+      // apply to every model are required; the provider-only ones and the
+      // resolution an OpenAI auto edit leaves to the provider are optional.
+      const settings = outputProperties.settings as { properties: Record<string, unknown>; required: string[] };
+      expect(Object.keys(settings.properties).sort()).toEqual([
+        "aspect_ratio",
+        "model",
+        "output_format",
+        "quality",
+        "resolution",
+        "temperature",
+        "transparent_background",
+      ]);
+      expect(settings.required.sort()).toEqual(["aspect_ratio", "model", "output_format"]);
       expect(outputProperties.status).toMatchObject({ enum: ["complete", "partial", "failed"] });
       const issue = outputProperties.issue as { properties: Record<string, unknown>; required: string[] };
       expect(issue.required.sort()).toEqual(["code", "message", "next_step"]);
@@ -110,7 +131,25 @@ describe("published tool contract", () => {
         // Word boundaries: "low" is a substring of "follow", "high" of "xhigh".
         expect(tool.description).toMatch(new RegExp(`\\b${quality}\\b`));
       }
+      // Output formats decide the model for png/webp/transparent deliverables,
+      // so they sit beside the model choice, not only in output_format.
+      expect(tool.description).toContain("Gemini outputs jpeg only");
+      expect(tool.description).toMatch(/OpenAI outputs jpeg, png or webp, including transparent/);
     }
+  });
+
+  it("fits both descriptions and the server instructions within Claude Code's cap", async () => {
+    const { tools } = await harness.client.listTools();
+    expect(tools).toHaveLength(2);
+    for (const tool of tools) {
+      expect(tool.description!.length).toBeLessThanOrEqual(CLAUDE_CODE_TEXT_CAP);
+    }
+    // Shown before any tool schema is loaded: the URL guidance must be in it.
+    const instructions = harness.client.getInstructions();
+    expect(instructions).toContain("image_paths");
+    expect(instructions).toContain("HTTP(S)");
+    expect(instructions).toContain("do not download");
+    expect(instructions!.length).toBeLessThanOrEqual(CLAUDE_CODE_TEXT_CAP);
   });
 
   it("publishes optional params with enums and defaults, and only prompt/output_path as required", async () => {

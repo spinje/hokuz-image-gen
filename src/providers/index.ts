@@ -54,6 +54,8 @@ export interface ProviderModule {
   /** Whether this provider's API key is set; never throws. */
   hasApiKey(): boolean;
   getApiKey(model: ImageModel): string;
+  /** The config a request is built from: the provider's defaults applied to the options it owns. */
+  effectiveConfig(config: GenerationConfig): GenerationConfig;
   generateImage(prompt: string, config: GenerationConfig, signal?: AbortSignal): Promise<ImageResponse>;
   editImage(
     prompt: string,
@@ -72,6 +74,15 @@ function providerFor(model: ImageModel): ProviderModule {
 /** Check local configuration before loading potentially large edit inputs. */
 export function requireProviderKey(model: ImageModel): void {
   providerFor(model).getApiKey(model);
+}
+
+/**
+ * The settings every request of this call is sent with, including the
+ * provider's defaults for the options the caller omitted. The provider builds
+ * its requests from the same function, so what the tools echo is what was sent.
+ */
+export function effectiveConfig(config: GenerationConfig): GenerationConfig {
+  return providerFor(config.model).effectiveConfig(config);
 }
 
 /** Human-readable name of a provider. */

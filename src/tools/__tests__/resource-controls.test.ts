@@ -134,7 +134,7 @@ describe("request cancellation", () => {
     const a = await setup(); const controller = new AbortController();
     const produce = vi.fn(async () => { controller.abort(); return generated; });
     const result = await runImageTool({
-      outputFormat: "jpeg", outputPath: a.output, requestedCount: 3, includePreview: true,
+      config: { model: "gemini-3.1-flash-image", aspectRatio: "1:1", resolution: "1K", outputFormat: "jpeg" }, outputPath: a.output, requestedCount: 3, includePreview: true,
       signal: controller.signal, produce,
     });
     expect(result.structuredContent).toMatchObject({ status: "partial", issue: { code: "REQUEST_CANCELLED", message: expect.stringContaining("cancelled") } });

@@ -88,6 +88,8 @@ describe(TOOL, () => {
       status: "complete",
       images: [{ path: saved, format: "jpeg" }],
       description: "a lake",
+      // settings.test.ts owns the echo; this test only needs it present.
+      settings: expect.any(Object),
     });
     expect(firstText(result)).toContain("complete: 1 of 1 requested image(s) saved.");
   });

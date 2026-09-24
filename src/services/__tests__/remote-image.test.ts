@@ -4,6 +4,7 @@ import { Readable } from "node:stream";
 import type { LookupAddress } from "node:dns";
 import type { IncomingMessage, RequestOptions } from "node:http";
 import { fetchRemoteImage } from "../remote-image.js";
+import { SERVER_NAME, SERVER_VERSION } from "../../package-info.js";
 
 const mocks = vi.hoisted(() => ({ lookup: vi.fn(), get: vi.fn() }));
 vi.mock("node:dns", () => ({ lookup: mocks.lookup }));
@@ -46,6 +47,16 @@ describe("public remote image transport", () => {
     expect(connections.every(c => c.addresses[0].address === "93.184.216.34")).toBe(true);
     expect(mocks.lookup).toHaveBeenCalledTimes(2);
     expect(responses[0].destroyed).toBe(true);
+  });
+
+  it("identifies itself with a User-Agent on the first request and after a redirect", async () => {
+    // upload.wikimedia.org answers 403 to a request without one.
+    replies.push({ status: 302, headers: { location: "/final.png" } });
+    await fetchRemoteImage("https://images.example/start.png", options());
+    const agents = mocks.get.mock.calls.map(([, opts]) => (opts as { headers: Record<string, string> }).headers["user-agent"]);
+    expect(agents).toHaveLength(2);
+    const prefix = `${SERVER_NAME}/${SERVER_VERSION} `;
+    for (const agent of agents) expect(agent?.slice(0, prefix.length)).toBe(prefix);
   });
 
   it.each([
