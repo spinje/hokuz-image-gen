@@ -19,7 +19,7 @@ describe("getUnsupportedModelOption", () => {
     });
     expect(`${message?.message} ${message?.next_step}`).toMatch(/does not support resolution '2K'/);
     expect(`${message?.message} ${message?.next_step}`).toMatch(/Supported resolutions: 1K\./);
-    expect(`${message?.message} ${message?.next_step}`).toMatch(/or a model that supports '2K'\.$/);
+    expect(`${message?.message} ${message?.next_step}`).toMatch(/or a model that supports '2K': gemini-3\.1-flash-image, gemini-3-pro-image, gpt-image-2\.5-flare, gpt-image-2\.5-sunburst\.$/);
   });
 
   it("rejects a resolution outside the OpenAI 1K/2K band", () => {
@@ -39,7 +39,7 @@ describe("getUnsupportedModelOption", () => {
       aspectRatio: "1:4",
     });
     expect(`${message?.message} ${message?.next_step}`).toMatch(/does not support aspect ratio '1:4'/);
-    expect(`${message?.message} ${message?.next_step}`).toMatch(/or a model that supports '1:4'\.$/);
+    expect(`${message?.message} ${message?.next_step}`).toMatch(/or a model that supports '1:4': gemini-3\.1-flash-image\.$/);
   });
 
   it("skips the aspect ratio check when none is given (edit 'auto')", () => {
@@ -70,7 +70,7 @@ describe("getUnsupportedModelOption", () => {
         outputFormat: "png",
       })
     ).toEqual(
-      { message: "Model 'gemini-3.1-flash-image' (Nano Banana 2) does not support output_format 'png'.", next_step: "Use jpeg, or choose gpt-image-2.5-flare or gpt-image-2.5-sunburst for png/webp." }
+      { message: "Model 'gemini-3.1-flash-image' (Nano Banana 2) does not support output_format 'png'.", next_step: "Use jpeg, or a model that supports 'png': gpt-image-2.5-flare, gpt-image-2.5-sunburst." }
     );
     // The same call on a model that produces all three is fine.
     expect(
@@ -93,7 +93,7 @@ describe("getUnsupportedModelOption", () => {
         transparentBackground: true,
       })
     ).toEqual(
-      { message: "Model 'gemini-3.1-flash-image' (Nano Banana 2) does not support transparent_background.", next_step: "Use gpt-image-2.5-flare or gpt-image-2.5-sunburst with output_format png or webp." }
+      { message: "Model 'gemini-3.1-flash-image' (Nano Banana 2) does not support transparent_background.", next_step: "Use a model that supports it (gpt-image-2.5-flare, gpt-image-2.5-sunburst) with output_format png or webp." }
     );
     // transparent_background: false asks for what every model already does.
     expect(
@@ -204,7 +204,7 @@ describe("getUnsupportedModelOption", () => {
         quality: "high",
       })
     ).toEqual(
-      { message: "Model 'gemini-3.1-flash-image' (Nano Banana 2) does not accept 'quality'; it is an OpenAI-only option.", next_step: "Omit it, or use gpt-image-2.5-flare / gpt-image-2.5-sunburst." }
+      { message: "Model 'gemini-3.1-flash-image' (Nano Banana 2) does not accept 'quality'; it is an OpenAI-only option.", next_step: "Omit it, or use a model that accepts it: gpt-image-2.5-flare, gpt-image-2.5-sunburst." }
     );
   });
 
@@ -217,7 +217,7 @@ describe("getUnsupportedModelOption", () => {
         temperature: 0.2,
       })
     ).toEqual(
-      { message: "Model 'gpt-image-2.5-sunburst' (GPT Image 2.5 Sunburst) does not accept 'temperature'; it is a Gemini-only option.", next_step: "Omit it, or use a gemini-* model." }
+      { message: "Model 'gpt-image-2.5-sunburst' (GPT Image 2.5 Sunburst) does not accept 'temperature'; it is a Gemini-only option.", next_step: "Omit it, or use a model that accepts it: gemini-3.1-flash-image, gemini-3.1-flash-lite-image, gemini-3-pro-image." }
     );
   });
 
